@@ -1,0 +1,8 @@
+{
+  "name": "example",
+  "repository": "../../my-project",
+  "engineering_policy": [
+    "Follow the project's documented rules and inspect matching precedents before choosing a solution.",
+    "Check the project's existing libraries before implementing a custom alternative."
+  ]
+}

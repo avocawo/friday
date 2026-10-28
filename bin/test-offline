@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+image=${FRIDAY_TEST_IMAGE:-friday-test:local}
+case "$image" in
+  ''|-*) printf '%s\n' 'Invalid FRIDAY_TEST_IMAGE' >&2; exit 2 ;;
+esac
+
+exec docker run --rm --pull=never --network none --read-only \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,exec,nosuid,nodev,size=512m \
+  --mount "type=bind,src=$root,dst=/friday,readonly" --workdir /friday \
+  --env HOME=/tmp --env PYTHONDONTWRITEBYTECODE=1 --env GIT_CONFIG_NOSYSTEM=1 \
+  --entrypoint python3 "$image" -m unittest discover -s tests -v

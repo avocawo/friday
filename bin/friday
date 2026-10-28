@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""Friday's command-line entry point."""
+
+import argparse
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from friday import autopilot, cleanup, decisions, delivery, doctor, gate, intake, journal, mission, planner, preview, profile, release, report, sentry, service, stages, state, watch, workflow
+from friday.errors import FridayError
+
+VERSION = "0.1.0"
+
+
+def write_json(stream, payload):
+    print(json.dumps(payload, ensure_ascii=False), file=stream)
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        write_json(sys.stderr, {"ok": False, "error": {"code": "usage_error", "message": message}})
+        self.exit(2)
+
+
+def main(argv=None):
+    parser = Parser(prog="friday", description="A little less work between you and the weekend.",
+                    add_help=False, allow_abbrev=False)
+    parser.add_argument("-h", "--help", action="store_true", help="show this help message and exit")
+    parser.add_argument("--version", action="store_true", help="show Friday's version as JSON")
+    commands = parser.add_subparsers(dest="command", parser_class=Parser)
+    new = commands.add_parser("clock-in", aliases=["new"], help="start a task and prepare its worktree")
+    new.set_defaults(command="new")
+    new.add_argument("key")
+    new.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    mode = new.add_mutually_exclusive_group()
+    mode.add_argument("--auto", dest="auto", action="store_true", default=True, help="approve task plans automatically (default)")
+    mode.add_argument("--manual", dest="auto", action="store_false", help="require explicit plan approval")
+    status = commands.add_parser("status", help="show a task card")
+    status.add_argument("key")
+    today = commands.add_parser("take-stock", aliases=["today"], help="show tasks that need attention")
+    today.set_defaults(command="today")
+    notes = commands.add_parser("journal", help="regenerate a task journal")
+    notes.add_argument("key")
+    prepare = commands.add_parser("prepare", help="fetch the base and prepare a worktree")
+    prepare.add_argument("key")
+    stage = commands.add_parser("stage", help="open or close a stage")
+    stage_commands = stage.add_subparsers(dest="stage_command", required=True, parser_class=Parser)
+    stage_add = stage_commands.add_parser("add", help="open a stage")
+    stage_add.add_argument("key")
+    stage_add.add_argument("name")
+    stage_close = stage_commands.add_parser("close", help="close a stage with evidence")
+    stage_close.add_argument("key")
+    stage_close.add_argument("name")
+    evidence = stage_close.add_mutually_exclusive_group(required=True)
+    evidence.add_argument("--gate", action="store_true")
+    evidence.add_argument("--document")
+    evidence.add_argument("--owner")
+    gate_command = commands.add_parser("gate", help="run a gate on a read-only snapshot")
+    gate_command.add_argument("key")
+    gate_command.add_argument("stage")
+    mr = commands.add_parser("mr", help="link a merge request for monitoring")
+    mr.add_argument("key")
+    mr.add_argument("iid", type=int)
+    watcher = commands.add_parser("watch", help="watch a linked merge request")
+    watcher.add_argument("key")
+    watcher.add_argument("--once", action="store_true")
+    watcher.add_argument("--interval", type=int, default=300)
+    patrol = commands.add_parser("keep-watch", aliases=["eyes-up"], help="monitor tasks and process review feedback",
+                                 description="Monitor tasks and automatically process review feedback for autonomous tasks.")
+    patrol.set_defaults(command="eyes-up")
+    patrol.add_argument("--once", action="store_true")
+    patrol.add_argument("--notify-errors", action="store_true")
+    patrol.add_argument("--interval", type=int, default=300)
+    draft = commands.add_parser("draft", help="prepare a reviewable action")
+    draft.add_argument("key")
+    draft.add_argument("action")
+    draft.add_argument("--file", required=True)
+    approve = commands.add_parser("approve", help="approve an exact draft and code version")
+    approve.add_argument("key")
+    approve.add_argument("id")
+    execute = commands.add_parser("send-off", aliases=["suit-up"], help="perform an approved external action once",
+                                  description="Execute an approved external action once.")
+    execute.set_defaults(command="suit-up")
+    execute.add_argument("key")
+    execute.add_argument("id")
+    plan = commands.add_parser("plan", help="load a staged plan")
+    plan.add_argument("key")
+    plan.add_argument("file")
+    plan.add_argument("--replace", action="store_true", help="replace the plan and invalidate old approvals")
+    approve_plan = commands.add_parser("approve-plan", help="approve the loaded plan")
+    approve_plan.add_argument("key")
+    research = commands.add_parser("research", help="research the task and prepare a plan")
+    research.add_argument("key")
+    ready = commands.add_parser("ready", help="list stages whose dependencies are closed")
+    ready.add_argument("key")
+    brief = commands.add_parser("brief", help="dispatch a stage brief to a configured model")
+    brief.add_argument("key")
+    brief.add_argument("stage")
+    brief.add_argument("--role", required=True, choices=("develop", "review", "blind-code", "blind-behavior"))
+    sentry_command = commands.add_parser("sentry", help="find errors on changed lines")
+    sentry_command.add_argument("key")
+    sentry_command.add_argument("--period", default="24h")
+    go = commands.add_parser("home-stretch", aliases=["go"], help="run stages; may push a branch and create a draft MR",
+                             description="Run task stages and, when configured, push the branch and create a draft MR.")
+    go.set_defaults(command="go")
+    go.add_argument("key")
+    clean = commands.add_parser("clear-desk", aliases=["clean"], help="preview or confirm worktree cleanup",
+                               description="Preview worktree cleanup or remove it with a matching confirmation fingerprint.")
+    clean.set_defaults(command="clean")
+    clean.add_argument("key")
+    cleanup_options = clean.add_mutually_exclusive_group()
+    cleanup_options.add_argument("--confirm")
+    cleanup_options.add_argument("--cancel", action="store_true")
+    acceptance = commands.add_parser("wrap-up", aliases=["report"], help="show acceptance criteria and evidence")
+    acceptance.set_defaults(command="report")
+    acceptance.add_argument("key")
+    stand = commands.add_parser("preview", help="start and check the task's preview")
+    stand.add_argument("key")
+    agent = commands.add_parser("service", help="manage the macOS watcher")
+    agent.add_argument("operation", choices=("install", "refresh", "uninstall"))
+    agent.add_argument("--interval", type=int, default=300)
+    decide = commands.add_parser("decide", help="record a durable task decision")
+    decide.add_argument("key")
+    decide.add_argument("name")
+    decide.add_argument("value")
+    release_command = commands.add_parser("release", help="prepare a versioned release locally")
+    release_command.add_argument("key")
+    release_command.add_argument("version")
+    diagnostics = commands.add_parser("doctor", help="check a project's local setup")
+    diagnostics.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    args = parser.parse_args(argv)
+    if args.help:
+        parser.print_help()
+    elif args.version:
+        write_json(sys.stdout, {"ok": True, "data": {"version": VERSION}})
+    elif args.command:
+        try:
+            root = state.home()
+            if args.command == "new":
+                selected = profile.load(args.profile)
+                issue = intake.ticket(selected, args.key)
+                card = state.create(root, args.key, selected["path"], issue, "auto" if args.auto else "manual")
+                if selected.get("worktree_root") and selected.get("base_branch"):
+                    intake.prepare(root, args.key, selected)
+                    card = state.read(root, args.key)
+                card["journal"] = journal.sync(root, args.key)
+                result = card
+            elif args.command == "status":
+                result = state.read(root, args.key)
+            elif args.command == "today":
+                result = [{"key": card["key"], "status": card["status"], "updated_at": card["updated_at"],
+                           "ready_stages": workflow.ready(card), "watch": card.get("watch"),
+                           "questions": workflow.unanswered(card),
+                           "plan_approval_required": bool(card.get("stages") and card.get("mode") == "manual" and not card.get("plan_approved")),
+                           "pending_approvals": sum(item.get("status") == "draft" for item in card.get("deliveries", {}).values())}
+                          for card in state.all_tasks(root)]
+            elif args.command == "journal":
+                result = {"path": journal.sync(root, args.key)}
+            elif args.command == "prepare":
+                card = state.read(root, args.key)
+                result = {"worktree": intake.prepare(root, args.key, profile.load(card["profile"]))}
+            elif args.command == "stage":
+                if args.stage_command == "add":
+                    result = stages.add(root, args.key, args.name)
+                else:
+                    method = "gate" if args.gate else "document" if args.document else "owner"
+                    result = stages.close(root, args.key, args.name, method, args.document or args.owner)
+                journal.sync(root, args.key)
+            elif args.command == "gate":
+                card = state.read(root, args.key)
+                selected = profile.load(card["profile"])
+                selected["repository"] = card.get("worktree", selected["repository"])
+                result = gate.execute(root, args.key, args.stage, selected)
+                journal.sync(root, args.key)
+                if result["status"] != "passed":
+                    write_json(sys.stderr, {"ok": False, "error": {"code": result["status"],
+                                                                    "message": "Gate did not pass.",
+                                                                    "details": result}})
+                    return 1
+            elif args.command == "mr":
+                result = watch.link(root, args.key, args.iid)
+            elif args.command == "watch":
+                if args.interval < 10:
+                    raise FridayError("invalid_interval", "Watch interval must be at least 10 seconds.")
+                last_error = None
+                while True:
+                    try:
+                        result = watch.poll(root, args.key)
+                        last_error = None
+                    except FridayError as exc:
+                        if args.once:
+                            raise
+                        error = (exc.code, str(exc))
+                        if error != last_error:
+                            write_json(sys.stderr, {"ok": False, "error": {"code": exc.code, "message": str(exc)}})
+                            sys.stderr.flush()
+                            last_error = error
+                        time.sleep(args.interval)
+                        continue
+                    if args.once:
+                        break
+                    if result["notifications"]:
+                        write_json(sys.stdout, {"ok": True, "data": result})
+                        sys.stdout.flush()
+                    time.sleep(args.interval)
+            elif args.command == "eyes-up":
+                if args.interval < 10:
+                    raise FridayError("invalid_interval", "Watch interval must be at least 10 seconds.")
+                previous_errors = {}
+                while True:
+                    results, errors = [], {}
+                    for card in state.all_tasks(root):
+                        try:
+                            selected = profile.load(card["profile"])
+                        except FridayError as exc:
+                            errors[card["key"] + ":profile"] = {"code": exc.code, "message": str(exc)}
+                            continue
+                        checks = [("local", watch.local_poll)]
+                        if card.get("merge_request"):
+                            checks.append(("gitlab", watch.poll))
+                        if mission.config_for(selected) and card.get("autonomous_requested"):
+                            checks.append(("mission", mission.advance))
+                        if selected.get("sentry") and card.get("plan_base"):
+                            checks.append(("sentry", sentry.poll))
+                        for service_name, check in checks:
+                            error_key = card["key"] + ":" + service_name
+                            try:
+                                observed = check(root, card["key"])
+                                results.append({"service": service_name, **observed})
+                                if not args.once and (observed.get("notifications") or observed.get("matches")):
+                                    write_json(sys.stdout, {"ok": True, "data": {"service": service_name, **observed}})
+                                    sys.stdout.flush()
+                            except FridayError as exc:
+                                errors[error_key] = {"code": exc.code, "message": str(exc)}
+                                if not args.once and previous_errors.get(error_key) != errors[error_key]:
+                                    write_json(sys.stderr, {"ok": False, "error": errors[error_key]})
+                                    sys.stderr.flush()
+                    if args.once:
+                        result = {"results": results, "errors": errors}
+                        if args.notify_errors:
+                            watch.remember_errors(root, errors)
+                        if errors:
+                            write_json(sys.stderr, {"ok": False, "error": {"code": "watch_failed",
+                                                                            "message": "Some tasks could not be monitored.",
+                                                                            "details": result}})
+                            return 1
+                        break
+                    previous_errors = errors
+                    time.sleep(args.interval)
+            elif args.command == "draft":
+                text = Path(args.file).read_text(encoding="utf-8")
+                result = delivery.draft(root, args.key, args.action, text)
+            elif args.command == "approve":
+                result = delivery.approve(root, args.key, args.id)
+            elif args.command == "suit-up":
+                result = delivery.execute(root, args.key, args.id)
+            elif args.command == "plan":
+                result = workflow.load_plan(root, args.key, args.file, replace=args.replace)
+                journal.sync(root, args.key)
+            elif args.command == "approve-plan":
+                result = workflow.approve_plan(root, args.key)
+            elif args.command == "research":
+                result = planner.generate(root, args.key)
+            elif args.command == "ready":
+                result = workflow.ready(state.read(root, args.key))
+            elif args.command == "brief":
+                result = workflow.invoke(root, args.key, args.stage, args.role)
+            elif args.command == "sentry":
+                result = sentry.scan(root, args.key, args.period)
+            elif args.command == "go":
+                card = state.read(root, args.key)
+                if card.get("mode") == "auto" and mission.config_for(profile.load(card["profile"])):
+                    state.update(root, args.key, lambda current: current.update(autonomous_requested=True))
+                    result = mission.advance(root, args.key)
+                else:
+                    result = autopilot.run(root, args.key)
+            elif args.command == "clean":
+                result = cleanup.cancel(root, args.key) if args.cancel else cleanup.remove(root, args.key, args.confirm) if args.confirm else cleanup.inspect(root, args.key)
+            elif args.command == "report":
+                result = report.acceptance(root, args.key)
+            elif args.command == "preview":
+                result = preview.start(root, args.key)
+            elif args.command == "service":
+                result = service.install(args.interval) if args.operation == "install" else service.refresh() if args.operation == "refresh" else service.uninstall()
+            elif args.command == "decide":
+                result = decisions.set_decision(root, args.key, args.name, args.value)
+                journal.sync(root, args.key)
+            elif args.command == "release":
+                result = release.prepare(root, args.key, args.version)
+            elif args.command == "doctor":
+                result = doctor.inspect(args.profile)
+            write_json(sys.stdout, {"ok": True, "data": result})
+        except FridayError as exc:
+            write_json(sys.stderr, {"ok": False, "error": {"code": exc.code, "message": str(exc)}})
+            return 1
+        except (OSError, UnicodeError) as exc:
+            write_json(sys.stderr, {"ok": False, "error": {"code": "io_error", "message": str(exc)}})
+            return 1
+    else:
+        parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

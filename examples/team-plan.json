@@ -1,0 +1,16 @@
+{
+  "stages": [
+    {
+      "id": "implementation",
+      "brief": "Update the example function",
+      "criteria": ["The function returns the expected greeting"],
+      "files": ["example.py"],
+      "crew": [
+        {"id": "build", "agent": "claude", "role": "develop", "brief": "Implement the requested behavior", "skills": [], "depends_on": []},
+        {"id": "review", "agent": "glm", "role": "review", "brief": "Review the change against the criteria", "skills": [], "depends_on": ["build"]},
+        {"id": "blind-code", "agent": "codex", "role": "blind-code", "brief": "Review the supplied diff", "skills": [], "depends_on": ["build"]},
+        {"id": "blind-behavior", "agent": "codex", "role": "blind-behavior", "brief": "Check the behavior", "skills": [], "depends_on": ["build"]}
+      ]
+    }
+  ]
+}
