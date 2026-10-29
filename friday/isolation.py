@@ -55,6 +55,9 @@ def require_runner(selected=None, workspace=None):
 def require_browser(selected=None):
     if not isinstance(selected, dict):
         raise FridayError("isolation_unavailable", "A verified browser profile is required.")
+    if isinstance(selected.get("browser"), dict) and selected["browser"].get("mode") == "local":
+        if not isinstance(selected.get("preview"), dict) or selected["preview"].get("backend") != "docker-local":
+            raise FridayError("isolation_unavailable", "Local browser mode requires an isolated docker-local preview.")
     browser_session.configuration(selected.get("browser"), "http://probe.localhost:12345/")
     browser_probe.verify(selected)
 

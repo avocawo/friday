@@ -1,0 +1,8 @@
+{
+  "name": "friday",
+  "owner": {"name": "Friday contributors"},
+  "metadata": {"description": "Friday local assistant plugin"},
+  "plugins": [
+    {"name": "friday", "source": "./plugins/friday", "description": "Use the local Friday assistant."}
+  ]
+}

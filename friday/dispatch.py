@@ -43,7 +43,7 @@ def definition(selected, assignments, target):
             value = credentials.token(config, "FRIDAY_ZAI_TOKEN")
             token_hashes[name] = hashlib.sha256(value.encode()).hexdigest()
     safety = {}
-    for module in ("autopilot.py", "browser_auth.py", "browser_probe.py", "browser_protocol.py", "browser_session.py", "codex_policy.py", "crew.py", "dispatch.py", "gate.py", "isolated_preview.py", "isolation.py", "runners.py", "schemas.py", "workflow.py"):
+    for module in ("autopilot.py", "browser_auth.py", "browser_probe.py", "browser_protocol.py", "browser_session.py", "codex_policy.py", "crew.py", "dispatch.py", "gate.py", "isolated_preview.py", "isolation.py", "local_preview.py", "runners.py", "schemas.py", "workflow.py"):
         path = Path(__file__).resolve().parent / module
         safety[module] = hashlib.sha256(path.read_bytes()).hexdigest()
     payload = {"crew": assignments, "agents": selected.get("agents", {}), "skills": instructions(selected, skill_names),

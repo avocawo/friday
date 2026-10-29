@@ -30,7 +30,7 @@ def configuration(interval):
 
 def executable_path():
     directories = []
-    for name in ("codex", "claude", "node", "uvx", "glab", "docker", "git"):
+    for name in ("codex", "claude", "node", "uvx", "glab", "gh", "docker", "git"):
         executable = shutil.which(name)
         if executable:
             directory = str(Path(executable).parent)

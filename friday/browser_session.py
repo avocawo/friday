@@ -27,6 +27,12 @@ def configuration(spec, preview):
     if parsed.scheme != "http" or not parsed.hostname or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.localhost", parsed.hostname) or parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.port:
         raise FridayError("invalid_profile", "Browser preview must be a local HTTP origin with an explicit port.")
     origin = "http://" + parsed.netloc
+    if spec.get("mode") == "local":
+        if spec.get("stage_origin") is not None or spec.get("auth") is not None:
+            raise FridayError("invalid_profile", "Local browser mode cannot use a staging origin or borrowed authentication.")
+        return origin, None
+    if spec.get("mode") not in (None, "staging"):
+        raise FridayError("invalid_profile", "Unknown browser mode.")
     stage = spec.get("stage_origin")
     if not isinstance(stage, str):
         raise FridayError("invalid_profile", "Browser stage origin is required.")
@@ -47,7 +53,9 @@ class Session:
         self.preview_started = False
         self.storage_key = spec.get("auth", {}).get("storage_key") if isinstance(spec.get("auth"), dict) else None
         try:
-            patterns = [self.origin + "/*", self.stage + "/*", self.fixture.origin + "/*"]
+            patterns = [self.origin + "/*", self.fixture.origin + "/*"]
+            if self.stage:
+                patterns.append(self.stage + "/*")
             self.client = browser_protocol.Client(browser_probe.command(self.path, patterns))
             probe = browser_probe.exercise(self.client, self.fixture)
             token = browser_auth.capture(spec)
@@ -76,13 +84,14 @@ class Session:
                     return response.ok && !!match && new URL(match[1]).origin === STAGE;
                 } catch (_) { return false; }
             }""".replace("STAGE", json.dumps(self.stage))
-            result = browser_protocol.text(self.client.tool("evaluate_script", {"pageId": self.page, "function": source}, timeout=90))
-            if not re.search(r"```json\s*true\s*```", result):
-                raise FridayError("isolation_unavailable", "The preview did not prove its API is staging.")
+            if self.stage:
+                result = browser_protocol.text(self.client.tool("evaluate_script", {"pageId": self.page, "function": source}, timeout=90))
+                if not re.search(r"```json\s*true\s*```", result):
+                    raise FridayError("isolation_unavailable", "The preview did not prove its API is staging.")
             self.client.tool("close_page", {"pageId": probe})
             browser_probe.cleanup(self.path, self.fixture.forbidden_origin)
             self.fixture.close()
-        except Exception:
+        except BaseException:
             self.close()
             raise
 

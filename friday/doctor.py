@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import urllib.parse
 
-from . import autopilot, browser_auth, credentials, gate, isolation, profile
+from . import autopilot, browser_auth, credentials, gate, github, isolation, mission, profile
 from .errors import FridayError
 
 
@@ -21,6 +21,14 @@ def inspect(path):
     check("automation", lambda: autopilot.preflight(selected, selected["repository"]))
     check("runner_isolation", lambda: isolation.require_runner(selected, selected["repository"]))
     check("browser_isolation", lambda: isolation.require_browser(selected))
+    if "github" in selected:
+        check("github_access", lambda: github.check(selected))
+        def project_worktree():
+            if not selected.get("worktree_root") or not selected.get("base_branch"):
+                raise FridayError("invalid_profile", "Project worktree_root and base_branch are not configured.")
+        check("project_worktree", project_worktree)
+        if isinstance(selected["github"], dict) and selected["github"].get("selection"):
+            check("github_delivery", lambda: github.check_delivery(selected, mission.config_for(selected)))
     browser = selected.get("browser")
     if isinstance(browser, dict) and browser.get("auth") is not None:
         check("stage_auth", lambda: browser_auth.capture(browser))

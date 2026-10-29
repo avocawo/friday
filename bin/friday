@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from friday import autopilot, cleanup, decisions, delivery, doctor, gate, intake, journal, mission, planner, preview, profile, release, report, sentry, service, stages, state, watch, workflow
+from friday import autopilot, cleanup, decisions, delivery, doctor, gate, github, intake, journal, mission, planner, preview, profile, project, project_service, release, report, sentry, service, stages, state, watch, workflow
 from friday.errors import FridayError
 
 VERSION = "0.1.0"
@@ -108,6 +108,31 @@ def main(argv=None):
                              description="Run task stages and, when configured, push the branch and create a draft MR.")
     go.set_defaults(command="go")
     go.add_argument("key")
+    project_command = commands.add_parser("long-weekend", help="develop a project; may push and create a draft MR or PR",
+                                          description="Develop a project and, when configured, push a branch and create a draft MR or PR.")
+    project_commands = project_command.add_subparsers(dest="project_command", required=True, parser_class=Parser)
+    project_start = project_commands.add_parser("start", help="start a project and run its plan",
+                                                description="Run the project plan; configured delivery may push a branch and create a draft MR or PR.")
+    project_start.add_argument("key")
+    project_start.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    project_start.add_argument("--brief", required=True, help="UTF-8 file with the project brief")
+    project_resume = project_commands.add_parser("resume", help="resume a project after interruption",
+                                                 description="Resume work; configured delivery may push a branch and create a draft MR or PR.")
+    project_resume.add_argument("key")
+    project_backlog = project_commands.add_parser("backlog", help="read open GitHub issue metadata")
+    project_backlog.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    project_next = project_commands.add_parser("next", help="choose and run a GitHub issue; may create a draft PR",
+                                               description="Run a selected issue and, when configured, push a branch and create a draft PR.")
+    project_next.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    project_cruise = project_commands.add_parser("cruise", help="continuously process GitHub work and review feedback",
+                                                 description="Run issues and review feedback; configured delivery may push branches and create draft PRs.")
+    project_cruise.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    project_cruise.add_argument("--interval", type=int, default=300)
+    project_background = project_commands.add_parser("service", help="install or remove the project's background cycle",
+                                                     description="The background cycle may push branches and create draft PRs.")
+    project_background.add_argument("operation", choices=("install", "uninstall"))
+    project_background.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    project_background.add_argument("--interval", type=int, default=300)
     clean = commands.add_parser("clear-desk", aliases=["clean"], help="preview or confirm worktree cleanup",
                                description="Preview worktree cleanup or remove it with a matching confirmation fingerprint.")
     clean.set_defaults(command="clean")
@@ -220,7 +245,9 @@ def main(argv=None):
                             errors[card["key"] + ":profile"] = {"code": exc.code, "message": str(exc)}
                             continue
                         checks = [("local", watch.local_poll)]
-                        if card.get("merge_request"):
+                        delivery_settings = selected.get("autonomous_delivery")
+                        github_delivery = isinstance(delivery_settings, dict) and delivery_settings.get("transport") == "github"
+                        if card.get("merge_request") and selected.get("gitlab") and not github_delivery:
                             checks.append(("gitlab", watch.poll))
                         if mission.config_for(selected) and card.get("autonomous_requested"):
                             checks.append(("mission", mission.advance))
@@ -278,6 +305,36 @@ def main(argv=None):
                     result = mission.advance(root, args.key)
                 else:
                     result = autopilot.run(root, args.key)
+            elif args.command == "long-weekend":
+                if args.project_command == "backlog":
+                    result = github.backlog(profile.load(args.profile))
+                elif args.project_command == "next":
+                    result = project.next_issue(root, args.profile)
+                elif args.project_command == "cruise":
+                    if args.interval < 60:
+                        raise FridayError("invalid_interval", "Project interval must be at least 60 seconds.")
+                    last_error = None
+                    while True:
+                        try:
+                            observed = project.next_issue(root, args.profile)
+                            last_error = None
+                            details = observed.get("result", {})
+                            if observed.get("selected") and (not observed.get("active") or details.get("processed") or details.get("merge_request")):
+                                write_json(sys.stdout, {"ok": True, "data": observed})
+                                sys.stdout.flush()
+                        except FridayError as exc:
+                            error = (exc.code, str(exc))
+                            if error != last_error:
+                                write_json(sys.stderr, {"ok": False, "error": {"code": exc.code, "message": str(exc)}})
+                                sys.stderr.flush()
+                                last_error = error
+                        time.sleep(args.interval)
+                elif args.project_command == "service":
+                    result = project_service.install(args.profile, args.interval) if args.operation == "install" else project_service.uninstall(args.profile)
+                elif args.project_command == "start":
+                    result = project.start(root, args.key, args.profile, args.brief)
+                else:
+                    result = project.run(root, args.key)
             elif args.command == "clean":
                 result = cleanup.cancel(root, args.key) if args.cancel else cleanup.remove(root, args.key, args.confirm) if args.confirm else cleanup.inspect(root, args.key)
             elif args.command == "report":

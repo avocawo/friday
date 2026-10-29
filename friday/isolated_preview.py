@@ -42,6 +42,11 @@ def docker(*args, timeout=60):
 @contextlib.contextmanager
 def open_preview(selected, worktree):
     spec = selected.get('preview', {})
+    if isinstance(spec, dict) and spec.get('backend') == 'docker-local':
+        from . import local_preview
+        with local_preview.open_preview(selected, worktree) as url:
+            yield url
+        return
     if not isinstance(spec, dict) or spec.get('backend') != 'docker-vite':
         raise FridayError('isolation_unavailable', 'An isolated docker-vite preview is required.')
     stage = selected.get('browser', {}).get('stage_origin')

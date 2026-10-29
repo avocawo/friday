@@ -57,9 +57,10 @@ def prepare(root, key, profile):
         raise FridayError("invalid_profile", "worktree_layout must be key or branch.")
     target = Path(profile["worktree_root"]) / (branch if layout == "branch" else key)
     def git(*args):
-        env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1")
         try:
-            result = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
+            result = subprocess.run(["git", "-C", repo, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *args], capture_output=True, text=True,
                                     env=env, timeout=90)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise FridayError("git_error", str(exc))

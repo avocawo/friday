@@ -121,6 +121,20 @@ class CliTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())["data"], {"path": "test"})
         install.assert_called_once_with(300)
 
+    def test_github_task_does_not_poll_a_gitlab_mr_with_the_same_number(self):
+        module = runpy.run_path(str(CLI), run_name="friday_cli_test")
+        card = {'key': 'T-1', 'profile': 'profile', 'merge_request': 7, 'autonomous_requested': True}
+        selected = {'gitlab': {'project': 'other'}, 'autonomous_delivery': {'enabled': True, 'transport': 'github', 'target_branch': 'main'}}
+        with patch.object(module['state'], 'all_tasks', return_value=[card]), \
+             patch.object(module['profile'], 'load', return_value=selected), \
+             patch.object(module['watch'], 'local_poll', return_value={}), \
+             patch.object(module['watch'], 'poll') as gitlab, \
+             patch.object(module['mission'], 'advance', return_value={'processed': 0}) as advance, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(module['main'](['keep-watch', '--once']), 0)
+        gitlab.assert_not_called()
+        advance.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

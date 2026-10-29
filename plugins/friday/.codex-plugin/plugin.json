@@ -1,0 +1,11 @@
+{
+  "name": "friday",
+  "version": "0.1.2",
+  "description": "Use the local Friday development assistant.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Friday",
+    "shortDescription": "Local development assistant",
+    "category": "Productivity"
+  }
+}

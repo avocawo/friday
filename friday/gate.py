@@ -85,6 +85,7 @@ def definition(profile, image_id):
     payload = {"gate": profile["gate"], "image": image_id, "mode": profile.get("gate_mode", "snapshot"),
                "base": profile.get("gate_base"), "node_modules": profile.get("gate_node_modules"),
                "lockfile": profile.get("gate_lockfile"), "tmpfs": profile.get("gate_tmpfs", []),
+               "private_tmp": profile.get("gate_private_tmp", False),
                "runner": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -155,6 +156,11 @@ def execute(root, key, stage, profile):
                        "--mount", "type=bind,src=%s,dst=/workspace,readonly" % directory,
                        "--tmpfs", "/tmp", "--env", "XDG_DATA_HOME=/tmp/friday-data",
                        "--env", "XDG_CACHE_HOME=/tmp/friday-cache", "--workdir", "/workspace"]
+            private_tmp = profile.get("gate_private_tmp", False)
+            if not isinstance(private_tmp, bool):
+                raise FridayError("invalid_profile", "gate_private_tmp must be a boolean.")
+            if private_tmp:
+                command += ["--tmpfs", "/private/tmp"]
             if profile.get("gate_mode", "snapshot") == "git-diff":
                 common = git(profile["repository"], "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()
                 if "," in common:

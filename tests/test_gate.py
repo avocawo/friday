@@ -63,6 +63,20 @@ class GateTests(unittest.TestCase):
             gate.snapshot(profile.load(self.config))
         self.assertEqual(error.exception.code, "dirty_tree")
 
+    def test_private_tmp_is_a_separate_ephemeral_mount_in_gate_definition(self):
+        self.real_run = subprocess.run
+        selected = profile.load(self.config)
+        selected['gate_private_tmp'] = True
+        commands = []
+        def docker(command, **kwargs):
+            if command[:2] == ['docker', 'run']:
+                commands.append(command)
+            return self.docker(command, **kwargs)
+        with patch('friday.gate.subprocess.run', side_effect=docker):
+            self.assertEqual(gate.execute(self.root, 'T-1', 'build', selected)['status'], 'passed')
+        self.assertIn('/private/tmp', commands[0])
+        self.assertNotEqual(gate.definition(selected, 'image'), gate.definition(profile.load(self.config), 'image'))
+
     def test_git_archive_export_ignore_is_rejected(self):
         (self.repo / ".gitattributes").write_text("code.txt export-ignore\n")
         self.git("add", ".gitattributes")
