@@ -107,7 +107,9 @@ class Claude:
             for part in message.get("content", []):
                 if part.get("type") == "tool_use":
                     self.open_tools.add(part.get("id"))
-                    notes.append("tool " + part.get("name", "?") + " " + brief(part.get("input")))
+                    arguments = part.get("input") or {}
+                    target = next((arguments[name] for name in ("command", "file_path", "pattern", "path") if name in arguments), arguments)
+                    notes.append("tool " + part.get("name", "?") + " " + brief(target))
                 elif part.get("type") == "text" and part.get("text", "").strip():
                     notes.append("text " + brief(part["text"]))
             return "; ".join(notes) or None
@@ -115,7 +117,7 @@ class Claude:
             for part in event.get("message", {}).get("content", []):
                 if isinstance(part, dict) and part.get("type") == "tool_result":
                     self.open_tools.discard(part.get("tool_use_id"))
-            return "tool result"
+            return None
         if kind == "rate_limit_event":
             result.limits = event.get("rate_limit_info")
             if isinstance(result.limits, dict) and result.limits.get("status") == "rejected":
@@ -266,7 +268,7 @@ def run(spec, on_event=None):
     status_path = logs / "status.json"
     started = time.time()
     status = {"driver": spec.driver, "model": spec.model, "state": "starting", "session": getattr(driver, "session", spec.resume),
-              "pid": None, "started_at": started, "last_activity_at": started, "last_event": None, "usage": usage}
+              "pid": None, "owner": os.getpid(), "started_at": started, "last_activity_at": started, "last_event": None, "usage": usage}
     write_status(status_path, status)
     environment = {key: value for key, value in os.environ.items() if key in BASE_ENV}
     environment.update(spec.env)
@@ -320,13 +322,14 @@ def run(spec, on_event=None):
                     continue
                 note = driver.read(event, result, usage)
                 finished = finished or note == "finished"
+                status.update(last_activity_at=last_output, session=result.session or status["session"])
                 if note:
-                    status.update(last_activity_at=last_output, last_event=note, session=result.session or status["session"])
+                    status["last_event"] = note
                     if on_event:
                         on_event({"note": note, "at": last_output, "usage": dict(usage), "session": status["session"]})
-                    if last_output - last_written >= 1:
-                        write_status(status_path, status)
-                        last_written = last_output
+                if last_output - last_written >= 1:
+                    write_status(status_path, status)
+                    last_written = last_output
         finally:
             if process is not None:
                 kill_group(process)

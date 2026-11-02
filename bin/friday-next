@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Entry point of the new Friday core while it is built next to the old one."""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from friday import state, status
+from friday.errors import FridayError
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="friday-next", description="Новое ядро Friday (в разработке).")
+    commands = parser.add_subparsers(dest="command", required=True)
+    show = commands.add_parser("status", help="что делают задачи сейчас и сколько потрачено")
+    show.add_argument("key", nargs="?")
+    show.add_argument("--json", action="store_true", help="машиночитаемый вывод")
+    args = parser.parse_args(argv)
+    root = state.home()
+    try:
+        if args.command == "status":
+            if args.json:
+                print(json.dumps(status.task(root, args.key) if args.key else status.overview(root), ensure_ascii=False, indent=2))
+            else:
+                print(status.render_task(root, args.key) if args.key else status.render(status.overview(root)))
+    except FridayError as exc:
+        print("Ошибка: " + str(exc), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
