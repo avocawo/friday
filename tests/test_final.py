@@ -148,7 +148,7 @@ class FinalTests(unittest.TestCase):
         def create(profile, branch, target, title, body):
             created.append((branch, target, title, body))
             return {"iid": 7, "url": "https://example.test/o/r/pull/7"}
-        with patch("friday.github.matching_pulls", return_value=[]), patch("friday.github.create_pull", side_effect=create):
+        with patch.dict("friday.vcs.TRANSPORTS", {"github": (lambda *args: [], create)}):
             result = milestone.finish(self.root, "T-1", self.profile)
             again = final.deliver(self.root, "T-1", self.profile)
         self.assertEqual(result["url"], "https://example.test/o/r/pull/7")

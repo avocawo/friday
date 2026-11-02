@@ -33,7 +33,7 @@ def create(root, key, profile):
     base = profile.get("base_branch")
     if not profile.get("worktree_root") or not isinstance(base, str) or not base or base.startswith("-"):
         raise FridayError("invalid_profile", "worktree_root and base_branch are required to prepare a worktree.")
-    branch = state.task_branch(profile.get("branch_template", "friday/{key}"), key, {})
+    branch = state.task_branch(profile.get("branch_template", "friday/{key}"), key)
     target = Path(profile["worktree_root"]).resolve() / (branch if profile.get("worktree_layout", "key") == "branch" else key)
     card = cards.read(root, key)
     if card.get("worktree"):

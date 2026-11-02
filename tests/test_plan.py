@@ -11,7 +11,7 @@ from unittest.mock import patch
 from friday import card, plan, workspace
 from friday.errors import FridayError
 
-CLI = Path(__file__).resolve().parents[1] / "bin" / "friday-next"
+CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
 
 # Each call of the fake agent takes the next entry of calls.json: the structured answer and the session it reports.
 FAKE = r'''#!/usr/bin/env python3
@@ -208,14 +208,14 @@ class PlanTests(unittest.TestCase):
         environment = dict(os.environ, FRIDAY_HOME=str(self.root))
         script = ("import sys, runpy; from unittest.mock import patch; "
                   "patch('friday.models.environment', return_value={'FAKE_DIR': %r}).start(); "
-                  "sys.argv = ['friday-next', 'start', 'T-9', '--profile', %r, '--brief', %r]; "
+                  "sys.argv = ['friday', 'start', 'T-9', '--profile', %r, '--brief', %r]; "
                   "runpy.run_path(%r, run_name='__main__')") % (str(self.fake), str(self.profile_path), str(brief), str(CLI))
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=environment,
                                 cwd=str(Path(__file__).resolve().parents[1]))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("# План T-9", result.stdout)
-        self.assertIn("friday-next approve T-9", result.stdout)
-        result = subprocess.run([sys.executable, str(CLI), "approve", "T-9"], capture_output=True, text=True, env=environment)
+        self.assertIn("friday approve T-9", result.stdout)
+        result = subprocess.run([sys.executable, str(CLI), "approve", "T-9", "--no-run"], capture_output=True, text=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(card.read(self.root, "T-9")["state"], "approved")
 

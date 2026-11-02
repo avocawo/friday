@@ -1,19 +1,15 @@
-"""Run a gate against a committed snapshot mounted read-only in Docker."""
+"""Run the project's validation command against a committed snapshot mounted read-only in Docker."""
 import contextlib
 import hashlib
 import io
-import json
 import os
 import re
 import subprocess
 import tarfile
 import tempfile
-import uuid
 from pathlib import Path
 
-from . import state
 from .errors import FridayError
-from .locks import locked
 
 
 def git(repository, *args):
@@ -81,35 +77,6 @@ def verify_archive(repository, archive, index):
                 raise FridayError("incomplete_snapshot", "Unsupported git file mode for: " + name)
 
 
-def definition(profile, image_id):
-    payload = {"gate": profile["gate"], "image": image_id, "mode": profile.get("gate_mode", "snapshot"),
-               "base": profile.get("gate_base"), "node_modules": profile.get("gate_node_modules"),
-               "lockfile": profile.get("gate_lockfile"), "tmpfs": profile.get("gate_tmpfs", []),
-               "private_tmp": profile.get("gate_private_tmp", False),
-               "runner": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
-    if profile.get("gate_exec_tmp") is True:
-        payload["exec_tmp"] = True
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-
-
-def record_digest(record):
-    return hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-
-
-def with_baseline(profile, card):
-    selected = dict(profile)
-    mode = selected.get("gate_mode", "snapshot")
-    if mode not in ("snapshot", "git-diff"):
-        raise FridayError("invalid_profile", "Unknown gate mode: " + str(mode))
-    if mode == "git-diff":
-        base = card.get("plan_base")
-        if not isinstance(base, str) or not re.fullmatch(r"[0-9a-f]{40,64}", base):
-            raise FridayError("invalid_plan", "A git-diff gate needs the plan's base commit.")
-        git(selected["repository"], "merge-base", "--is-ancestor", base, "HEAD")
-        selected["gate_base"] = base
-    return selected
-
-
 def image_id(image):
     try:
         result = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image],
@@ -128,15 +95,6 @@ def extract(archive, path):
             if member.name.startswith("/") or ".." in parts or member.isdev() or member.isfifo():
                 raise FridayError("invalid_snapshot", "Unsafe path in git archive.")
         tar.extractall(path)
-
-
-def feedback(result):
-    from .github import PRIVATE_DATA
-    output = Path(result["log"]).read_text(encoding="utf-8", errors="replace")[-10000:]
-    prefix = "The isolated gate failed. Fix the reported errors and rerun the gate."
-    if PRIVATE_DATA.search(output):
-        return prefix + " The log contains potentially private data and was not forwarded."
-    return prefix + "\n" + output
 
 
 def container(profile, image, head, archive):
@@ -192,75 +150,6 @@ def container(profile, image, head, archive):
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace")
     return result
-
-
-def execute(root, key, stage, profile, *, branch_locked=False):
-    if not profile.get("gate") or not isinstance(profile.get("gate_image"), str) or not profile["gate_image"]:
-        raise FridayError("invalid_profile", "An isolated gate requires gate and gate_image.")
-    resources = profile.get("gate_resources", [])
-    if not isinstance(resources, list) or any(not isinstance(x, str) or not x for x in resources):
-        raise FridayError("invalid_profile", "gate_resources must be an array of names.")
-    exec_tmp = profile.get("gate_exec_tmp", False)
-    if not isinstance(exec_tmp, bool):
-        raise FridayError("invalid_profile", "gate_exec_tmp must be a boolean.")
-    branch_resource = "branch:" + profile["repository"]
-    names = sorted(set(resources + [branch_resource]) - ({branch_resource} if branch_locked else set()))
-    with contextlib.ExitStack() as stack:
-        for name in names:
-            stack.enter_context(locked(root, "resource:" + name))
-        card = state.read(root, key)
-        if stage not in card["stages"] or card["stages"][stage].get("status") != "open":
-            raise FridayError("invalid_stage", "Gate requires an open stage: " + stage)
-        profile = with_baseline(profile, card)
-        head, digest, archive = snapshot(profile)
-        try:
-            image = image_id(profile["gate_image"])
-        except FridayError as exc:
-            if exc.code == "environment_unavailable":
-                def unavailable(current):
-                    current["stages"][stage]["gate"] = {"status": "environment_unavailable", "message": str(exc),
-                                                          "at": state.now()}
-                    current["stages"][stage]["environment_lock"] = True
-                state.update(root, key, unavailable)
-            raise
-        fingerprint = definition(profile, image)
-        result = container(profile, image, head, archive)
-        try:
-            after_head, after_digest, _ = snapshot(profile)
-            unchanged = (head, digest) == (after_head, after_digest)
-        except FridayError:
-            unchanged = False
-        output = result.stdout
-        matches = [line for line in output.splitlines()
-                   if any(re.search(pattern, line) for pattern in profile.get("environment_errors", []))]
-        outcome = "passed" if result.returncode == 0 and unchanged else "failed"
-        if result.returncode and (matches or "FRIDAY_ENVIRONMENT_UNAVAILABLE:" in output):
-            outcome = "environment_unavailable"
-        evidence_dir = state.task_path(root, key).parent / "evidence"
-        evidence_dir.mkdir(parents=True, exist_ok=True)
-        log = evidence_dir / (uuid.uuid4().hex + ".log")
-        log.write_text(output, encoding="utf-8")
-        record = {"status": outcome, "exit_code": result.returncode, "head": head,
-                  "snapshot": digest, "definition": fingerprint, "image": image,
-                  "log": str(log), "at": state.now(), "unchanged": unchanged,
-                  "decision_revision": card.get("decision_revision", 0), "plan_revision": card.get("plan_revision", 0)}
-        def save(current):
-            selected = current["stages"].get(stage)
-            if not selected or selected.get("status") != "open":
-                raise FridayError("invalid_stage", "Stage changed while gate was running.")
-            if current.get("decision_revision", 0) != card.get("decision_revision", 0):
-                raise FridayError("stale_evidence", "A decision changed while the gate was running.")
-            if current.get("plan_revision", 0) != card.get("plan_revision", 0):
-                raise FridayError("stale_evidence", "The plan changed while the gate was running.")
-            selected["gate"] = record
-            if outcome == "environment_unavailable":
-                selected["environment_lock"] = True
-            elif outcome == "passed" and current.get("mode") == "auto":
-                selected.pop("environment_lock", None)
-            current["events"].append({"type": "gate", "stage": stage, "status": outcome, "at": state.now(),
-                                      "record_sha256": record_digest(record)})
-        state.update(root, key, save)
-        return record
 
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

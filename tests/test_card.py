@@ -12,7 +12,7 @@ from friday import card, runner, status
 from friday.errors import FridayError
 from test_runner import ANSWER, FAKE, INIT, RESULT, alive
 
-CLI = Path(__file__).resolve().parents[1] / "bin" / "friday-next"
+CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
 
 
 class CardTests(unittest.TestCase):

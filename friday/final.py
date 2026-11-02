@@ -179,18 +179,9 @@ def deliver(root, key, profile):
     cards.update(root, key, lambda value: value.update(delivery=dict(delivered, head=head, branch=branch)))
     if delivered.get("url"):
         return dict(delivered, head=head)
-    if settings["transport"] == "gitlab":
-        from . import mission
-        existing = mission.matching_mrs(profile["gitlab"], branch)
-        created = existing[0] if existing else mission.create_mr(profile, worktree, branch, target, title, text)
-        url = created.get("web_url") or created.get("url", "")
-    elif settings["transport"] == "github":
-        from . import github
-        existing = github.matching_pulls(profile, branch)
-        created = existing[0] if existing else github.create_pull(profile, branch, target, title, text)
-        url = created.get("web_url") or created.get("url", "")
-    else:
-        raise FridayError("invalid_profile", "Unknown delivery transport: " + str(settings["transport"]))
+    from . import vcs
+    created = vcs.open_draft(profile, settings["transport"], branch, target, title, text)
+    url = created.get("url", "")
     cards.update(root, key, lambda value: value.update(delivery=dict(value.get("delivery") or {}, url=url, iid=created.get("iid"))))
     cards.record(root, key, "draft_opened", url=url, head=head)
     return {"transport": settings["transport"], "url": url, "head": head}

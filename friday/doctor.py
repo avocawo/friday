@@ -1,94 +1,110 @@
-"""Read-only setup checks; credentials are never included in the result."""
-import os
+"""Is this machine and profile ready to run tasks? Every check says what is missing, never a secret value."""
 import shutil
 import subprocess
-import urllib.parse
+import sys
 
-from . import autopilot, browser_auth, credentials, gate, github, isolation, mission, profile
+from . import codex_policy, models, profile as profiles, resources, state
 from .errors import FridayError
 
 
 def inspect(path):
-    selected = profile.load(path)
     checks = []
-    def check(name, operation):
+    def check(name, operation, warning=False):
         try:
-            operation()
-            checks.append({"name": name, "status": "ok"})
-        except (FridayError, OSError) as exc:
-            checks.append({"name": name, "status": "unavailable", "reason": str(exc)})
-    check("repository", lambda: gate.git(selected["repository"], "rev-parse", "--git-dir"))
-    check("automation", lambda: autopilot.preflight(selected, selected["repository"]))
-    check("runner_isolation", lambda: isolation.require_runner(selected, selected["repository"]))
-    check("browser_isolation", lambda: isolation.require_browser(selected))
-    if selected.get('full_ci') is not None:
-        checks.append({'name': 'full_ci', 'status': 'unavailable', 'reason': 'full_ci is no longer supported; publication stays blocked.'})
-    delivery = selected.get('autonomous_delivery')
-    base = selected.get('base_branch')
-    target = delivery.get('target_branch') if isinstance(delivery, dict) and delivery.get('enabled') is True else None
-    if isinstance(base, str) and isinstance(target, str) and base != target:
-        try:
-            base_ref = gate.git(selected['repository'], 'rev-parse', '--verify', 'refs/remotes/origin/' + base + '^{commit}').decode().strip()
-            target_ref = gate.git(selected['repository'], 'rev-parse', '--verify', 'refs/remotes/origin/' + target + '^{commit}').decode().strip()
-            gate.git(selected['repository'], 'merge-base', '--is-ancestor', base_ref, target_ref)
-            checks.append({'name': 'delivery_branches', 'status': 'ok', 'reason': 'Base ' + base + ' is an ancestor of target ' + target + '.'})
-        except FridayError:
-            checks.append({'name': 'delivery_branches', 'status': 'warning', 'reason': 'Base ' + base + ' and target ' + target + ' differ; their local ancestry could not be confirmed.'})
-    if "github" in selected:
-        check("github_access", lambda: github.check(selected))
-        def project_worktree():
-            if not selected.get("worktree_root") or not selected.get("base_branch"):
-                raise FridayError("invalid_profile", "Project worktree_root and base_branch are not configured.")
-        check("project_worktree", project_worktree)
-        if isinstance(selected["github"], dict) and selected["github"].get("selection"):
-            check("github_delivery", lambda: github.check_delivery(selected, mission.config_for(selected)))
-    browser = selected.get("browser")
-    if isinstance(browser, dict) and browser.get("auth") is not None:
-        check("stage_auth", lambda: browser_auth.capture(browser))
-    agents = selected.get("agents", {})
-    if isinstance(agents, dict):
-        for vendor in sorted({agent.get("vendor") for agent in agents.values() if isinstance(agent, dict) and agent.get("vendor") in ("openai", "anthropic", "zai")}):
-            def probe(provider=vendor):
-                binary = "codex" if provider == "openai" else "claude" if provider in ("anthropic", "zai") else None
-                if not binary or not shutil.which(binary):
-                    raise FridayError("runner_unavailable", "Provider CLI is not available.")
-                if provider == "zai":
-                    configured = next(agent for agent in agents.values() if isinstance(agent, dict) and agent.get("vendor") == provider)
-                    credentials.token({"token_env": "FRIDAY_ZAI_TOKEN", "token_file": configured.get("token_file", "~/.config/friday/zai-token"),
-                                       "token_key": configured.get("token_key")}, "FRIDAY_ZAI_TOKEN")
-                elif provider == "anthropic" and os.environ.get("FRIDAY_CLAUDE_API_KEY"):
-                    return
-                else:
-                    command = [binary, "login", "status"] if provider == "openai" else [binary, "auth", "status"]
-                    try:
-                        status = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-                    except (OSError, subprocess.TimeoutExpired):
-                        raise FridayError("runner_unavailable", "Cannot inspect provider authentication.")
-                    if status.returncode:
-                        raise FridayError("credentials_missing", "Provider authentication is unavailable.")
-            check("agent_" + vendor, probe)
-    for service, default in (("tracker", "FRIDAY_TRACKER_TOKEN"), ("gitlab", "FRIDAY_GITLAB_TOKEN"),
-                             ("sentry", "FRIDAY_SENTRY_TOKEN")):
-        config = selected.get(service)
-        if isinstance(config, dict):
-            if service == "gitlab" and config.get("backend") == "glab":
-                def gitlab_auth():
-                    host = urllib.parse.urlsplit(config.get("base_url", "")).netloc
-                    if not host or not shutil.which("glab"):
-                        raise FridayError("credentials_missing", "GitLab CLI or host is unavailable.")
-                    try:
-                        result = subprocess.run(["glab", "auth", "status", "--hostname", host], stdout=subprocess.DEVNULL,
-                                                stderr=subprocess.DEVNULL, timeout=10)
-                    except (OSError, subprocess.TimeoutExpired):
-                        raise FridayError("credentials_missing", "Cannot inspect GitLab CLI authentication.")
-                    if result.returncode:
-                        raise FridayError("credentials_missing", "GitLab CLI authentication is unavailable.")
-                check("gitlab_credentials", gitlab_auth)
-                if config.get("token_file") or config.get("token_env"):
-                    check("gitlab_action_credentials", lambda cfg=config: credentials.token(cfg, "FRIDAY_GITLAB_TOKEN"))
-            else:
-                check(service + "_credentials", lambda cfg=config, env=default: credentials.token(cfg, env))
-    tracker = selected.get("tracker")
-    if isinstance(tracker, dict):
-        check("tracker_organization", lambda: credentials.organization(tracker))
-    return {"profile": selected["name"], "ready": all(item["status"] != "unavailable" for item in checks), "checks": checks}
+            detail = operation()
+            checks.append({"name": name, "status": "ok", **({"detail": detail} if isinstance(detail, str) and detail else {})})
+        except (FridayError, OSError, subprocess.SubprocessError) as exc:
+            checks.append({"name": name, "status": "warning" if warning else "missing", "reason": str(exc)})
+    selected = {}
+    check("profile", lambda: selected.update(profiles.load(path)))
+    if not selected:
+        return {"ready": False, "checks": checks}
+    def repository():
+        result = subprocess.run(["git", "-C", selected["repository"], "rev-parse", "--git-dir"], capture_output=True)
+        if result.returncode:
+            raise FridayError("not_a_repository", "Not a git repository: " + selected["repository"])
+        if not selected.get("worktree_root") or not selected.get("base_branch"):
+            raise FridayError("invalid_profile", "worktree_root and base_branch are required.")
+    check("repository", repository)
+    layout = {}
+    def cast():
+        value, notes = models.cast(selected, models.availability(state.home()))
+        layout.update(value)
+        return "; ".join(notes)
+    check("models", cast)
+    catalog = models.catalog(selected) if layout else {}
+    drivers = {entry["driver"] for entry in catalog.values()}
+    if "claude" in drivers:
+        check("claude_cli", lambda: tool_version("claude"))
+        check("executor_sandbox", sandbox)
+    if "codex" in drivers:
+        def codex():
+            executable = shutil.which("codex")
+            if not executable:
+                raise FridayError("missing", "Codex CLI is not installed.")
+            codex_policy.verify_sandbox(executable)
+        check("codex_cli_and_sandbox", codex)
+    for name, entry in catalog.items():
+        if entry["vendor"] in models.VENDOR_ENDPOINTS:
+            check("token:" + name, lambda entry=entry: models.environment(entry, selected) and None)
+    if not selected.get("executor_commands"):
+        checks.append({"name": "executor_commands", "status": "warning",
+                       "reason": "No executor_commands: the executor cannot run lint, typecheck or tests itself."})
+    if selected.get("gate"):
+        def gate_image():
+            from . import gate
+            gate.image_id(selected.get("gate_image"))
+        check("gate_image", gate_image)
+    else:
+        checks.append({"name": "gate", "status": "warning", "reason": "No gate: milestones are reviewed without an isolated check."})
+    if isinstance(selected.get("browser"), dict):
+        def browser():
+            from . import browser_probe, browser_session
+            browser_session.configuration(selected["browser"], "http://probe.localhost:12345/")
+            browser_probe.verify(selected)
+        check("browser", browser)
+        def port():
+            value = resources.port(state.home(), "doctor-probe")
+            resources.release_port(state.home(), "doctor-probe")
+            return "free ports from %d" % value
+        check("preview_port", port)
+    delivery = (selected.get("delivery") or {}).get("transport", "none")
+    if delivery == "github":
+        check("delivery_github", lambda: tool_version("gh"))
+    elif delivery == "gitlab":
+        check("delivery_gitlab", lambda: tool_version("glab"))
+    else:
+        checks.append({"name": "delivery", "status": "warning", "reason": "No delivery transport: the MR text is only saved."})
+    if selected.get("tracker") is None:
+        checks.append({"name": "tracker", "status": "warning", "reason": "No tracker: start needs --brief."})
+    return {"ready": all(item["status"] != "missing" for item in checks), "checks": checks, "cast": layout}
+
+
+def tool_version(name):
+    executable = shutil.which(name)
+    if not executable:
+        raise FridayError("missing", name + " is not installed.")
+    result = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise FridayError("missing", name + " does not run.")
+    return result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+
+
+def sandbox():
+    """Claude Code's shell sandbox needs Seatbelt on macOS or bubblewrap on Linux; without it executors refuse to start."""
+    needed = "sandbox-exec" if sys.platform == "darwin" else "bwrap"
+    if not shutil.which(needed):
+        raise FridayError("missing", needed + " is not available; the executor sandbox cannot start.")
+
+
+def render(report):
+    marks = {"ok": "✓", "warning": "!", "missing": "✗"}
+    lines = []
+    for item in report["checks"]:
+        text = item.get("reason") or item.get("detail")
+        lines.append("%s %s%s" % (marks[item["status"]], item["name"], ": " + text if text else ""))
+    if report.get("cast"):
+        lines.append("Раскладка: " + ", ".join("%s → %s%s" % (role, entry["model"], " " + entry["effort"] if entry.get("effort") else "")
+                                             for role, entry in report["cast"].items()))
+    lines.append("Готово к работе." if report["ready"] else "Не готово: исправьте пункты со ✗.")
+    return "\n".join(lines)

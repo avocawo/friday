@@ -1,5 +1,7 @@
 """Run a task's milestones: one executor session per milestone, gate, review by a stronger model, disputes to the owner."""
 import json
+import os
+import signal
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -306,8 +308,13 @@ def run_task(root, key, profile):
     card = cards.read(root, key)
     if card["state"] not in ("approved", "running", "stopped") or not card["plan"]["approved"]:
         raise FridayError("invalid_state", "Approve the plan of %s before running it." % key)
-    cards.update(root, key, lambda value: value.update(state="running"))
+    cards.update(root, key, lambda value: value.update(state="running", runner_pid=os.getpid()))
     cards.record(root, key, "run_task_started")
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        def interrupt(signum, frame):
+            raise runner.Interrupted("Stopped by signal %d" % signum)
+        previous = signal.signal(signal.SIGTERM, interrupt)  # friday stop: finish cleanly, never leave agents behind
     completed = []
     try:
         runner.CANCEL.clear()
@@ -325,8 +332,14 @@ def run_task(root, key, profile):
         cards.update(root, key, lambda value: value.update(state="failed"))
         raise
     except BaseException:
+        runner.CANCEL.set()
         cards.update(root, key, lambda value: value.update(state="stopped"))
+        cards.record(root, key, "stopped")
         raise
+    finally:
+        runner.CANCEL.clear()  # every lane has stopped by now; later runs in this process start fresh
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
     left = [item["id"] for item in cards.read(root, key)["milestones"] if item["state"] != "done"]
     delivery = None
     if not left:
@@ -471,3 +484,17 @@ def decide(root, key, name, text, reopen=()):
     affected = cards.update(root, key, change)
     cards.record(root, key, "decision", name=name, reopened=affected)
     return affected
+
+
+def resume(root, key, profile):
+    """Run a stopped or failed task again: failed or blocked milestones start over from the current branch."""
+    def change(value):
+        if value["state"] not in ("stopped", "failed", "approved", "running") or not value["plan"]["approved"]:
+            raise FridayError("invalid_state", "Task %s has nothing to resume (%s)." % (key, value["state"]))
+        for item in value["milestones"]:
+            if item["state"] in ("failed", "blocked", "running"):
+                item["state"] = "pending"
+        value["state"] = "stopped"
+    cards.update(root, key, change)
+    cards.record(root, key, "resumed")
+    return run_task(root, key, profile)

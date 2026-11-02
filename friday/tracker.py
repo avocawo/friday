@@ -1,11 +1,41 @@
-"""Read Tracker through MCP and GitLab through its authenticated CLI."""
-import json
+"""Read the task statement from Yandex Tracker, over its API or its MCP server."""
 import os
-import subprocess
 import urllib.parse
+import urllib.request
 
-from . import browser_protocol, credentials
+from . import browser_protocol, credentials, http, state
 from .errors import FridayError
+
+
+def ticket(profile, key):
+    config = profile.get("tracker")
+    if config is None:
+        return None
+    if isinstance(config, dict) and config.get("backend") == "mcp":
+        return tracker_issue(config, state.validate_key(key))
+    if not isinstance(config, dict) or not isinstance(config.get("base_url"), str):
+        raise FridayError("invalid_profile", "tracker requires base_url and token environment names.")
+    token = credentials.token(config, "FRIDAY_TRACKER_TOKEN")
+    org = credentials.organization(config)
+    base = config["base_url"].rstrip("/")
+    if urllib.parse.urlsplit(base).scheme != "https":
+        raise FridayError("invalid_profile", "Tracker base_url must use HTTPS.")
+    org_header = config.get("org_header", "X-Org-ID")
+    scheme = config.get("auth_scheme", "OAuth")
+    if org_header not in ("X-Org-ID", "X-Cloud-Org-ID") or scheme not in ("OAuth", "Bearer"):
+        raise FridayError("invalid_profile", "Unsupported Tracker authorization configuration.")
+    url = base + "/v3/issues/" + urllib.parse.quote(state.validate_key(key), safe="") + "?expand=comments,links,attachments"
+    request = urllib.request.Request(url, headers={"Authorization": scheme + " " + token, org_header: org,
+                                                   "Accept": "application/json"})
+    try:
+        data = http.read_json(request)
+    except (OSError, ValueError) as exc:
+        raise FridayError("tracker_unavailable", "Could not read Tracker issue: " + str(exc))
+    if not isinstance(data, dict) or data.get("key") != key:
+        raise FridayError("tracker_error", "Tracker returned an unexpected issue.")
+    return {"key": key, "summary": data.get("summary", ""), "description": data.get("description", ""),
+            "url": data.get("self", ""), "comments": data.get("comments", []),
+            "links": data.get("links", []), "attachments": data.get("attachments", [])}
 
 
 def tracker_issue(config, key):
@@ -56,18 +86,3 @@ def tracker_issue(config, key):
     finally:
         if client:
             client.close()
-
-
-def gitlab_get(config, path):
-    base = config.get("base_url")
-    parsed = urllib.parse.urlsplit(base) if isinstance(base, str) else None
-    if not parsed or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
-        raise FridayError("invalid_profile", "GitLab CLI requires an HTTPS base origin.")
-    try:
-        result = subprocess.run(["glab", "api", "--hostname", parsed.netloc, "--method", "GET", path],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, text=True)
-        if result.returncode:
-            raise FridayError("gitlab_unavailable", "GitLab CLI could not read the requested resource.")
-        return json.loads(result.stdout)
-    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-        raise FridayError("gitlab_unavailable", "GitLab CLI request failed: " + type(exc).__name__)

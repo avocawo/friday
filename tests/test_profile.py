@@ -8,13 +8,16 @@ from friday.errors import FridayError
 
 
 class ProfileTests(unittest.TestCase):
-    def test_example_profile_creates_only_a_local_card(self):
+    def test_example_profile_publishes_nothing_and_inherits_the_model_catalog(self):
+        from friday import models
         example = Path(__file__).resolve().parents[1] / "examples" / "project-profile.json"
         selected = profile.load(example)
         self.assertEqual(selected["name"], "example")
         self.assertTrue(selected["engineering_policy"])
-        for key in ("tracker", "gitlab", "worktree_root", "autonomous_delivery"):
+        self.assertEqual(selected["delivery"], {"transport": "none"})
+        for key in ("tracker", "gitlab", "github"):
             self.assertNotIn(key, selected)
+        self.assertEqual(models.cast(selected)[0]["plan"]["name"], "fable")
 
     def test_inherited_paths_remain_relative_to_their_own_file(self):
         with tempfile.TemporaryDirectory() as directory:
