@@ -116,13 +116,16 @@ def choose(profile, role, author=None, available=lambda vendor: True, planner=No
     return entry, note_for(role, entry, author, planner, closeness(role, entry, author, planner, used))
 
 
-def cast(profile, available=lambda vendor: True):
+def cast(profile, available=lambda vendor: True, planner=None):
     """The role → model layout fixed on the card before the plan is approved.
 
     The planner is the first candidate of the top tier whose plan gets the best-placed reviewer: when no other vendor
-    can review the strongest planner, a slightly weaker planner reviewed by the stronger model beats self-review."""
+    can review the strongest planner, a slightly weaker planner reviewed by the stronger model beats self-review.
+    A given planner (the catalog name of an existing plan's author) is kept when it is available."""
     best = None
     planners = candidates(profile, "plan", available)
+    if planner is not None:
+        planners = [entry for entry in planners if entry["name"] == planner] or planners
     for planner in planners:
         if planner["tier"] != planners[0]["tier"]:
             continue  # trade a stronger planner only for another model of the same tier

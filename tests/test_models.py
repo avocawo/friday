@@ -50,6 +50,14 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertEqual(notes, [])
         self.assertEqual(layout["develop"], {"name": "glm", "model": "glm-5.3", "vendor": "zai", "tier": "strong", "driver": "claude"})
 
+    def test_cast_keeps_the_author_of_an_existing_plan_while_it_is_available(self):
+        no_openai = lambda vendor: vendor != "openai"
+        self.assertEqual(models.cast(profile({"plan": ["opus", "fable"]}), no_openai)[0]["plan"]["name"], "opus")
+        layout, _ = models.cast(profile({"plan": ["opus", "fable"]}), no_openai, planner="fable")
+        self.assertEqual((layout["plan"]["name"], layout["plan-review"]["name"]), ("fable", "opus"))
+        self.assertEqual(models.cast(profile(), lambda vendor: vendor == "anthropic" or vendor == "zai", planner="astra")[0]["plan"]["name"],
+                         "opus")  # an unavailable author gives way
+
     def test_role_lists_are_preferences_and_never_weaken_the_reviewer(self):
         layout, _ = models.cast(profile({"develop": ["opus"], "review": ["sol", "glm"]}))
         self.assertEqual(layout["review"]["name"], "astra")

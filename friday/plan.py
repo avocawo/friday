@@ -1,7 +1,9 @@
 """Make a task plan: planner, deterministic feasibility checks, review by another model, one revision round."""
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import card as cards
 from . import models, runner
@@ -204,21 +206,63 @@ def checked(root, key, profile, worktree, result, limits, retries=1):
         result = agent(root, key, profile, "plan", prompt, PLAN_SCHEMA, resume=result.session)
 
 
+def draft_path(root, key):
+    return cards.directory(root, key) / "plan-draft.json"
+
+
+def save_draft(root, key, prompt, planner, result):
+    """The checked first plan survives a failed start, so a rerun with the same prompt does not plan again."""
+    draft_path(root, key).write_text(json.dumps({"prompt": hashlib.sha256(prompt.encode("utf-8")).hexdigest(), "planner": planner,
+                                                 "session": result.session, "plan": result.structured},
+                                                ensure_ascii=False) + "\n", encoding="utf-8")
+    return result
+
+
+def saved_draft(root, key, prompt):
+    try:
+        saved = json.loads(draft_path(root, key).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return saved if saved.get("prompt") == hashlib.sha256(prompt.encode("utf-8")).hexdigest() else None
+
+
+def plan_review(root, key, profile, prompt):
+    """Review the plan; a reviewer out of quota is replaced once by the next model the rules allow."""
+    for attempt in range(2):
+        try:
+            return agent(root, key, profile, "plan-review", prompt, REVIEW_SCHEMA).structured
+        except FridayError as exc:
+            if attempt or "(quota)" not in str(exc):
+                raise
+        layout = cards.read(root, key)["cast"]
+        entry, note = models.reviewer(profile, layout, "plan-review", layout["plan"], models.availability(root))
+        if entry["model"] == layout["plan-review"]["model"]:
+            raise FridayError("agent_failed", "No plan reviewer with quota is available.")
+        cards.update(root, key, lambda value: value["cast"].update({"plan-review": entry}))
+        cards.record(root, key, "cast_note", note=note or "plan-review: замена после исчерпания квоты")
+
+
 def make(root, key, profile, ticket):
     """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval."""
     card = cards.read(root, key)
     limits = profile.get("limits")
-    layout, notes = models.cast(profile, models.availability(root))
+    rules = PLAN_RULES.format(**dict(LIMITS, **(limits or {})))
+    prompt = PIPELINE + "\n\n" + rules + "\n\nTask:\n" + context(card, profile, ticket)
+    saved = saved_draft(root, key, prompt)
+    layout, notes = models.cast(profile, models.availability(root), planner=saved and saved["planner"])
     cards.update(root, key, lambda value: value.update(cast=layout, state="planning"))
     for note in notes:
         cards.record(root, key, "cast_note", note=note)
     worktree = card["worktree"]
-    rules = PLAN_RULES.format(**dict(LIMITS, **(limits or {})))
-    prompt = PIPELINE + "\n\n" + rules + "\n\nTask:\n" + context(card, profile, ticket)
-    planned = checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA), limits)
+    if saved and saved["planner"] == layout["plan"]["name"]:
+        planned = SimpleNamespace(structured=saved["plan"], session=saved["session"])
+        cards.record(root, key, "plan_reused", reason="the checked plan of the failed start")
+    else:
+        planned = save_draft(root, key, prompt, layout["plan"]["name"],
+                             checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA), limits))
     review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + "\n\nTask:\n" + context(card, profile, ticket) +
                      "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2))
-    review = agent(root, key, profile, "plan-review", review_prompt, REVIEW_SCHEMA).structured
+    review = plan_review(root, key, profile, review_prompt)
     findings = review["findings"]
     cards.record(root, key, "plan_reviewed", verdict=review["verdict"], findings=len(findings),
                  blocking=sum(item["severity"] == "blocking" for item in findings))

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from friday import card, plan, workspace
+from friday import models, card, plan, workspace
 from friday.errors import FridayError
 
 CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
@@ -138,6 +138,25 @@ class PlanTests(unittest.TestCase):
         self.assertEqual((value["state"], value["plan"]["approved"]), ("approved", True))
         with self.assertRaises(FridayError):
             plan.approve(self.root, "T-1")
+
+    def test_failed_start_keeps_the_plan_and_replaces_a_reviewer_out_of_quota(self):
+        self.profile["models"] = dict(MODELS, judge={"model": "judge-1", "vendor": "delta", "driver": "claude", "tier": "frontier"})
+        real = plan.agent
+        def quota_once(root, key, profile, role, *rest, **options):
+            if role == "plan-review" and profile.get("quota_hit") is None:
+                profile["quota_hit"] = True
+                models.exhausted(root, "beta", "usage limit")
+                raise FridayError("agent_failed", "plan-review did not return a result (quota): usage limit")
+            return real(root, key, profile, role, *rest, **options)
+        self.calls(("planner", PLAN), ("judge", {"verdict": "ok", "findings": []}))
+        with patch("friday.plan.agent", side_effect=quota_once):
+            self.start()
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["cast"]["plan-review"]["model"]), ("awaiting_approval", "judge-1"))
+        self.calls(("judge2", {"verdict": "ok", "findings": []}))
+        card.update(self.root, "T-1", lambda v: v.update(state="failed"))
+        plan.make(self.root, "T-1", self.profile, "Сделать приветствие для пользователя.")  # the rerun does not plan again
+        self.assertIn("plan_reused", [event["type"] for event in card.events(self.root, "T-1")])
 
     def test_infeasible_plan_goes_back_to_the_planner_once(self):
         broken = copy.deepcopy(PLAN)
