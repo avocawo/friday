@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import gate, models, runner, workspace
+from . import final, gate, models, runner, workspace
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -102,12 +102,14 @@ def numbered(findings):
                      for index, item in enumerate(findings))
 
 
-def run_role(root, key, profile, role, entry, worktree, prompt, schema, milestone_id, *, write=False, resume=None):
+def run_role(root, key, profile, role, entry, worktree, prompt, schema, milestone_id, *, write=False, resume=None, mcp=None):
     commands = list(profile.get("executor_commands", [])) + GIT_COMMANDS if write else []
+    env = dict(models.environment(entry, profile), **(identity(worktree) if write else {}))
+    if mcp:
+        env["MCP_TIMEOUT"] = "180000"  # the preview browser takes a while to start
     spec = runner.Spec(driver=entry["driver"], model=entry["model"], effort=entry.get("effort"), prompt=prompt, cwd=worktree,
                        log_dir="", write=write, commands=commands, schema=schema, resume=resume,
-                       env=dict(models.environment(entry, profile), **(identity(worktree) if write else {})),
-                       deny_read=profile.get("executor_deny_read", []))
+                       env=env, deny_read=profile.get("executor_deny_read", []), mcp=mcp)
     return cards.run_agent(root, key, spec, role=role, milestone=milestone_id, phase=role, entry=entry, profile=profile)
 
 
@@ -197,12 +199,17 @@ def run(root, key, profile, milestone_id, worktree=None):
                 disputed = {(d["file"], d["problem"]) for d in disputes}
                 findings = [finding for finding in review_value["findings"]
                             if finding["severity"] == "blocking" and (finding["file"], finding["problem"]) not in disputed]
+                source = "A reviewer of another vendor found blocking problems."
+                if not findings and item["ui"]:
+                    findings = [finding for finding in accept_in_browser(root, key, profile, layout, entry, worktree, item)
+                                if (finding["file"], finding["problem"]) not in disputed]
+                    source = "The browser acceptance check saw these criteria fail in the running application."
                 if not findings:
                     return close(root, key, milestone_id, item, start, worktree, review_value, gate_record, disputes, extra, round_number)
                 failures += 1
-                feedback_text = ("A reviewer of another vendor found blocking problems. Fix each one, or dispute it in disputes "
-                                 "with the finding number, a reason and evidence (rule path and quote, or code location). "
-                                 "Disputed findings go to the owner.\n\n" + numbered(findings))
+                feedback_text = (source + " Fix each one, or dispute it in disputes with the finding number, a reason and "
+                                 "evidence (rule path and quote, or code location). Disputed findings go to the owner.\n\n" +
+                                 numbered(findings))
         if failures >= 2:
             escalated, note = models.executor(profile, layout, item["complexity"], failures, entry, available)
             if escalated["name"] != entry["name"]:
@@ -225,6 +232,26 @@ def run(root, key, profile, milestone_id, worktree=None):
     set_state(root, key, milestone_id, state="failed")
     cards.record(root, key, "milestone_failed", milestone=milestone_id, gate=gate_record["log"])
     raise FridayError("milestone_failed", "Milestone %s still fails the gate after all rounds; see %s" % (milestone_id, gate_record["log"]))
+
+
+def accept_in_browser(root, key, profile, layout, author, worktree, item):
+    """Blocking findings from the browser acceptance of a UI milestone; an unverifiable check is noted, not blocking."""
+    entry, note = models.reviewer(profile, layout, "browser", author, models.availability(root))
+    if note:
+        cards.record(root, key, "cast_note", milestone=item["id"], note=note)
+    result = final.browser(root, key, profile, entry, worktree, item, run_role, REVIEW_SCHEMA)
+    if result is None:
+        return []
+    if result.status != "ok" or not isinstance(result.structured, dict):
+        cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason=result.error or result.status)
+        return []
+    value = result.structured
+    statuses = [c["status"] for c in value["criteria_results"]]
+    cards.record(root, key, "browser_checked", milestone=item["id"], verdict=value["verdict"], model=entry["model"],
+                 unverifiable=statuses.count("unverifiable"))
+    if not statuses or all(status == "unverifiable" for status in statuses):
+        cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason="no criterion could be observed")
+    return [finding for finding in value["findings"] if finding["severity"] == "blocking"]
 
 
 def review(root, key, profile, entry, worktree, document, item, start, gate_record, previous, disputes):
@@ -301,9 +328,67 @@ def run_task(root, key, profile):
         cards.update(root, key, lambda value: value.update(state="stopped"))
         raise
     left = [item["id"] for item in cards.read(root, key)["milestones"] if item["state"] != "done"]
+    delivery = None
+    if not left:
+        try:
+            delivery = finish(root, key, profile)
+        except FridayError:
+            cards.update(root, key, lambda value: value.update(state="failed"))
+            raise
     cards.update(root, key, lambda value: value.update(state="done" if not left else "stopped"))
     cards.record(root, key, "run_task_finished", completed=[item["milestone"] for item in completed], left=left)
-    return {"completed": completed, "left": left}
+    return {"completed": completed, "left": left, "delivery": delivery}
+
+
+FIX_RULES = (
+    "The final review of the whole task found blocking problems. Fix each one in this repository, run your checks and "
+    "commit with git commit -m \"{key} final: <short summary>\", or dispute a finding in disputes with its number, a reason "
+    "and evidence. Disputed findings go to the owner. Follow the project rules digest.")
+
+
+def finish(root, key, profile):
+    """Final review and blind check, one fix round for blocking findings, then the draft merge request."""
+    card = cards.read(root, key)
+    worktree, layout = card["worktree"], card["cast"]
+    cards.record(root, key, "final_started")
+    results, final_entry = final.final_review(root, key, profile, run_role, REVIEW_SCHEMA)
+    blocking = [f for value in results.values() for f in value["findings"] if f["severity"] == "blocking"]
+    minor = [f for value in results.values() for f in value["findings"] if f["severity"] == "minor"]
+    cards.update(root, key, lambda value: value.update(final_minor=minor))
+    if blocking:
+        document = load_plan(root, key)
+        entry = layout["develop"]
+        allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS
+        prompt = (FIX_RULES.format(key=key) + "\n\nShell commands you may run, each starting exactly like one of these:\n" +
+                  "\n".join("- " + command for command in allowed) + "\n\nProject rules:\n" + "\n".join(document["rules"]) +
+                  "\n\nFindings:\n" + numbered(blocking))
+        result = run_role(root, key, profile, "develop", entry, worktree, prompt, EXECUTOR_SCHEMA, "final", write=True)
+        disputes = []
+        for dispute in (result.structured or {}).get("disputes", []):
+            if 0 <= dispute["finding"] < len(blocking):
+                disputes.append(dict(blocking[dispute["finding"]], milestone="final", executor_reason=dispute["reason"],
+                                     executor_evidence=dispute["evidence"], reviewer=final_entry["model"], status="owner"))
+        if git(worktree, "status", "--porcelain"):
+            names = identity(worktree)
+            git(worktree, "add", "-A")
+            git(worktree, "-c", "user.name=" + names["GIT_AUTHOR_NAME"], "-c", "user.email=" + names["GIT_AUTHOR_EMAIL"],
+                "commit", "-qm", "%s final: changes left uncommitted by the executor" % key)
+        if profile.get("gate"):
+            log = cards.directory(root, key) / "gates" / "final.log"
+            record = gate.check(root, profile, worktree, card.get("base"), log,
+                                on_wait=lambda name: cards.waiting(root, key, name, "final"))
+            cards.stop_waiting(root, key, "final")
+            cards.record(root, key, "gate", milestone="final", status=record["status"], head=record["head"])
+            if record["status"] != "passed":
+                raise FridayError("final_failed", "The gate fails after the final fixes; see " + record["log"])
+        again, _ = final.final_review(root, key, profile, run_role, REVIEW_SCHEMA, roles=("final-review",))
+        disputed = {(d["file"], d["problem"]) for d in disputes}
+        remaining = [f for f in again["final-review"]["findings"] if f["severity"] == "blocking" and (f["file"], f["problem"]) not in disputed]
+        disputes += [dict(f, milestone="final", executor_reason="Не исправлено после финального ревью.", executor_evidence="",
+                          reviewer=final_entry["model"], status="owner") for f in remaining]
+        if disputes:
+            cards.update(root, key, lambda value: value["disputes"].extend(disputes))
+    return final.deliver(root, key, profile)
 
 
 def run_parallel(root, key, profile, group):

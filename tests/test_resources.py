@@ -126,7 +126,8 @@ class ParallelTests(unittest.TestCase):
         self.profile["path"] = str(self.profile_path)
         for patcher in (patch.dict(os.environ, {"PATH": str(self.fake / "bin") + os.pathsep + os.environ.get("PATH", ""),
                                                 "FAKE_DIR": str(self.fake)}),
-                        patch("friday.models.environment", return_value={"FAKE_DIR": str(self.fake)})):
+                        patch("friday.models.environment", return_value={"FAKE_DIR": str(self.fake)}),
+                        patch("friday.milestone.finish", return_value=None)):  # the final phase has its own tests
             patcher.start()
             self.addCleanup(patcher.stop)
         card.create(self.root, "T-1", str(self.profile_path))

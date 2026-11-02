@@ -38,6 +38,7 @@ class Spec:
     schema: dict = None              # structured final answer
     effort: str = None               # reasoning effort, e.g. "medium" or "max"
     deny_read: list = field(default_factory=list)  # extra paths the executor's shell may not read
+    mcp: dict = None                 # one scoped MCP server: {"name", "command": [...], "tools": [...]}
     resume: str = None               # session id of a previous run to continue
     env: dict = field(default_factory=dict)
     idle_timeout: float = 600        # seconds without output while no tool call is open
@@ -80,6 +81,14 @@ class Claude:
         spec = self.spec
         tools = ["Read", "Glob", "Grep"] + (["Edit", "Write"] if spec.write else []) + (["Bash"] if spec.commands else [])
         permissions = {"deny": SECRET_FILES + ["mcp__*"]}
+        servers = []
+        if spec.mcp:
+            # Only the named server, only its listed tools; every other MCP tool stays denied.
+            allowed = ["mcp__%s__%s" % (spec.mcp["name"], tool) for tool in spec.mcp["tools"]]
+            permissions = {"deny": SECRET_FILES, "allow": allowed}
+            tools += allowed
+            config = {"mcpServers": {spec.mcp["name"]: {"command": spec.mcp["command"][0], "args": spec.mcp["command"][1:]}}}
+            servers = ["--mcp-config", json.dumps(config), "--allowedTools", ",".join(allowed)]
         settings = {"permissions": permissions}
         # The allowlist only scopes the executor: under acceptEdits Claude Code also auto-approves read-only and in-cwd
         # edit commands, and an allowed project script can be rewritten by the executor. The OS sandbox is the boundary:
@@ -93,6 +102,7 @@ class Claude:
         args = [shutil.which("claude") or "claude", "-p", "--output-format", "stream-json", "--verbose",
                 "--restricted", "--strict-mcp-config", "--no-chrome", "--model", spec.model,
                 "--tools", ",".join(tools), "--settings", json.dumps(settings)]
+        args += servers
         args += ["--resume", self.session] if spec.resume else ["--session-id", self.session]
         if spec.write:
             args += ["--permission-mode", "acceptEdits"]
@@ -189,6 +199,13 @@ class Codex:
                    "-c", 'web_search="disabled"', "-c", 'approval_policy="never"', "--model", spec.model]
         if spec.effort:
             options += ["-c", "model_reasoning_effort=" + json.dumps(spec.effort)]
+        if spec.mcp:
+            name = spec.mcp["name"]
+            options += ["-c", "mcp_servers.%s.command=%s" % (name, json.dumps(spec.mcp["command"][0])),
+                        "-c", "mcp_servers.%s.args=%s" % (name, json.dumps(spec.mcp["command"][1:])),
+                        "-c", "mcp_servers.%s.required=true" % name, "-c", "mcp_servers.%s.startup_timeout_sec=180" % name]
+            for tool in spec.mcp["tools"]:
+                options += ["-c", 'mcp_servers.%s.tools.%s.approval_mode="approve"' % (name, tool)]
         if spec.schema is not None:
             schema = Path(directory) / "schema.json"
             schema.write_text(json.dumps(spec.schema))
