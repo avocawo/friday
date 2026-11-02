@@ -115,13 +115,32 @@ class Session:
             raise FridayError("browser_unavailable", "Browser tool or arguments are not permitted.")
         if name == "navigate_page":
             kind = arguments.get("type", "url")
-            if kind not in ("url", "reload"):
+            if kind not in ("url", "reload", "back", "forward"):
                 raise FridayError("browser_unavailable", "Only local navigation is permitted.")
             if kind == "url":
                 url = urllib.parse.urlsplit(arguments.get("url", ""))
                 if url.scheme + "://" + url.netloc != self.origin or url.username or url.password:
                     raise FridayError("browser_unavailable", "Only local preview navigation is permitted.")
+            if getattr(self, "emulated", False):
+                # Staging binds the session to a browser fingerprint that includes the screen: a page loaded under an
+                # emulated viewport sends another fingerprint and loses the session (401).
+                self.client.tool("emulate", {"pageId": self.page})
+                self.emulated = False
+            result = self.client.tool(name, dict(arguments, pageId=self.page))
+            if kind in ("back", "forward"):
+                self.stay_on_preview()
+            return result
+        if name == "emulate":
+            self.emulated = bool(arguments.get("viewport"))
         return self.client.tool(name, dict(arguments, pageId=self.page))
+
+    def stay_on_preview(self):
+        """History navigation must not leave the preview; a tab that did is sent back and the call fails."""
+        listing = browser_protocol.text(self.client.tool("list_pages", {}))
+        url = dict(browser_probe.pages(listing)).get(self.page)
+        if url is None or not browser_probe.same_origin(url, self.origin):
+            self.client.tool("navigate_page", {"pageId": self.page, "type": "url", "url": self.origin + "/"})
+            raise FridayError("browser_unavailable", "History navigation left the preview; the tab was returned to it.")
 
     def close(self):
         if self.client:

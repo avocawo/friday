@@ -16,8 +16,9 @@ BROWSER_RULES = (
     "Check the behavior criteria of one milestone in a local preview of the application, using only the friday browser "
     "tools. Call take_snapshot first. For each criterion open the route or menu the milestone changes, wait until loading "
     "and redirects settle, then act with real clicks, typing and keys and observe the page and the relevant network "
-    "requests. To check a phone or desktop layout, call emulate with a viewport on the current page and restore it before "
-    "the next full navigation. A login screen or 401 seen while loading is checked again after loading before it counts. "
+    "requests. To check a phone or desktop layout, call emulate with a viewport on the current page; Friday clears it "
+    "before any navigation, because a page loaded under another viewport loses the staging session. Browser history "
+    "(navigate_page back or forward) is allowed within the preview. A login screen or 401 seen while loading is checked again after loading before it counts. "
     "Never bypass authorization and never open get_network_request on authenticated requests. Judge each criterion pass, "
     "fail or unverifiable with what you actually observed; when the preview or a tool is unavailable say unverifiable, do "
     "not infer a defect. Report a blocking finding only for behaviour you saw fail. Write in the task's language.")

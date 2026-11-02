@@ -64,3 +64,21 @@ class BrowserSessionTests(unittest.TestCase):
         session.client.tool.assert_called_once_with('take_snapshot', {'pageId': 7})
         session.call('emulate', {'viewport': '375x900x1'})
         session.client.tool.assert_called_with('emulate', {'pageId': 7, 'viewport': '375x900x1'})
+
+    def test_emulation_is_cleared_before_navigation_and_history_stays_on_the_preview(self):
+        session = browser_session.Session.__new__(browser_session.Session)
+        session.origin = 'http://test.localhost:5189'
+        session.page = 7
+        session.client = Mock()
+        session.client.tool.return_value = {'content': [{'type': 'text', 'text': '7: http://test.localhost:5189/list [selected]'}]}
+        session.call('emulate', {'viewport': '375x900x1'})
+        session.call('navigate_page', {'type': 'reload'})
+        calls = [call.args for call in session.client.tool.call_args_list]
+        self.assertEqual(calls[1:3], [('emulate', {'pageId': 7}), ('navigate_page', {'type': 'reload', 'pageId': 7})])
+        session.client.tool.reset_mock()
+        session.call('navigate_page', {'type': 'back'})
+        self.assertEqual([call.args[0] for call in session.client.tool.call_args_list], ['navigate_page', 'list_pages'])
+        session.client.tool.return_value = {'content': [{'type': 'text', 'text': '7: about:blank'}]}
+        with self.assertRaises(FridayError):
+            session.call('navigate_page', {'type': 'back'})
+        session.client.tool.assert_called_with('navigate_page', {'pageId': 7, 'type': 'url', 'url': 'http://test.localhost:5189/'})
