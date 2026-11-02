@@ -21,6 +21,19 @@ def inspect(path):
     check("automation", lambda: autopilot.preflight(selected, selected["repository"]))
     check("runner_isolation", lambda: isolation.require_runner(selected, selected["repository"]))
     check("browser_isolation", lambda: isolation.require_browser(selected))
+    if selected.get('full_ci') is not None:
+        checks.append({'name': 'full_ci', 'status': 'unavailable', 'reason': 'full_ci is no longer supported; publication stays blocked.'})
+    delivery = selected.get('autonomous_delivery')
+    base = selected.get('base_branch')
+    target = delivery.get('target_branch') if isinstance(delivery, dict) and delivery.get('enabled') is True else None
+    if isinstance(base, str) and isinstance(target, str) and base != target:
+        try:
+            base_ref = gate.git(selected['repository'], 'rev-parse', '--verify', 'refs/remotes/origin/' + base + '^{commit}').decode().strip()
+            target_ref = gate.git(selected['repository'], 'rev-parse', '--verify', 'refs/remotes/origin/' + target + '^{commit}').decode().strip()
+            gate.git(selected['repository'], 'merge-base', '--is-ancestor', base_ref, target_ref)
+            checks.append({'name': 'delivery_branches', 'status': 'ok', 'reason': 'Base ' + base + ' is an ancestor of target ' + target + '.'})
+        except FridayError:
+            checks.append({'name': 'delivery_branches', 'status': 'warning', 'reason': 'Base ' + base + ' and target ' + target + ' differ; their local ancestry could not be confirmed.'})
     if "github" in selected:
         check("github_access", lambda: github.check(selected))
         def project_worktree():
@@ -78,4 +91,4 @@ def inspect(path):
     tracker = selected.get("tracker")
     if isinstance(tracker, dict):
         check("tracker_organization", lambda: credentials.organization(tracker))
-    return {"profile": selected["name"], "ready": all(item["status"] == "ok" for item in checks), "checks": checks}
+    return {"profile": selected["name"], "ready": all(item["status"] != "unavailable" for item in checks), "checks": checks}

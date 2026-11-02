@@ -21,7 +21,9 @@ class GitLabAdapterTests(unittest.TestCase):
         args = argparse.Namespace(base="https://gitlab.example", project="team/project", action="create-mr", source="feature", target="main")
         command, payload = gitlab.request_for(args, json.dumps({"title": "Title", "description": "Body"}))
         self.assertEqual(payload, {"title": "Draft: Title", "description": "Body", "source_branch": "feature", "target_branch": "main"})
-        self.assertEqual(command, ["glab", "api", "--hostname", "gitlab.example", "--method", "POST", "projects/team%2Fproject/merge_requests", "--input", "-"])
+        self.assertEqual(command, ["glab", "api", "--hostname", "gitlab.example", "--method", "POST", "projects/team%2Fproject/merge_requests",
+                                   "--raw-field", "title=Draft: Title", "--raw-field", "description=Body",
+                                   "--raw-field", "source_branch=feature", "--raw-field", "target_branch=main"])
 
     def test_adapter_passes_token_only_in_environment_and_payload_on_stdin(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"OAUTH_TOKEN": "other"}, clear=True):

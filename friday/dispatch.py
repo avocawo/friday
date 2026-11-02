@@ -9,7 +9,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from . import credentials, crew, gate, isolated_preview, isolation, profile, runners, schemas, state, worktree as worktrees
+from . import criteria as criterion_rules, credentials, crew, disputes, gate, isolated_preview, isolation, profile, runners, schemas, state, worktree as worktrees
 from .errors import FridayError
 from .locks import locked
 
@@ -74,7 +74,7 @@ def instructions(selected, names):
     return result
 
 
-def invoke(root, key, stage_name, item, selected, target, upstream, feedback=None):
+def invoke(root, key, stage_name, item, selected, target, upstream, feedback=None, criteria_override=None):
     agent = selected["agents"][item["agent"]]
     command = runners.command(agent)
     role = item["role"]
@@ -84,13 +84,17 @@ def invoke(root, key, stage_name, item, selected, target, upstream, feedback=Non
     stage = card["stages"][stage_name]
     request = {"task": key, "stage": stage_name, "worktree": target, "role": role,
                "model": agent["model"], "vendor": agent["vendor"], "brief": item["brief"],
-               "criteria": stage["criteria"], "skills": instructions(selected, item["skills"]), "upstream": upstream}
+               "criteria": criterion_rules.for_role(stage, role) if criteria_override is None else criteria_override, "skills": instructions(selected, item["skills"]), "upstream": upstream}
     if role in ("research", "develop", "review"):
         from . import workflow
+        if stage.get('steps'):
+            request['steps'] = stage['steps']
         request["planning_assumptions"] = card.get("planning_assumptions", [])
         request["planning_questions"] = workflow.unanswered(card)
         if selected.get("engineering_policy"):
             request["engineering_policy"] = selected["engineering_policy"]
+        if role == 'review' and stage.get('review_disputes'):
+            request['review_disputes'] = stage['review_disputes']
     if feedback and role == "develop":
         request["feedback"] = feedback
     if role in ("blind-code", "blind-behavior"):
@@ -121,7 +125,9 @@ def invoke(root, key, stage_name, item, selected, target, upstream, feedback=Non
     if role in ("review", "blind-code", "blind-behavior"):
         try:
             response = json.loads(output)
-            verdict = schemas.validate_review(response, strict=True, observed=role == "blind-behavior")
+            if (stage.get('structured_criteria') or criteria_override is not None) and 'criteria_results' not in response:
+                raise ValueError('Review must report a result for each assigned criterion.')
+            verdict = schemas.validate_review(response, strict=True, observed=role == "blind-behavior" or criteria_override is not None, criteria=request['criteria'])
         except ValueError as exc:
             raise FridayError("invalid_verdict", str(exc))
     if not output.strip() or len(output) > 1000000:
@@ -149,7 +155,7 @@ def dependents(assignments, identifier):
         invalidated.update(extra)
 
 
-def run(root, key, stage_name):
+def run(root, key, stage_name, *, require_gate=False):
     initial = state.read(root, key)
     selected = profile.load(initial["profile"])
     target, branch = initial.get("worktree"), initial.get("branch")
@@ -208,6 +214,38 @@ def run(root, key, stage_name):
             current_head = gate.git(target, "rev-parse", "HEAD").decode().strip()
             if current_head != progress["head"] or gate.git(target, "status", "--porcelain=v1", "-z", "--untracked-files=all"):
                 raise FridayError("stale_evidence", "The worktree changed outside dispatch.")
+            if item['role'] in ('blind-code', 'blind-behavior') and not criterion_rules.for_role(stage, item['role']):
+                directory = state.task_path(root, key).parent / 'evidence'
+                directory.mkdir(parents=True, exist_ok=True)
+                path = directory / (uuid.uuid4().hex + '.txt')
+                path.write_text('No criteria are assigned to this check.\n', encoding='utf-8')
+                def skip(latest):
+                    latest['stages'][stage_name]['team_progress']['assignments'][item['id']] = {'status': 'done', 'skipped': True, 'head': current_head, 'evidence': str(path)}
+                state.update(root, key, skip)
+                continue
+            if require_gate and item["role"] in ("review", "blind-code", "blind-behavior") and progress.get("gated_head") != current_head:
+                result = gate.execute(root, key, stage_name, dict(selected, repository=target), branch_locked=True)
+                if result["status"] != "passed":
+                    if result["status"] == "environment_unavailable":
+                        raise FridayError("environment_unavailable", "Gate environment is unavailable; see " + result["log"])
+                    developers = [name for name in done if next(entry for entry in assignments if entry["id"] == name)["role"] == "develop"]
+                    developer = developers[-1] if developers else None
+                    attempts = progress.get("gate_attempts", {}).get(developer, 0) if developer else 0
+                    if not developer or attempts >= 2:
+                        raise FridayError("gate_failed", "Gate still fails after three attempts; see " + result["log"])
+                    feedback = gate.feedback(result)
+                    invalidated = dependents(assignments, developer)
+                    def retry_gate(latest):
+                        current = latest["stages"][stage_name]["team_progress"]
+                        for name in invalidated:
+                            current["assignments"].pop(name, None)
+                        current.setdefault("feedback", {})[developer] = feedback
+                        current.setdefault("gate_attempts", {})[developer] = attempts + 1
+                        current.pop("gated_head", None)
+                    state.update(root, key, retry_gate)
+                    continue
+                state.update(root, key, lambda latest: latest["stages"][stage_name]["team_progress"].update(gated_head=current_head))
+                continue
             def begin(latest):
                 latest["stages"][stage_name]["team_progress"]["assignments"][item["id"]] = {"status": "running", "head": current_head}
             state.update(root, key, begin)
@@ -222,28 +260,64 @@ def run(root, key, stage_name):
             if new_head != current_head:
                 raise FridayError("stale_evidence", "Agent changed HEAD; its result needs inspection.")
             dirty = gate.git(target, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+            challenges = disputes.from_developer(target, Path(result['evidence']).read_text(encoding='utf-8'), progress.get('feedback', {}).get(item['id'])) if item['role'] == 'develop' else []
             if item["role"] != "develop" and dirty:
                 raise FridayError("stale_evidence", "Read-only agent changed the worktree.")
+            if item['role'] == 'blind-code' and result['verdict'] == 'unverifiable':
+                reviewer = next((entry for entry in assignments if entry['role'] == 'review' and done.get(entry['id'], {}).get('status') == 'done'), None)
+                if reviewer:
+                    required = criterion_rules.for_role(stage, 'blind-code')
+                    fallback = invoke(root, key, stage_name, reviewer, selected, target, {}, criteria_override=required)
+                    after = state.read(root, key)
+                    if (after.get('plan_revision', 0), after.get('decision_revision', 0)) != revision or definition(profile.load(card['profile']), assignments, target) != binding or gate.git(target, 'rev-parse', 'HEAD').decode().strip() != current_head or gate.git(target, 'status', '--porcelain=v1', '-z', '--untracked-files=all'):
+                        raise FridayError('stale_evidence', 'The task changed during fallback review.')
+                    def record_fallback(latest):
+                        latest['events'].append(model_event(stage_name, item, selected['agents'][item['agent']], current_head, result, revision))
+                        event = model_event(stage_name, reviewer, selected['agents'][reviewer['agent']], current_head, fallback, revision)
+                        event.update(fallback_for='blind-code', verified_criteria=required)
+                        latest['events'].append(event)
+                        if fallback['verdict'] == 'pass':
+                            latest['stages'][stage_name]['team_progress']['assignments'][item['id']] = dict(result, status='done', head=current_head)
+                        else:
+                            latest['stages'][stage_name]['team_progress']['assignments'].pop(item['id'], None)
+                    state.update(root, key, record_fallback)
+                    if fallback['verdict'] == 'pass':
+                        continue
+                    raise FridayError('review_unverifiable', 'Fallback review did not establish the criteria; see ' + fallback['evidence'])
             if item["role"] == "develop" and dirty:
                 from . import autopilot
                 latest = state.read(root, key)
                 if (latest.get("plan_revision", 0), latest.get("decision_revision", 0)) != revision:
                     raise FridayError("stale_evidence", "The plan or a decision changed before commit.")
-                autopilot.check_size(target, stage)
+                for size_attempt in range(3):
+                    try:
+                        autopilot.check_size(target, stage)
+                        break
+                    except FridayError as exc:
+                        if exc.code != 'stage_too_large' or size_attempt == 2:
+                            raise
+                        feedback = str(exc) + ' Reduce or split the changes while preserving the task scope.'
+                        result = invoke(root, key, stage_name, item, selected, target, upstream, feedback)
+                        latest = state.read(root, key)
+                        if (latest.get('plan_revision', 0), latest.get('decision_revision', 0)) != revision or gate.git(target, 'rev-parse', 'HEAD').decode().strip() != current_head or definition(profile.load(card['profile']), assignments, target) != binding:
+                            raise FridayError('stale_evidence', 'The task changed during size revision.')
+                challenges = disputes.from_developer(target, Path(result['evidence']).read_text(encoding='utf-8'), progress.get('feedback', {}).get(item['id']))
                 gate.git(target, "add", "-A")
                 gate.git(target, "commit", "-m", key + ": " + stage_name + " / " + item["id"])
                 new_head = gate.git(target, "rev-parse", "HEAD").decode().strip()
-            if result["verdict"] == "fail":
-                if item["role"] == "blind-behavior" and schemas.environment_failure(result["evidence"]):
+            if result["verdict"] in ("fail", "unverifiable"):
+                if result["verdict"] == "unverifiable":
                     def retry_environment(latest):
                         current = latest["stages"][stage_name]["team_progress"]
                         current["assignments"].pop(item["id"], None)
                         latest["events"].append(model_event(stage_name, item, selected["agents"][item["agent"]], current_head, result, revision))
                     state.update(root, key, retry_environment)
-                    raise FridayError("environment_unavailable", "Browser verification is unavailable; the current review can be retried.")
+                    raise FridayError("review_unverifiable", "Review needs additional evidence; see " + result["evidence"])
                 developers = [name for name in done if next(entry for entry in assignments if entry["id"] == name)["role"] == "develop"]
                 developer = developers[-1] if developers else None
-                attempts = progress.get("repair_attempts", {}).get(developer, 0) if developer else 0
+                bucket = 'cosmetic_attempts' if schemas.cosmetic_review(result['evidence']) else 'repair_attempts'
+                repair_key = (developer + ':' + item['role']) if developer else ''
+                attempts = progress.get(bucket, {}).get(repair_key, 0) if developer else 0
                 if not developer or attempts >= 2:
                     def record_failure(latest):
                         current = latest["stages"][stage_name]["team_progress"]
@@ -261,13 +335,16 @@ def run(root, key, stage_name):
                     for name in invalidated:
                         current["assignments"].pop(name, None)
                     current.setdefault("feedback", {})[developer] = feedback
-                    current.setdefault("repair_attempts", {})[developer] = attempts + 1
+                    current.setdefault(bucket, {})[repair_key] = attempts + 1
                 state.update(root, key, retry)
                 continue
             def finish(latest):
                 if (latest.get("plan_revision", 0), latest.get("decision_revision", 0)) != revision:
                     raise FridayError("stale_evidence", "The plan or a decision changed during agent execution.")
                 progress = latest["stages"][stage_name]["team_progress"]
+                if challenges:
+                    latest['stages'][stage_name].setdefault('review_disputes', []).extend(dict(entry, head=current_head) for entry in challenges)
+                    latest['events'].append({'type': 'review_disputed', 'stage': stage_name, 'at': state.now()})
                 progress["head"] = new_head
                 progress["assignments"][item["id"]] = dict(result, status="done", head=new_head)
                 progress.get("feedback", {}).pop(item["id"], None)

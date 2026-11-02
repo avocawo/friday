@@ -4,7 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from . import browser_auth, dispatch, gate, isolation, journal, planner, profile, schemas, stages, state, workflow, worktree as worktrees
+from . import browser_auth, criteria, dispatch, gate, isolation, journal, planner, profile, schemas, stages, state, workflow, worktree as worktrees
 from .errors import FridayError
 from .locks import locked
 
@@ -38,7 +38,7 @@ def current(root, key, name):
     return card, selected, worktree, stage
 
 
-def preflight(selected, worktree, require_runners=True):
+def preflight(selected, worktree, require_runners=True, review_roles=ROLES):
     image, command = selected.get("gate_image"), selected.get("gate")
     if not isinstance(image, str) or not image or not isinstance(command, list) or not command:
         raise FridayError("invalid_profile", "Autopilot requires a configured isolated gate and image.")
@@ -46,7 +46,7 @@ def preflight(selected, worktree, require_runners=True):
         runners = selected.get("runners")
         if not isinstance(runners, dict):
             raise FridayError("invalid_profile", "Autopilot requires all model runners.")
-        for role in ("develop",) + ROLES:
+        for role in ("develop",) + tuple(review_roles):
             runner = runners.get(role)
             if not isinstance(runner, dict) or not isinstance(runner.get("model"), str) or not runner["model"]:
                 raise FridayError("invalid_profile", "Autopilot requires a model for " + role)
@@ -74,7 +74,8 @@ def preflight(selected, worktree, require_runners=True):
 
 def check_preflight(root, key, name, selected, worktree, require_runners=True):
     try:
-        preflight(selected, worktree, require_runners=require_runners)
+        roles = criteria.review_roles(state.read(root, key)['stages'][name]) if require_runners else ROLES
+        preflight(selected, worktree, require_runners=require_runners, review_roles=roles)
     except FridayError as exc:
         if exc.code == "environment_unavailable":
             def record(card):
@@ -133,7 +134,7 @@ def run_stage(root, key, name):
             if not progress:
                 raise FridayError("stale_evidence", "A task decision changed while automation was running.")
             phase = progress["phase"]
-            if phase != "commit":
+            if phase not in ("commit", "resize"):
                 if gate.git(worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all"):
                     raise FridayError("dirty_tree", "The worktree changed outside the completed model run.")
                 if git(worktree, "rev-parse", "HEAD") != progress["head"]:
@@ -155,35 +156,63 @@ def run_stage(root, key, name):
                     else:
                         if worktrees.fingerprint(worktree) != progress.get("snapshot"):
                             raise FridayError("stale_evidence", "The completed developer result changed before commit.")
-                        check_size(worktree, stage)
+                        try:
+                            check_size(worktree, stage)
+                        except FridayError as exc:
+                            if exc.code != 'stage_too_large' or progress.get('size_attempts', 0) >= 2:
+                                raise
+                            set_progress(root, key, name, phase='resize', size_attempts=progress.get('size_attempts', 0) + 1,
+                                         feedback=str(exc) + ' Reduce or split the changes while preserving the task scope.')
+                            continue
                         check_preflight(root, key, name, selected, worktree)
                         head = commit(root, worktree, key, name)
-                set_progress(root, key, name, phase="review", head=head, feedback=None)
+                set_progress(root, key, name, phase="gate", head=head, feedback=None)
+            elif phase == 'resize':
+                if git(worktree, 'rev-parse', 'HEAD') != progress['head'] or worktrees.fingerprint(worktree) != progress.get('snapshot'):
+                    raise FridayError('stale_evidence', 'The oversized result changed before revision.')
+                check_preflight(root, key, name, selected, worktree)
+                event = workflow.invoke(root, key, name, 'develop', progress['feedback'], require_owned=True)
+                set_progress(root, key, name, phase='commit', snapshot=event['worktree_snapshot'])
             elif phase in ROLES:
+                required_roles = criteria.review_roles(stage)
+                if phase not in required_roles:
+                    set_progress(root, key, name, phase=required_roles[0])
+                    continue
                 check_preflight(root, key, name, selected, worktree)
                 event = workflow.invoke(root, key, name, phase, require_owned=True)
+                if phase == 'blind-code' and event['verdict'] == 'unverifiable':
+                    event = workflow.invoke(root, key, name, 'review', require_owned=True,
+                                            criteria_override=criteria.for_role(stage, phase), fallback_for=phase)
                 if event["verdict"] == "pass":
-                    next_phase = ROLES[ROLES.index(phase) + 1] if phase != ROLES[-1] else "gate"
-                    set_progress(root, key, name, phase=next_phase)
+                    if phase != required_roles[-1]:
+                        set_progress(root, key, name, phase=required_roles[required_roles.index(phase) + 1])
+                    elif stage.get("gate", {}).get("status") != "passed":
+                        set_progress(root, key, name, phase="gate")
+                    else:
+                        stages.close(root, key, name, "gate")
+                        journal.sync(root, key)
+                        return {"stage": name, "status": "closed", "head": progress["head"]}
                 else:
-                    if phase == "blind-behavior" and schemas.environment_failure(event["evidence"]):
-                        raise FridayError("environment_unavailable", "Browser verification is unavailable; the current review can be retried.")
-                    if progress["attempt"] >= 3:
+                    if event["verdict"] == "unverifiable":
+                        raise FridayError("review_unverifiable", "Review needs additional evidence; see " + event["evidence"])
+                    bucket = 'cosmetic_attempts' if schemas.cosmetic_review(event['evidence']) else 'review_attempts'
+                    attempts = progress.get(bucket, {}).get(phase, 0) + 1
+                    if attempts >= 3:
                         raise FridayError("review_failed", "Review still fails after three attempts: " + phase)
                     feedback = Path(event["evidence"]).read_text(encoding="utf-8")[-10000:]
-                    set_progress(root, key, name, phase="develop", attempt=progress["attempt"] + 1, feedback=feedback)
+                    counters = dict(progress.get(bucket, {}), **{phase: attempts})
+                    set_progress(root, key, name, phase="develop", attempt=progress["attempt"] + 1, feedback=feedback, **{bucket: counters})
             elif phase == "gate":
                 selected["repository"] = worktree
                 result = gate.execute(root, key, name, selected)
                 if result["status"] != "passed":
-                    if result["status"] == "environment_unavailable" or progress["attempt"] >= 3:
+                    attempts = progress.get('gate_attempts', 0) + 1
+                    if result["status"] == "environment_unavailable" or attempts >= 3:
                         raise FridayError(result["status"], "Gate did not pass; see " + result["log"])
-                    feedback = Path(result["log"]).read_text(encoding="utf-8")[-10000:]
-                    set_progress(root, key, name, phase="develop", attempt=progress["attempt"] + 1, feedback=feedback)
+                    feedback = gate.feedback(result)
+                    set_progress(root, key, name, phase="develop", attempt=progress["attempt"] + 1, gate_attempts=attempts, feedback=feedback)
                 else:
-                    stages.close(root, key, name, "gate")
-                    journal.sync(root, key)
-                    return {"stage": name, "status": "closed", "head": result["head"]}
+                    set_progress(root, key, name, phase="review")
             else:
                 raise FridayError("invalid_state", "Unknown automation phase: " + str(phase))
 
@@ -192,10 +221,8 @@ def run(root, key):
     initial = state.read(root, key)
     selected = profile.load(initial["profile"])
     isolation.require_runner(selected, initial.get("worktree", selected["repository"]))
-    isolation.require_browser(selected)
-    if isinstance(selected.get("browser"), dict):
-        browser_auth.capture(selected["browser"])
     completed = []
+    browser_checked = False
     while True:
         card = state.read(root, key)
         if not card["stages"]:
@@ -203,6 +230,12 @@ def run(root, key):
             card = state.read(root, key)
         if not card.get("plan_approved"):
             raise FridayError("plan_approval_required", "Approve the plan before starting autopilot.")
+        needs_browser = any(not stage.get('criteria') or 'blind-behavior' in criteria.review_roles(stage) for stage in card['stages'].values() if stage.get('status') == 'open')
+        if needs_browser and not browser_checked:
+            isolation.require_browser(selected)
+            if isinstance(selected.get('browser'), dict):
+                browser_auth.capture(selected['browser'])
+            browser_checked = True
         ready = workflow.ready(card)
         if not ready:
             return {"completed": completed, "remaining": [name for name, stage in card["stages"].items()
@@ -210,17 +243,13 @@ def run(root, key):
         name = ready[0]
         if card["stages"][name].get("crew"):
             roles = {item["role"] for item in card["stages"][name]["crew"]}
-            if not set(ROLES).issubset(roles):
-                raise FridayError("incomplete_team", "A team must include review, blind-code and blind-behavior before automation.")
+            if not set(criteria.review_roles(card['stages'][name])).issubset(roles):
+                raise FridayError("incomplete_team", "A team must include the review roles required by the stage criteria.")
             if not card.get("worktree"):
                 raise FridayError("worktree_required", "Team automation requires a Friday worktree.")
             selected = profile.load(card["profile"])
             check_preflight(root, key, name, selected, card["worktree"], require_runners=False)
-            team = dispatch.run(root, key, name)
-            selected["repository"] = card["worktree"]
-            result = gate.execute(root, key, name, selected)
-            if result["status"] != "passed":
-                raise FridayError(result["status"], "Gate did not pass; see " + result["log"])
+            team = dispatch.run(root, key, name, require_gate=True)
             stages.close(root, key, name, "gate")
             journal.sync(root, key)
             completed.append({"stage": name, "status": "closed", "head": team["head"]})

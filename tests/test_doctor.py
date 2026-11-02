@@ -7,9 +7,35 @@ from pathlib import Path
 from unittest.mock import patch
 
 from friday import doctor
+from friday.errors import FridayError
 
 
 class DoctorTests(unittest.TestCase):
+    def test_different_base_and_target_are_visible_without_blocking_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'profile.json'
+            config.write_text(json.dumps({'name': 'test', 'repository': directory, 'base_branch': 'master',
+                'autonomous_delivery': {'enabled': True, 'transport': 'local', 'target_branch': 'develop'}}))
+            with patch('friday.doctor.gate.git', side_effect=FridayError('git_error', 'missing local ref')), \
+                 patch('friday.doctor.autopilot.preflight'), patch('friday.doctor.isolation.require_runner'), \
+                 patch('friday.doctor.isolation.require_browser'):
+                result = doctor.inspect(config)
+            check = next(item for item in result['checks'] if item['name'] == 'delivery_branches')
+            self.assertEqual(check['status'], 'warning')
+            self.assertIn('master', check['reason'])
+            self.assertIn('develop', check['reason'])
+
+    def test_unsupported_full_ci_prevents_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'profile.json'
+            config.write_text(json.dumps({'name': 'test', 'repository': directory,
+                                          'full_ci': {'kind': 'docker', 'image': 'missing'}}))
+            with patch('friday.doctor.gate.git'), patch('friday.doctor.autopilot.preflight'), \
+                 patch('friday.doctor.isolation.require_runner'), patch('friday.doctor.isolation.require_browser'):
+                result = doctor.inspect(config)
+            self.assertFalse(result['ready'])
+            self.assertEqual(next(item['status'] for item in result['checks'] if item['name'] == 'full_ci'), 'unavailable')
+
     def test_diagnostics_do_not_expose_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "profile.json"

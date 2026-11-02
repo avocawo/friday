@@ -39,7 +39,6 @@ class ClaudeAdapterTests(unittest.TestCase):
                     evidence = json.loads(result.stdout)["evidence"]
                     args = json.loads(evidence[0])
                     self.assertIn("--restricted", args)
-                    self.assertIn("--safe-mode", args)
                     self.assertIn("--strict-mcp-config", args)
                     self.assertIn("--no-chrome", args)
                     settings = json.loads(args[args.index("--settings") + 1])
@@ -50,6 +49,37 @@ class ClaudeAdapterTests(unittest.TestCase):
                     self.assertEqual(evidence[2], "token-present" if vendor == "zai" else "no-token")
                     self.assertIn("Use the project precedent.", evidence[3])
                     self.assertIn("Apply the supplied engineering_policy", evidence[3])
+                    self.assertIn('behavior_evidence contains observations by a separate browser reviewer', evidence[3])
+                    self.assertIn('if they are insufficient, return unverifiable', evidence[3])
+                    self.assertIn('Do not claim you personally observed the browser', evidence[3])
+
+    def test_blind_behavior_gets_only_the_scoped_preview_browser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "claude"
+            binary.write_text("#!/usr/bin/env python3\nimport json,sys\n"
+                              "print(json.dumps({'is_error':False,'structured_output':{'verdict':'pass','findings':[],"
+                              "'evidence':[json.dumps(sys.argv)]}}))\n")
+            binary.chmod(0o755)
+            spec = {"stage_origin": "https://api.stage.example"}
+            env = dict(os.environ, PATH=directory + os.pathsep + os.environ.get("PATH", ""),
+                       FRIDAY_ZAI_TOKEN="synthetic-key", FRIDAY_BROWSER_CONFIG=json.dumps(spec))
+            request = {"role": "blind-behavior", "vendor": "zai", "model": "example",
+                       "preview_url": "http://friday-preview.localhost:43123"}
+            result = subprocess.run([sys.executable, str(ADAPTER)], input=json.dumps(request), text=True,
+                                    capture_output=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = json.loads(json.loads(result.stdout)["evidence"][0])
+            self.assertIn("--strict-mcp-config", args)
+            self.assertIn("--no-chrome", args)
+            servers = json.loads(args[args.index("--mcp-config") + 1])["mcpServers"]
+            self.assertEqual(list(servers), ["friday"])
+            self.assertTrue(servers["friday"]["args"][0].endswith("browser_mcp.py"))
+            self.assertEqual(servers["friday"]["args"][2], request["preview_url"])
+            settings = json.loads(args[args.index("--settings") + 1])
+            self.assertNotIn("mcp__*", settings["permissions"]["deny"])
+            self.assertIn("Read(.env)", settings["permissions"]["deny"])
+            self.assertTrue(settings["permissions"]["allow"])
+            self.assertTrue(all(tool.startswith("mcp__friday__") for tool in settings["permissions"]["allow"]))
 
     def test_planning_returns_structured_team_plan(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -57,6 +87,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             binary.write_text("#!/usr/bin/env python3\nimport json,sys\n"
                               "schema=json.loads(sys.argv[sys.argv.index('--json-schema')+1])\n"
                               "assert 'crew' in schema['properties']['stages']['items']['properties']\n"
+                              "assert 'steps' in schema['properties']['stages']['items']['required']\n"
                               "print(json.dumps({'is_error':False,'structured_output':{'stages':[], 'questions':[], 'suggested_issues':[]}}))\n")
             binary.chmod(0o755)
             env = dict(os.environ, PATH=directory + os.pathsep + os.environ.get("PATH", ""))

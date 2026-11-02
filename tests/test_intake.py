@@ -5,11 +5,40 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from friday import intake, profile, state
+from friday import archive, intake, profile, state
 from friday.errors import FridayError
 
 
 class IntakeTests(unittest.TestCase):
+    def test_archived_task_restarts_without_replacing_old_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            repo, origin = root / 'repo', root / 'origin.git'
+            subprocess.run(['git', 'init', '--bare', '-q', str(origin)], check=True)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            def git(*args):
+                return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+            git('config', 'user.email', 'test@example.invalid')
+            git('config', 'user.name', 'Test')
+            (repo / 'file').write_text('synthetic')
+            git('add', 'file'); git('commit', '-qm', 'initial'); git('branch', '-M', 'main')
+            git('remote', 'add', 'origin', str(origin)); git('push', '-q', 'origin', 'main')
+            config = root / 'profile.json'
+            config.write_text(json.dumps({'name': 'test', 'repository': str(repo), 'worktree_root': str(root / 'worktrees'), 'base_branch': 'main'}))
+            state.create(root, 'ABC-1', str(config))
+            first = intake.prepare(root, 'ABC-1', profile.load(config))
+            original = git('rev-parse', 'friday/ABC-1')
+            git('worktree', 'remove', first)
+            state.update(root, 'ABC-1', lambda card: card.pop('worktree'))
+            archive.archive(root, 'ABC-1')
+            state.create(root, 'ABC-1', str(config))
+            second = intake.prepare(root, 'ABC-1', profile.load(config))
+            card = state.read(root, 'ABC-1')
+            self.assertRegex(card['branch'], r'^friday/ABC-1-r[0-9a-f]{12}$')
+            self.assertEqual(git('rev-parse', 'friday/ABC-1'), original)
+            self.assertEqual(intake.prepare(root, 'ABC-1', profile.load(config)), second)
+            self.assertEqual(state.task_branch('friday/{key}', 'ABC-1', card), card['branch'])
+
     def test_worktree_uses_fetched_base_and_can_resume(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

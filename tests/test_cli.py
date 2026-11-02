@@ -15,6 +15,27 @@ CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
 
 
 class CliTests(unittest.TestCase):
+    def test_clock_out_preserves_card_and_allows_new_card_with_same_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); config = root / 'profile.json'
+            config.write_text(json.dumps({'name': 'test', 'repository': str(root)}))
+            env = dict(os.environ, FRIDAY_HOME=str(root / 'state'))
+            def run(*args):
+                return subprocess.run([sys.executable, str(CLI), *args], cwd=directory, env=env, capture_output=True, text=True)
+            self.assertEqual(run('clock-in', 'T-1', '--profile', str(config)).returncode, 0)
+            evidence = root / 'state' / 'tasks' / 'T-1' / 'evidence'
+            evidence.mkdir(); (evidence / 'result.txt').write_text('synthetic evidence')
+            card_path = root / 'state' / 'tasks' / 'T-1' / 'state.json'
+            card = json.loads(card_path.read_text())
+            card['events'].append({'type': 'synthetic', 'evidence': str(evidence / 'result.txt')})
+            card_path.write_text(json.dumps(card))
+            result = run('clock-out', 'T-1')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            archive = Path(json.loads(result.stdout)['data']['archive'])
+            self.assertTrue((archive / 'state.json').is_file())
+            self.assertEqual(Path(json.loads((archive / 'state.json').read_text())['events'][-2]['evidence']).read_text(), 'synthetic evidence')
+            self.assertEqual(run('clock-in', 'T-1', '--profile', str(config)).returncode, 0)
+
     def run_cli(self, *args):
         with tempfile.TemporaryDirectory() as cwd:
             return subprocess.run(

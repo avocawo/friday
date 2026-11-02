@@ -11,8 +11,22 @@ from .locks import locked
 
 def render(card):
     lines = ["<!-- friday:generated " + card["key"] + " -->", "# " + card["key"], "", "| Поле | Значение |", "|---|---|",
-             "| Статус | %s |" % card["status"], "| Обновлено | %s |" % card["updated_at"], "",
-             "| Этап | Состояние | Доказательство |", "|---|---|---|"]
+             "| Статус | %s |" % card["status"], "| Обновлено | %s |" % card["updated_at"], ""]
+    if card.get('mode') == 'manual' and card['stages']:
+        lines.extend(['## План', '', 'План утверждён' if card.get('plan_approved') else 'Ожидает утверждения', ''])
+        for index, (name, stage) in enumerate(card['stages'].items(), 1):
+            lines.extend(['### %s. %s' % (index, name), '', str(stage.get('brief', '')).strip(), ''])
+            if stage.get('depends_on'):
+                lines.extend(['Зависит от: ' + ', '.join(stage['depends_on']), ''])
+            if stage.get('steps'):
+                lines.extend(['Как:', ''])
+                lines.extend('- ' + step.replace('\n', ' ') for step in stage['steps'])
+                lines.append('')
+            if stage.get('criteria'):
+                lines.extend(['Результат:', ''])
+                lines.extend('- ' + criterion.replace('\n', ' ') for criterion in stage['criteria'])
+                lines.append('')
+    lines.extend(['| Этап | Состояние | Доказательство |', '|---|---|---|'])
     for name, stage in sorted(card["stages"].items()):
         cells = [name, stage.get("status", "open"), stage.get("evidence", "")]
         lines.append("| " + " | ".join(str(cell).replace("|", "\\|").replace("\n", " ") for cell in cells) + " |")

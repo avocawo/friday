@@ -3,6 +3,7 @@ import os
 import subprocess
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 from . import credentials, http, integrations, state
@@ -46,16 +47,13 @@ def prepare(root, key, profile):
         raise FridayError("invalid_profile", "worktree_root and base_branch are required to prepare a worktree.")
     repo = profile["repository"]
     template = profile.get("branch_template", "friday/{key}")
-    if not isinstance(template, str) or template.count("{key}") != 1 or "{" in template.replace("{key}", "") or "}" in template.replace("{key}", ""):
-        raise FridayError("invalid_profile", "branch_template must contain exactly one {key} placeholder.")
-    branch = template.replace("{key}", state.validate_key(key))
+    state.task_branch(template, key, {})
     base = profile["base_branch"]
     if not base or base.startswith("-"):
         raise FridayError("invalid_profile", "Invalid base_branch.")
     layout = profile.get("worktree_layout", "key")
     if layout not in ("key", "branch"):
         raise FridayError("invalid_profile", "worktree_layout must be key or branch.")
-    target = Path(profile["worktree_root"]) / (branch if layout == "branch" else key)
     def git(*args):
         env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
         env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1")
@@ -69,6 +67,13 @@ def prepare(root, key, profile):
         return result.stdout.strip()
     with locked(root, "resource:branch:" + repo):
         card = state.read(root, key)
+        archive_root = Path(root) / 'archived-tasks'
+        if not card.get('branch_instance') and not card.get('worktree') and not card.get('worktree_intent') and archive_root.is_dir() and any(archive_root.glob(key + '-*')):
+            suffix = '-r' + uuid.uuid4().hex[:12]
+            state.update(root, key, lambda current: current.update(branch_instance=suffix))
+            card = state.read(root, key)
+        branch = state.task_branch(template, key, card)
+        target = Path(profile["worktree_root"]) / (branch if layout == "branch" else key)
         def verify_registered(expected_head=None):
             records = [chunk.split("\0") for chunk in git("worktree", "list", "--porcelain", "-z").split("\0\0")]
             if not any("worktree " + str(target) in record and "branch refs/heads/" + branch in record for record in records):

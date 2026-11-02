@@ -111,7 +111,7 @@ def task_context(root, key):
         raise FridayError("worktree_required", "Autonomous delivery requires a Friday worktree.")
     worktree.verify(selected["repository"], repo, branch)
     template = selected.get("branch_template", "friday/{key}")
-    if not isinstance(template, str) or template.count("{key}") != 1 or branch != template.replace("{key}", key):
+    if branch != state.task_branch(template, key, card):
         raise FridayError("unsafe_branch", "Source branch does not match the task's branch template.")
     target = card.get("decisions", {}).get("target_branch", {}).get("value", settings["target_branch"])
     if target != settings["target_branch"] or branch == target or branch in settings.get("protected_branches", []):
@@ -255,6 +255,8 @@ def publish_locked(root, key):
             previous = card["autonomous_delivery"].get("published_head")
             if not matches_mr(mr, card["merge_request"], branch, target, previous) or (is_github and mr.get("draft") is not True):
                 raise FridayError("remote_conflict", "The merge request changed since the last publication.")
+        if selected.get('full_ci') is not None:
+            raise FridayError('invalid_profile', 'full_ci is no longer supported; publication stays blocked.')
         push(root, key, card, settings, repo, branch, head)
         card = state.read(root, key)
         if card.get("merge_request"):

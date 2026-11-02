@@ -67,6 +67,48 @@ class StateTests(unittest.TestCase):
             self.assertEqual(json.loads(run("new", "T-1", "--profile", str(config)).stderr)["error"]["code"],
                              "already_exists")
 
+    def test_manual_plan_preview_tracks_approval_and_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / 'repo'
+            repo.mkdir()
+            def git(*args):
+                subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+            git('init', '-q')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            (repo / 'file').write_text('synthetic')
+            git('add', 'file')
+            git('commit', '-qm', 'initial')
+            config = root / 'profile.json'
+            config.write_text(json.dumps({'name': 'test', 'repository': str(repo), 'journal_dir': str(root / 'notes')}))
+            env = dict(os.environ, FRIDAY_HOME=str(root / 'state'))
+            def run(*args):
+                result = subprocess.run([sys.executable, str(CLI), *args], env=env, cwd=directory, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            plan = root / 'plan.json'
+            plan.write_text(json.dumps({'stages': [
+                {'id': 'second', 'brief': 'First examine the current behavior', 'steps': ['Inspect the existing code', 'Choose a project precedent'], 'criteria': ['Behavior understood']},
+                {'id': 'first', 'brief': 'Then implement the change', 'steps': ['Update the code'], 'criteria': ['Works'], 'depends_on': ['second']},
+            ]}))
+            run('clock-in', 'T-1', '--profile', str(config), '--manual')
+            run('plan', 'T-1', str(plan))
+            note = root / 'notes' / 'T-1.md'
+            content = note.read_text()
+            self.assertIn('Ожидает утверждения', content)
+            self.assertIn('Inspect the existing code', content)
+            self.assertIn('First examine the current behavior', content)
+            self.assertIn('Behavior understood', content)
+            self.assertLess(content.index('### 1. second'), content.index('### 2. first'))
+            run('approve-plan', 'T-1')
+            self.assertIn('План утверждён', note.read_text())
+            plan.write_text(json.dumps({'stages': [{'id': 'replacement', 'brief': 'New approach', 'criteria': ['New result']}]}))
+            run('plan', 'T-1', str(plan), '--replace')
+            content = note.read_text()
+            self.assertIn('Ожидает утверждения', content)
+            self.assertIn('New approach', content)
+            self.assertNotIn('Inspect the existing code', content)
+
     def test_journal_does_not_overwrite_user_notes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

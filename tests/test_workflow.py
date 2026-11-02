@@ -11,6 +11,28 @@ from friday.errors import FridayError
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_browser_test_context_is_strictly_bounded(self):
+        context = {'mode': 'local_mock', 'route': '/dashboards/monitored-client', 'query_key': 'monitoredClientMock', 'scenarios': ['card-error']}
+        self.assertEqual(workflow.browser_test_context(context), context)
+        for changes in ({'route': 'https://example.test'}, {'route': '//example.test'}, {'query_key': 'accessToken'},
+                        {'scenarios': ['arbitrary text']}, {'scenarios': ['card-error', 'card-error']}, {'text': 'arbitrary'}, {'mode': 'other'}):
+            with self.subTest(changes=changes), self.assertRaises(FridayError):
+                workflow.browser_test_context(dict(context, **changes))
+
+    def test_manual_browser_context_is_forwarded_and_recorded(self):
+        self.write_plan([{'id': 'one', 'brief': 'update', 'criteria': ['works']}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        context = {'mode': 'local_mock', 'route': '/dashboards/monitored-client', 'query_key': 'monitoredClientMock', 'scenarios': ['card-error', 'client-removed']}
+        event = workflow.invoke(self.root, 'T-1', 'one', 'blind-behavior', browser_context=context)
+        seen = json.loads(Path(event['evidence']).read_text())['seen']
+        self.assertEqual(event['browser_test_context'], context)
+        self.assertEqual(seen['browser_test_context']['scenario_paths'], [
+            '/dashboards/monitored-client?monitoredClientMock=card-error',
+            '/dashboards/monitored-client?monitoredClientMock=client-removed'])
+        self.assertEqual(seen['criteria'], ['works'])
+        with self.assertRaises(FridayError):
+            workflow.invoke(self.root, 'T-1', 'one', 'review', browser_context=context)
+
     def setUp(self):
         preview_mock = patch('friday.isolated_preview.open_preview', side_effect=lambda *_: contextlib.nullcontext('http://test.localhost:1234/'))
         preview_mock.start()
@@ -26,6 +48,7 @@ class WorkflowTests(unittest.TestCase):
         self.repo.mkdir()
         def git(*args):
             subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
+        self.git = git
         git("init", "-q")
         git("config", "user.name", "Test")
         git("config", "user.email", "test@example.invalid")
@@ -43,6 +66,20 @@ class WorkflowTests(unittest.TestCase):
     def write_plan(self, items):
         self.plan.write_text(json.dumps({"stages": items}))
 
+    def test_stage_steps_are_saved_and_given_to_the_developer(self):
+        self.write_plan([{'id': 'one', 'brief': 'update', 'steps': ['Inspect precedent', 'Apply it'], 'criteria': ['works']}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        workflow.approve_plan(self.root, 'T-1')
+        result = workflow.invoke(self.root, 'T-1', 'one', 'develop')
+        request = json.loads(Path(result['evidence']).read_text())['seen']
+        self.assertEqual(request['steps'], ['Inspect precedent', 'Apply it'])
+
+    def test_invalid_stage_steps_are_rejected(self):
+        self.write_plan([{'id': 'one', 'brief': 'update', 'steps': [''], 'criteria': ['works']}])
+        with self.assertRaises(FridayError) as error:
+            workflow.load_plan(self.root, 'T-1', self.plan)
+        self.assertEqual(error.exception.code, 'invalid_plan')
+
     def test_dependencies_and_blind_behavior_brief(self):
         self.write_plan([{"id": "one", "brief": "secret implementation", "criteria": ["works"]},
                          {"id": "two", "brief": "second", "criteria": ["works"], "depends_on": ["one"]}])
@@ -53,6 +90,192 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(request, {"role": "blind-behavior", "criteria": ["works"], "model": "b", "preview_url": "http://test.localhost:1234/"})
         stages.close(self.root, "T-1", "one", "owner", "accepted")
         self.assertEqual(workflow.ready(state.read(self.root, "T-1")), ["two"])
+
+    def test_review_receives_only_criteria_for_its_kind(self):
+        config = json.loads(self.config.read_text())
+        capture = "import json,sys; r=json.load(sys.stdin); print(json.dumps({'verdict':'pass','findings':[],'evidence':['observed'],'seen':r,'criteria_results':[{'criterion':c,'status':'pass','evidence':['observed']} for c in r['criteria']]}))"
+        config['runners']['blind-behavior']['command'] = ['python3', '-c', capture]
+        self.config.write_text(json.dumps(config))
+        self.write_plan([{'id': 'one', 'brief': 'update', 'criteria': [
+            {'text': 'type is correct', 'checks': ['code']},
+            {'text': 'dialog opens', 'checks': ['behavior']},
+        ]}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        result = workflow.invoke(self.root, 'T-1', 'one', 'blind-behavior')
+        request = json.loads(Path(result['evidence']).read_text())['seen']
+        self.assertEqual(request['criteria'], ['dialog opens'])
+
+    def test_review_gets_only_current_passing_browser_evidence_including_fallback(self):
+        config = json.loads(self.config.read_text())
+        capture = "import json,sys; r=json.load(sys.stdin); print(json.dumps({'verdict':'pass','findings':[],'evidence':['observed'],'seen':r,'criteria_results':[{'criterion':c,'status':'pass','evidence':['observed']} for c in r['criteria']]}))"
+        config['runners']['review'] = {'model': 'review', 'command': ['python3', '-c', capture]}
+        config['runners']['blind-behavior']['command'] = ['python3', '-c', capture]
+        self.config.write_text(json.dumps(config))
+        self.write_plan([{'id': 'one', 'brief': 'update', 'criteria': [
+            {'text': 'code works', 'checks': ['code']}, {'text': 'dialog opens', 'checks': ['behavior']}]}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        before = workflow.invoke(self.root, 'T-1', 'one', 'review')
+        self.assertNotIn('behavior_evidence', json.loads(Path(before['evidence']).read_text())['seen'])
+        browser = workflow.invoke(self.root, 'T-1', 'one', 'blind-behavior')
+        card = state.read(self.root, 'T-1')
+        stage = card['stages']['one']
+        self.assertIsNotNone(workflow.behavior_evidence(self.root, 'T-1', card, 'one', stage, browser['head']))
+        for field in ('head', 'decision_revision', 'plan_revision', 'verdict', 'evidence_sha256'):
+            altered_card = json.loads(json.dumps(card))
+            altered_card['events'][-1][field] = 'wrong'
+            self.assertIsNone(workflow.behavior_evidence(self.root, 'T-1', altered_card, 'one', stage, browser['head']))
+        altered_card = json.loads(json.dumps(card))
+        altered_card['events'].append(dict(browser, verdict='fail'))
+        self.assertIsNone(workflow.behavior_evidence(self.root, 'T-1', altered_card, 'one', stage, browser['head']))
+        path = Path(browser['evidence'])
+        original = path.read_text()
+        path.write_text(original + ' ')
+        altered = workflow.invoke(self.root, 'T-1', 'one', 'review')
+        self.assertNotIn('behavior_evidence', json.loads(Path(altered['evidence']).read_text())['seen'])
+        path.write_text(original)
+        for kwargs in ({}, {'criteria_override': ['code works'], 'fallback_for': 'blind-code'}):
+            review = workflow.invoke(self.root, 'T-1', 'one', 'review', **kwargs)
+            seen = json.loads(Path(review['evidence']).read_text())['seen']
+            self.assertEqual(seen['behavior_evidence'], [{'criterion': 'dialog opens', 'status': 'pass', 'evidence': ['observed']}])
+            self.assertEqual(Path(review['behavior_evidence_binding']['evidence']), Path(browser['evidence']).resolve())
+
+    def test_browser_evidence_requires_latest_current_complete_pass_and_redacts(self):
+        self.write_plan([{'id': 'one', 'brief': 'update', 'criteria': [
+            {'text': 'dialog opens', 'checks': ['behavior']}]}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        config = json.loads(self.config.read_text())
+        capture = "import json,sys; r=json.load(sys.stdin); print(json.dumps({'verdict':'pass','findings':[],'criterion':'Bearer abc123','evidence':['Bearer abc123'],'criteria_results':[{'criterion':c,'status':'pass','evidence':['token=abc123']} for c in r['criteria']]}))"
+        config['runners']['blind-behavior']['command'] = ['python3', '-c', capture]
+        self.config.write_text(json.dumps(config))
+        event = workflow.invoke(self.root, 'T-1', 'one', 'blind-behavior')
+        self.assertNotIn('abc123', Path(event['evidence']).read_text())
+        card = state.read(self.root, 'T-1')
+        stage = card['stages']['one']
+        head = event['head']
+        self.assertIsNone(workflow.behavior_evidence(self.root, 'T-1', card, 'one', stage, head))
+
+        for field in ('head', 'decision_revision', 'plan_revision', 'verdict'):
+            altered = json.loads(json.dumps(card))
+            altered['events'][-1][field] = 'wrong'
+            self.assertIsNone(workflow.behavior_evidence(self.root, 'T-1', altered, 'one', stage, head))
+        altered = json.loads(json.dumps(card))
+        altered['events'].append(dict(event, verdict='unverifiable'))
+        self.assertIsNone(workflow.behavior_evidence(self.root, 'T-1', altered, 'one', stage, head))
+        evidence = json.loads(Path(event['evidence']).read_text())
+        evidence['criteria_results'] = []
+        Path(event['evidence']).write_text(json.dumps(evidence))
+        self.assertIsNone(workflow.behavior_evidence(self.root, 'T-1', card, 'one', stage, head))
+
+    def test_sensitive_browser_headers_and_query_are_not_retained(self):
+        for text in ('Cookie: session=abc; csrf=secret', 'Authorization: Basic dXNlcjpwYXNz',
+                     'https://example.test/?access_token=secret'):
+            with self.subTest(text=text):
+                cleaned = workflow.redact_browser_text(text)
+                for secret in ('abc', 'secret', 'dXNlcjpwYXNz'):
+                    self.assertNotIn(secret, cleaned)
+                self.assertIn('[REDACTED]', cleaned)
+
+    def test_sensitive_criterion_is_rejected_without_changing_its_identity(self):
+        self.write_plan([{'id': 'one', 'brief': 'update', 'criteria': ['URL token=abc works']}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        config = json.loads(self.config.read_text())
+        capture = "import json,sys; r=json.load(sys.stdin); print(json.dumps({'verdict':'pass','findings':[],'evidence':['observed'],'criteria_results':[{'criterion':c,'status':'pass','evidence':['observed']} for c in r['criteria']]}))"
+        config['runners']['blind-behavior']['command'] = ['python3', '-c', capture]
+        self.config.write_text(json.dumps(config))
+        with self.assertRaises(FridayError) as error:
+            workflow.invoke(self.root, 'T-1', 'one', 'blind-behavior')
+        self.assertEqual(error.exception.code, 'invalid_verdict')
+
+    def test_close_rejects_changed_browser_evidence_used_by_review(self):
+        config = json.loads(self.config.read_text())
+        capture = "import json,sys; r=json.load(sys.stdin); print(json.dumps({'verdict':'pass','findings':[],'evidence':['observed'],'criteria_results':[{'criterion':c,'status':'pass','evidence':['observed']} for c in r['criteria']]}))"
+        config['runners']['review'] = {'model': 'review', 'command': ['python3', '-c', capture]}
+        config['runners']['blind-behavior']['command'] = ['python3', '-c', capture]
+        self.config.write_text(json.dumps(config))
+        self.write_plan([{'id': 'one', 'brief': 'update', 'criteria': [{'text': 'dialog opens', 'checks': ['behavior']}]}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        browser = workflow.invoke(self.root, 'T-1', 'one', 'blind-behavior')
+        workflow.invoke(self.root, 'T-1', 'one', 'review')
+        def set_gate(card):
+            from friday import gate
+            record = {'status': 'passed', 'exit_code': 0, 'unchanged': True, 'head': browser['head'], 'snapshot': 'snap',
+                                             'definition': 'definition', 'plan_revision': card['plan_revision'],
+                                             'decision_revision': card.get('decision_revision', 0)}
+            card['stages']['one']['gate'] = record
+            card['events'].append({'type': 'gate', 'stage': 'one', 'status': 'passed', 'record_sha256': gate.record_digest(record)})
+        state.update(self.root, 'T-1', set_gate)
+        path = Path(browser['evidence'])
+        path.write_text(path.read_text() + ' ')
+        with patch('friday.stages.gate.with_baseline', side_effect=lambda selected, card: selected), \
+             patch('friday.stages.gate.snapshot', return_value=(browser['head'], 'snap', None)), \
+             patch('friday.stages.gate.image_id', return_value='image'), \
+             patch('friday.stages.gate.definition', return_value='definition'):
+            with self.assertRaises(FridayError) as error:
+                stages.close(self.root, 'T-1', 'one', 'gate')
+        self.assertEqual(error.exception.code, 'stale_evidence')
+
+    def test_review_receives_only_verified_current_gate_summary(self):
+        from friday import gate
+        config = json.loads(self.config.read_text())
+        config.update(gate=['npm', 'run', 'check'], gate_image='image')
+        capture = "import json,sys; r=json.load(sys.stdin); print(json.dumps({'verdict':'pass','findings':[],'evidence':['observed'],'seen':r}))"
+        config['runners']['review'] = {'model': 'review', 'command': ['python3', '-c', capture]}
+        self.config.write_text(json.dumps(config))
+        self.write_plan([{'id': 'one', 'brief': 'update', 'criteria': ['works']}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        head = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'], capture_output=True, text=True, check=True).stdout.strip()
+        def setup(card):
+            record = {'status': 'passed', 'exit_code': 0, 'unchanged': True, 'head': head, 'snapshot': 'snap',
+                      'definition': 'def', 'decision_revision': card.get('decision_revision', 0), 'plan_revision': card['plan_revision']}
+            card['stages']['one']['gate'] = record
+            card['events'].append({'type': 'gate', 'stage': 'one', 'status': 'passed', 'record_sha256': gate.record_digest(record)})
+        state.update(self.root, 'T-1', setup)
+        with patch('friday.workflow.gate.snapshot', return_value=(head, 'snap', b'')), \
+             patch('friday.workflow.gate.image_id', return_value='image-id'), \
+             patch('friday.workflow.gate.definition', return_value='def'):
+            event = workflow.invoke(self.root, 'T-1', 'one', 'review')
+            seen = json.loads(Path(event['evidence']).read_text())['seen']
+            self.assertEqual(seen['gate_evidence']['command'], ['npm', 'run', 'check'])
+            self.assertTrue(event['gate_evidence_binding'])
+            state.update(self.root, 'T-1', lambda card: card['stages']['one']['gate'].update({'extra': 'changed'}))
+            with patch('friday.stages.gate.snapshot', return_value=(head, 'snap', b'')), \
+                 patch('friday.stages.gate.image_id', return_value='image-id'), \
+                 patch('friday.stages.gate.definition', return_value='def'):
+                with self.assertRaises(FridayError) as error:
+                    stages.close(self.root, 'T-1', 'one', 'gate')
+            self.assertEqual(error.exception.code, 'stale_evidence')
+            state.update(self.root, 'T-1', lambda card: card['stages']['one']['gate'].pop('extra'))
+            card = state.read(self.root, 'T-1')
+            stage = card['stages']['one']
+            for field in ('head', 'snapshot', 'definition', 'decision_revision', 'plan_revision', 'status', 'exit_code'):
+                changed = json.loads(json.dumps(card))
+                changed['stages']['one']['gate'][field] = 'wrong'
+                self.assertIsNone(workflow.current_gate_evidence(changed, changed['stages']['one'], config, str(self.repo), head))
+            card['events'] = [e for e in card['events'] if e.get('type') != 'gate']
+            self.assertIsNone(workflow.current_gate_evidence(card, stage, config, str(self.repo), head))
+
+    def test_dispute_keeps_plan_and_requires_a_real_project_rule(self):
+        from friday import disputes
+        (self.repo / 'rule.md').write_text('Always preserve the contract.\n')
+        self.git('add', 'rule.md'); self.git('commit', '-qm', 'rule')
+        self.write_plan([{'id': 'one', 'brief': 'change', 'criteria': ['works']}])
+        workflow.load_plan(self.root, 'T-1', self.plan)
+        before = state.read(self.root, 'T-1')['plan_revision']
+        dispute = {'finding': 'wrong contract', 'rule_path': 'rule.md', 'quote': 'Always preserve the contract.',
+                   'precedent': 'file', 'reason': 'The current code preserves it.'}
+        disputes.record(self.root, 'T-1', 'one', dispute)
+        card = state.read(self.root, 'T-1')
+        self.assertEqual(card['plan_revision'], before)
+        self.assertEqual(card['stages']['one']['review_disputes'][0]['quote'], dispute['quote'])
+        config = json.loads(self.config.read_text())
+        config['runners']['review'] = config['runners']['blind-behavior']
+        self.config.write_text(json.dumps(config))
+        result = workflow.invoke(self.root, 'T-1', 'one', 'review')
+        seen = json.loads(Path(result['evidence']).read_text())['seen']
+        self.assertEqual(seen['review_disputes'][0]['quote'], dispute['quote'])
+        dispute['quote'] = 'not present'
+        with self.assertRaises(FridayError):
+            disputes.record(self.root, 'T-1', 'one', dispute)
 
     def test_blind_code_uses_isolated_workspace_and_zai_settings(self):
         config = json.loads(self.config.read_text())

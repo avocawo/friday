@@ -4,6 +4,7 @@ import contextlib
 import http.server
 import io
 import json
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -37,6 +38,23 @@ def docker(*args, timeout=60):
     if result.returncode:
         raise FridayError('preview_unavailable', 'The isolated preview container failed.')
     return result.stdout
+
+
+def wait_for_vite(name):
+    for _ in range(40):
+        try:
+            result = json.loads(docker('exec', name, 'python3', '-c', BRIDGE, '/', timeout=5))
+            if not isinstance(result, dict) or result.get('status') != 200 or not isinstance(result.get('type'), str):
+                raise ValueError('Invalid readiness response')
+            if result['type'].split(';', 1)[0].strip().lower() != 'text/html':
+                raise ValueError('Preview is not HTML')
+            data = base64.b64decode(result['data'], validate=True)
+            if not re.search(rb'<(?:!doctype\s+html|html)(?:\s|>)', data, re.IGNORECASE):
+                raise ValueError('Preview HTML document is missing')
+            return
+        except (FridayError, ValueError, KeyError, TypeError):
+            time.sleep(0.5)
+    raise FridayError('preview_unavailable', 'The isolated Vite server did not start.')
 
 
 @contextlib.contextmanager
@@ -84,14 +102,7 @@ def open_preview(selected, worktree):
                    '-w', '/src', '-e', 'VITE_API_APOLLO_URI=' + stage + api_path,
                    '-e', 'VITE_APP_ENV=development', '--entrypoint', 'node', image,
                    '/app/node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5173')
-            for _ in range(40):
-                try:
-                    docker('exec', name, 'python3', '-c', BRIDGE, '/', timeout=5)
-                    break
-                except FridayError:
-                    time.sleep(0.5)
-            else:
-                raise FridayError('preview_unavailable', 'The isolated Vite server did not start.')
+            wait_for_vite(name)
             slots = threading.BoundedSemaphore(8)
             class Handler(http.server.BaseHTTPRequestHandler):
                 def do_GET(self):

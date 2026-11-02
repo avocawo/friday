@@ -9,6 +9,7 @@ from . import browser_auth, browser_probe, browser_protocol
 from .errors import FridayError
 
 TOOLS = {
+    "emulate": {"viewport"},
     "click": {"uid", "dblClick", "includeSnapshot"},
     "fill": {"uid", "value", "includeSnapshot"},
     "fill_form": {"elements", "includeSnapshot"},

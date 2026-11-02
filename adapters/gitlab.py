@@ -29,7 +29,9 @@ def request_for(args, text):
     payload = {"title": title, "description": document["description"], "source_branch": args.source,
                "target_branch": args.target}
     endpoint = "projects/" + urllib.parse.quote(args.project, safe="") + "/merge_requests"
-    command = ["glab", "api", "--hostname", target.netloc, "--method", "POST", endpoint, "--input", "-"]
+    command = ["glab", "api", "--hostname", target.netloc, "--method", "POST", endpoint]
+    for name, value in payload.items():
+        command += ["--raw-field", name + "=" + value]
     return command, payload
 
 

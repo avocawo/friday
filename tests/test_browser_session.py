@@ -54,9 +54,13 @@ class BrowserSessionTests(unittest.TestCase):
                                 ('take_snapshot', {'pageId': 1}),
                                 ('navigate_page', {'url': 'https://prod.example/'}),
                                 ('navigate_page', {'url': 'http://test.localhost:5189/', 'initScript': 'alert(1)'}),
-                                ('take_snapshot', {'filePath': '/tmp/output'})]:
+                                ('take_snapshot', {'filePath': '/tmp/output'}),
+                                ('emulate', {'viewport': '375x900x1', 'extraHttpHeaders': '{}'}),
+                                ('emulate', {'pageId': 1, 'viewport': '375x900x1'})]:
             with self.subTest(name=name, arguments=arguments), self.assertRaises(FridayError):
                 session.call(name, arguments)
         session.client.tool.assert_not_called()
         session.call('take_snapshot', {})
         session.client.tool.assert_called_once_with('take_snapshot', {'pageId': 7})
+        session.call('emulate', {'viewport': '375x900x1'})
+        session.client.tool.assert_called_with('emulate', {'pageId': 7, 'viewport': '375x900x1'})

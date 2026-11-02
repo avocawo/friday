@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from friday import autopilot, cleanup, decisions, delivery, doctor, gate, github, intake, journal, mission, planner, preview, profile, project, project_service, release, report, sentry, service, stages, state, watch, workflow
+from friday import archive, autopilot, cleanup, decisions, delivery, disputes, doctor, gate, github, intake, journal, mission, planner, preview, profile, project, project_service, release, report, sentry, service, stages, state, watch, workflow
 from friday.errors import FridayError
 
 VERSION = "0.1.0"
@@ -39,6 +39,8 @@ def main(argv=None):
     mode = new.add_mutually_exclusive_group()
     mode.add_argument("--auto", dest="auto", action="store_true", default=True, help="approve task plans automatically (default)")
     mode.add_argument("--manual", dest="auto", action="store_false", help="require explicit plan approval")
+    clock_out = commands.add_parser("clock-out", help="archive a detached task card")
+    clock_out.add_argument("key")
     status = commands.add_parser("status", help="show a task card")
     status.add_argument("key")
     today = commands.add_parser("take-stock", aliases=["today"], help="show tasks that need attention")
@@ -148,6 +150,11 @@ def main(argv=None):
     agent = commands.add_parser("service", help="manage the macOS watcher")
     agent.add_argument("operation", choices=("install", "refresh", "uninstall"))
     agent.add_argument("--interval", type=int, default=300)
+    challenge = commands.add_parser('challenge', help='record an evidence-backed review dispute')
+    challenge.add_argument('key')
+    challenge.add_argument('stage')
+    for field in ('finding', 'rule-path', 'quote', 'precedent', 'reason'):
+        challenge.add_argument('--' + field, required=True)
     decide = commands.add_parser("decide", help="record a durable task decision")
     decide.add_argument("key")
     decide.add_argument("name")
@@ -174,6 +181,8 @@ def main(argv=None):
                     card = state.read(root, args.key)
                 card["journal"] = journal.sync(root, args.key)
                 result = card
+            elif args.command == "clock-out":
+                result = archive.archive(root, args.key)
             elif args.command == "status":
                 result = state.read(root, args.key)
             elif args.command == "today":
@@ -290,6 +299,7 @@ def main(argv=None):
                 journal.sync(root, args.key)
             elif args.command == "approve-plan":
                 result = workflow.approve_plan(root, args.key)
+                journal.sync(root, args.key)
             elif args.command == "research":
                 result = planner.generate(root, args.key)
             elif args.command == "ready":
@@ -343,6 +353,8 @@ def main(argv=None):
                 result = preview.start(root, args.key)
             elif args.command == "service":
                 result = service.install(args.interval) if args.operation == "install" else service.refresh() if args.operation == "refresh" else service.uninstall()
+            elif args.command == 'challenge':
+                result = disputes.record(root, args.key, args.stage, {field: getattr(args, field) for field in ('finding', 'rule_path', 'quote', 'precedent', 'reason')})
             elif args.command == "decide":
                 result = decisions.set_decision(root, args.key, args.name, args.value)
                 journal.sync(root, args.key)

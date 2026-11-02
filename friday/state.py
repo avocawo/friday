@@ -26,6 +26,15 @@ def validate_key(key):
     return key
 
 
+def task_branch(template, key, card):
+    if not isinstance(template, str) or template.count('{key}') != 1 or '{' in template.replace('{key}', '') or '}' in template.replace('{key}', ''):
+        raise FridayError('invalid_profile', 'branch_template must contain exactly one {key} placeholder.')
+    suffix = card.get('branch_instance', '')
+    if not isinstance(suffix, str) or (suffix and not re.fullmatch(r'-r[0-9a-f]{12}', suffix)):
+        raise FridayError('invalid_state', 'Invalid task branch instance.')
+    return template.replace('{key}', validate_key(key)) + suffix
+
+
 def task_path(root, key):
     return Path(root) / "tasks" / validate_key(key) / "state.json"
 

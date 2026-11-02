@@ -90,6 +90,16 @@ class GitHubMissionTests(unittest.TestCase):
         self.assertEqual(self.creates, 1)
         self.assertEqual(mission.remote_head(str(self.repo), 'T-1'), self.head())
 
+    def test_full_ci_profile_blocks_push_and_draft_creation(self):
+        config = json.loads(self.config.read_text())
+        config['full_ci'] = {'kind': 'docker', 'image': 'any'}
+        self.config.write_text(json.dumps(config))
+        with self.assertRaises(FridayError) as error:
+            mission.publish(self.root, 'T-1')
+        self.assertEqual(error.exception.code, 'invalid_profile')
+        self.assertIsNone(mission.remote_head(str(self.repo), 'T-1'))
+        self.assertEqual(self.creates, 0)
+
     def test_lost_create_response_reconciles_existing_draft(self):
         def lost(*args):
             self.create(*args)

@@ -64,6 +64,21 @@ class DispatchTests(unittest.TestCase):
         events = state.read(self.root, "T-1")["events"]
         self.assertEqual([item["vendor"] for item in events if item.get("type") == "model_run"], ["zai", "openai", "anthropic"])
 
+    def test_gate_runs_before_team_review(self):
+        order = []
+        invoke = dispatch.invoke
+        def run_agent(*args):
+            order.append(args[3]['role'])
+            return invoke(*args)
+        def run_gate(*args, **kwargs):
+            order.append('gate')
+            return {'status': 'passed', 'head': self.git('rev-parse', 'HEAD')}
+        with patch('friday.isolation.require_runner'), patch('friday.dispatch.invoke', side_effect=run_agent), \
+             patch('friday.dispatch.gate.execute', side_effect=run_gate):
+            dispatch.run(self.root, 'T-1', 'one', require_gate=True)
+        self.assertLess(order.index('develop'), order.index('gate'))
+        self.assertLess(order.index('gate'), order.index('review'))
+
     def test_builtin_adapters_dispatch_three_vendors_without_network(self):
         codex = self.root / "codex"
         codex.write_text("#!/usr/bin/env python3\nimport json,pathlib,sys\n"
@@ -120,14 +135,14 @@ class DispatchTests(unittest.TestCase):
         def invoke(root, key, stage, item, selected, target, upstream, feedback):
             calls.append(item["role"])
             if item["role"] == "blind-behavior" and calls.count("blind-behavior") == 1:
-                evidence.write_text(json.dumps({"verdict": "fail", "findings": ["ENVIRONMENT-UNAVAILABLE: browser"]}))
-                return {"verdict": "fail", "evidence": str(evidence)}
+                evidence.write_text(json.dumps({"verdict": "unverifiable", "findings": ["browser unavailable"]}))
+                return {"verdict": "unverifiable", "evidence": str(evidence)}
             evidence.write_text("ok")
             return {"verdict": "pass" if item["role"] in ("review", "blind-behavior") else None, "evidence": str(evidence)}
         with patch("friday.isolation.require_runner"), patch("friday.dispatch.invoke", side_effect=invoke):
             with self.assertRaises(FridayError) as error:
                 dispatch.run(self.root, "T-1", "one")
-            self.assertEqual(error.exception.code, "environment_unavailable")
+            self.assertEqual(error.exception.code, "review_unverifiable")
             dispatch.run(self.root, "T-1", "one")
         self.assertEqual(calls.count("develop"), 1)
         self.assertEqual(calls.count("blind-behavior"), 2)
@@ -156,6 +171,7 @@ class DispatchTests(unittest.TestCase):
         selected = profile.load(self.config)
         selected["engineering_policy"] = ["Find the project precedent."]
         selected["agents"]["all"] = {"vendor": "openai", "model": "m", "roles": [], "command": ["python3", str(self.runner)]}
+        state.update(self.root, 'T-1', lambda card: card['stages']['one'].update(steps=['Inspect precedent', 'Apply it']))
         with patch("friday.isolation.require_browser"):
             for role in ("research", "develop", "review", "blind-code", "blind-behavior"):
                 item = {"id": role, "agent": "all", "role": role, "brief": "check", "skills": [], "depends_on": []}
@@ -163,8 +179,10 @@ class DispatchTests(unittest.TestCase):
                 request = json.loads(Path(event["evidence"]).read_text())["request"]
                 if role in ("research", "develop", "review"):
                     self.assertEqual(request["engineering_policy"], selected["engineering_policy"])
+                    self.assertEqual(request['steps'], ['Inspect precedent', 'Apply it'])
                 else:
                     self.assertNotIn("engineering_policy", request)
+                    self.assertNotIn('steps', request)
 
     def test_changing_project_policy_invalidates_team_checkpoint(self):
         with patch("friday.isolation.require_runner"):

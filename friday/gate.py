@@ -87,7 +87,13 @@ def definition(profile, image_id):
                "lockfile": profile.get("gate_lockfile"), "tmpfs": profile.get("gate_tmpfs", []),
                "private_tmp": profile.get("gate_private_tmp", False),
                "runner": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+    if profile.get("gate_exec_tmp") is True:
+        payload["exec_tmp"] = True
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def record_digest(record):
+    return hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def with_baseline(profile, card):
@@ -124,13 +130,26 @@ def extract(archive, path):
         tar.extractall(path)
 
 
-def execute(root, key, stage, profile):
+def feedback(result):
+    from .github import PRIVATE_DATA
+    output = Path(result["log"]).read_text(encoding="utf-8", errors="replace")[-10000:]
+    prefix = "The isolated gate failed. Fix the reported errors and rerun the gate."
+    if PRIVATE_DATA.search(output):
+        return prefix + " The log contains potentially private data and was not forwarded."
+    return prefix + "\n" + output
+
+
+def execute(root, key, stage, profile, *, branch_locked=False):
     if not profile.get("gate") or not isinstance(profile.get("gate_image"), str) or not profile["gate_image"]:
         raise FridayError("invalid_profile", "An isolated gate requires gate and gate_image.")
     resources = profile.get("gate_resources", [])
     if not isinstance(resources, list) or any(not isinstance(x, str) or not x for x in resources):
         raise FridayError("invalid_profile", "gate_resources must be an array of names.")
-    names = sorted(set(resources + ["branch:" + profile["repository"]]))
+    exec_tmp = profile.get("gate_exec_tmp", False)
+    if not isinstance(exec_tmp, bool):
+        raise FridayError("invalid_profile", "gate_exec_tmp must be a boolean.")
+    branch_resource = "branch:" + profile["repository"]
+    names = sorted(set(resources + [branch_resource]) - ({branch_resource} if branch_locked else set()))
     with contextlib.ExitStack() as stack:
         for name in names:
             stack.enter_context(locked(root, "resource:" + name))
@@ -152,15 +171,16 @@ def execute(root, key, stage, profile):
         fingerprint = definition(profile, image)
         with tempfile.TemporaryDirectory(prefix="friday-gate-") as directory:
             extract(archive, directory)
+            tmp_options = ":rw,exec,nosuid,nodev" if exec_tmp else ""
             command = ["docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only",
                        "--mount", "type=bind,src=%s,dst=/workspace,readonly" % directory,
-                       "--tmpfs", "/tmp", "--env", "XDG_DATA_HOME=/tmp/friday-data",
+                       "--tmpfs", "/tmp" + tmp_options, "--env", "XDG_DATA_HOME=/tmp/friday-data",
                        "--env", "XDG_CACHE_HOME=/tmp/friday-cache", "--workdir", "/workspace"]
             private_tmp = profile.get("gate_private_tmp", False)
             if not isinstance(private_tmp, bool):
                 raise FridayError("invalid_profile", "gate_private_tmp must be a boolean.")
             if private_tmp:
-                command += ["--tmpfs", "/private/tmp"]
+                command += ["--tmpfs", "/private/tmp" + tmp_options]
             if profile.get("gate_mode", "snapshot") == "git-diff":
                 common = git(profile["repository"], "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()
                 if "," in common:
@@ -228,6 +248,7 @@ def execute(root, key, stage, profile):
                 selected["environment_lock"] = True
             elif outcome == "passed" and current.get("mode") == "auto":
                 selected.pop("environment_lock", None)
-            current["events"].append({"type": "gate", "stage": stage, "status": outcome, "at": state.now()})
+            current["events"].append({"type": "gate", "stage": stage, "status": outcome, "at": state.now(),
+                                      "record_sha256": record_digest(record)})
         state.update(root, key, save)
         return record
