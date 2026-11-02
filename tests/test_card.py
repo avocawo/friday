@@ -41,7 +41,7 @@ class CardTests(unittest.TestCase):
 
     def test_cards_are_created_once_and_validated(self):
         value = card.read(self.root, "T-1")
-        self.assertEqual((value["version"], value["state"], value["current"]), (2, "planning", None))
+        self.assertEqual((value["version"], value["state"], value["current"]), (2, "planning", {}))
         with self.assertRaises(FridayError):
             card.create(self.root, "T-1", "/other.json")
         with self.assertRaises(FridayError):
@@ -62,10 +62,10 @@ class CardTests(unittest.TestCase):
                                 entry={"name": "glm", "vendor": "zai", "tier": "strong"},
                                 on_event=observe)
         self.assertEqual(result.status, "ok")
-        now = seen[0]["now"]
+        now = seen[0]["now"][0]
         self.assertEqual((now["role"], now["milestone"], now["model"], now["lost"]), ("develop", "M1", "model-a", False))
         self.assertIsNotNone(now["last_event"])
-        self.assertIsNone(card.read(self.root, "T-1")["current"])
+        self.assertEqual(card.read(self.root, "T-1")["current"], {})
         finished = card.events(self.root, "T-1")[-1]
         self.assertEqual((finished["type"], finished["status"], finished["usage"]["cost_usd"], finished["vendor"]),
                          ("run_finished", "ok", 0.25, "zai"))
@@ -92,12 +92,12 @@ class CardTests(unittest.TestCase):
         current = {"run": "r1", "role": "develop", "milestone": None, "phase": "develop", "model": "m", "driver": "claude",
                    "started_at": time.time()}
         card.update(self.root, "T-1", lambda value: value.update(state="running", current=current))
-        self.assertTrue(status.overview(self.root)[0]["now"]["lost"])
+        self.assertTrue(status.overview(self.root)[0]["now"][0]["lost"])
         self.assertIn("ПОТЕРЯН", status.render(status.overview(self.root)))
-        self.assertEqual(card.recover(self.root, "T-1")["run"], "r1")
+        self.assertEqual(card.recover(self.root, "T-1")[0]["run"], "r1")
         orphan.wait(5)
         self.assertFalse(alive(orphan.pid))
-        self.assertIsNone(card.read(self.root, "T-1")["current"])
+        self.assertEqual(card.read(self.root, "T-1")["current"], {})
         self.assertEqual(card.events(self.root, "T-1")[-1]["status"], "lost")
 
     def test_spending_is_summed_by_role_with_unpriced_runs_counted(self):

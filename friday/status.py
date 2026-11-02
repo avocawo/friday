@@ -33,17 +33,21 @@ def totals(events):
 def task(root, key, now=None):
     now = now or time.time()
     card = cards.read(root, key)
-    row = {"key": key, "state": card["state"], "now": None, "spent": totals(cards.events(root, key))}
-    current = card["current"]
-    if current is not None:
+    row = {"key": key, "state": card["state"], "now": [], "waiting": [], "spent": totals(cards.events(root, key))}
+    for current in cards.running(card).values():
         status = cards.run_status(root, key, current["run"])
+        if status.get("state") == "waiting":
+            continue  # shown by the waiting entry instead
         usage = status.get("usage") or {}
-        row["now"] = {"run": current["run"], "role": current["role"], "milestone": current.get("milestone"),
-                      "phase": current.get("phase"), "model": current["model"],
-                      "elapsed": now - current["started_at"],
-                      "quiet": now - status.get("last_activity_at", current["started_at"]),
-                      "last_event": status.get("last_event"), "lost": cards.lost(root, key, current),
-                      "tokens": sum(usage.get(name, 0) for name in ("input", "output", "cache_read", "cache_write"))}
+        row["now"].append({"run": current["run"], "role": current["role"], "milestone": current.get("milestone"),
+                           "phase": current.get("phase"), "model": current["model"],
+                           "elapsed": now - current["started_at"],
+                           "quiet": now - status.get("last_activity_at", current["started_at"]),
+                           "last_event": status.get("last_event"), "lost": cards.lost(root, key, current),
+                           "tokens": sum(usage.get(name, 0) for name in ("input", "output", "cache_read", "cache_write"))})
+    for where, item in (card.get("waiting") or {}).items():
+        row["waiting"].append({"milestone": None if where == "task" else where, "resource": item["resource"],
+                               "elapsed": now - item["since"]})
     return row
 
 
@@ -93,16 +97,28 @@ def describe(now):
     return " · ".join(parts)
 
 
+def describe_wait(wait):
+    parts = [wait["milestone"]] if wait["milestone"] else []
+    return " · ".join(parts + ["ждёт места: " + wait["resource"]])
+
+
 def render(rows, width=110):
     if not rows:
         return "Активных задач нет."
     header = ("ЗАДАЧА", "СОСТОЯНИЕ", "ИДЁТ", "ТИШИНА", "ТОКЕНЫ", "РАСХОД", "СЕЙЧАС")
     table = [header]
     for row in rows:
-        now = row["now"]
-        table.append((row["key"], STATE_NAMES.get(row["state"], row["state"]),
-                      duration(now["elapsed"]) if now else "—", duration(now["quiet"]) if now else "—",
-                      tokens(row["spent"]["tokens"] + (now["tokens"] if now else 0)), money(row["spent"]), describe(now)))
+        live = sum(now["tokens"] for now in row["now"])
+        first = (row["key"], STATE_NAMES.get(row["state"], row["state"]))
+        totals_cells = (tokens(row["spent"]["tokens"] + live), money(row["spent"]))
+        activity = [(duration(now["elapsed"]), duration(now["quiet"]), describe(now)) for now in row["now"]]
+        activity += [(duration(wait["elapsed"]), "—", describe_wait(wait)) for wait in row["waiting"]]
+        if not activity:
+            activity = [("—", "—", "—")]
+        for index, (elapsed, quiet, text) in enumerate(activity):
+            lead = first if index == 0 else ("", "")
+            money_cells = totals_cells if index == 0 else ("", "")
+            table.append(lead + (elapsed, quiet) + money_cells + (text,))
     sizes = [max(len(line[index]) for line in table) for index in range(len(header) - 1)]
     lines = []
     for line in table:
@@ -120,9 +136,10 @@ def render_task(root, key, recent=10):
     if card["cast"]:
         lines.append("Раскладка: " + ", ".join("%s → %s" % (ROLE_NAMES.get(role, role), value.get("model"))
                                              for role, value in card["cast"].items()))
-    now = row["now"]
-    if now:
+    for now in row["now"]:
         lines.append("Сейчас: %s (идёт %s, тишина %s)" % (describe(now), duration(now["elapsed"]), duration(now["quiet"])))
+    for wait in row["waiting"]:
+        lines.append("Ждёт: %s (%s)" % (describe_wait(wait), duration(wait["elapsed"])))
     spent = row["spent"]
     lines.append("Расход: %s, %s токенов, %s, %s работы моделей" % (
         money(spent), tokens(spent["tokens"]), plural(spent["runs"], "запуск", "запуска", "запусков"), duration(spent["seconds"])))

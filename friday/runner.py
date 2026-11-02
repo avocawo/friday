@@ -21,6 +21,8 @@ BASE_ENV = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SHELL", "USER")
 SECRET_FILES = ["Read(.env)", "Read(.env.*)", "Read(.npmrc)", "Read(*.pem)"]
 CREDENTIALS = ["~/.ssh", "~/.aws", "~/.config", "~/.netrc", "~/.npmrc", "~/.docker", "~/.gnupg", "~/.kube",
                "~/.codex", "~/.claude", "~/.local/share/friday", "~/Library/Keychains"]
+# Set by the orchestrator to stop every agent this process runs, e.g. parallel milestones after Ctrl-C.
+CANCEL = threading.Event()
 QUOTA_TEXT = re.compile(r"(?i)usage limit|rate limit|quota|too many requests")
 
 
@@ -45,7 +47,7 @@ class Spec:
 
 @dataclass
 class Result:
-    status: str                      # ok, failed, quota, idle, timeout
+    status: str                      # ok, failed, quota, idle, timeout, cancelled
     session: str = None
     text: str = ""
     structured: object = None
@@ -312,6 +314,9 @@ def run(spec, on_event=None):
             finished = False
             while True:
                 now = time.time()
+                if CANCEL.is_set():
+                    result.status, result.error = "cancelled", "Friday stopped the run."
+                    break
                 limit = spec.tool_timeout if driver.busy() else spec.idle_timeout
                 if now - started > spec.total_timeout:
                     result.status, result.error = "timeout", "The agent exceeded %ss in total." % spec.total_timeout

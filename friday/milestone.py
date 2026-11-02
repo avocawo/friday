@@ -1,10 +1,12 @@
 """Run a task's milestones: one executor session per milestone, gate, review by a stronger model, disputes to the owner."""
 import json
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import gate, models, runner
+from . import gate, models, runner, workspace
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -109,10 +111,10 @@ def run_role(root, key, profile, role, entry, worktree, prompt, schema, mileston
     return cards.run_agent(root, key, spec, role=role, milestone=milestone_id, phase=role, entry=entry, profile=profile)
 
 
-def run(root, key, profile, milestone_id):
+def run(root, key, profile, milestone_id, worktree=None):
     """Drive one milestone to done. Returns its final record; raises only when the work cannot pass the gate."""
     card = cards.read(root, key)
-    worktree, layout = card["worktree"], card["cast"]
+    worktree, layout = worktree or card["worktree"], card["cast"]
     document = load_plan(root, key)
     item = define(document, milestone_id)
     start = git(worktree, "rev-parse", "HEAD").strip()
@@ -170,7 +172,9 @@ def run(root, key, profile, milestone_id):
             gate_record = None
             if profile.get("gate"):
                 log = cards.directory(root, key) / "gates" / ("%s-%d.log" % (milestone_id, round_number))
-                gate_record = gate.check(root, profile, worktree, card.get("base"), log)
+                gate_record = gate.check(root, profile, worktree, card.get("base"), log,
+                                         on_wait=lambda name: cards.waiting(root, key, name, milestone_id))
+                cards.stop_waiting(root, key, milestone_id)
                 cards.record(root, key, "gate", milestone=milestone_id, status=gate_record["status"], head=gate_record["head"])
                 if gate_record["status"] == "environment_unavailable":
                     set_state(root, key, milestone_id, state="blocked")
@@ -279,11 +283,17 @@ def run_task(root, key, profile):
     cards.record(root, key, "run_task_started")
     completed = []
     try:
+        runner.CANCEL.clear()
+        document = load_plan(root, key)
         while True:
             pending = ready(cards.read(root, key))
             if not pending:
                 break
-            completed.append(run(root, key, profile, pending[0]))
+            group = [name for name in pending if define(document, name)["parallel"]]
+            if len(group) >= 2:
+                completed.extend(run_parallel(root, key, profile, group))
+            else:
+                completed.append(run(root, key, profile, pending[0]))
     except FridayError:
         cards.update(root, key, lambda value: value.update(state="failed"))
         raise
@@ -294,6 +304,65 @@ def run_task(root, key, profile):
     cards.update(root, key, lambda value: value.update(state="done" if not left else "stopped"))
     cards.record(root, key, "run_task_finished", completed=[item["milestone"] for item in completed], left=left)
     return {"completed": completed, "left": left}
+
+
+def run_parallel(root, key, profile, group):
+    """Milestones the plan marks parallel (no shared files) run at once, each in its own worktree; their commits
+    are then cherry-picked onto the task branch in plan order."""
+    card = cards.read(root, key)
+    main, branch, repo = card["worktree"], card["branch"], profile["repository"]
+    lanes = {}
+    for name in group:
+        path, lane = str(Path(main).parent / (Path(main).name + "--" + name)), branch + "--" + name
+        workspace.git(repo, "worktree", "add", "-q", "-b", lane, path, git(main, "rev-parse", "HEAD").strip())
+        lanes[name] = (path, lane)
+    cards.record(root, key, "parallel_started", milestones=group)
+    results, errors = {}, {}
+    pool = ThreadPoolExecutor(max_workers=len(group))
+    futures = {name: pool.submit(run, root, key, profile, name, lanes[name][0]) for name in group}
+    try:
+        for name, future in futures.items():
+            try:
+                results[name] = future.result()
+            except FridayError as exc:
+                errors[name] = exc
+    except BaseException:
+        runner.CANCEL.set()  # Ctrl-C or SIGTERM: stop the other lanes' agents too
+        pool.shutdown(wait=True)
+        raise
+    pool.shutdown(wait=True)
+    try:
+        for name in group:
+            if name in results:
+                integrate(root, key, profile, name, main, lanes[name][0])
+    finally:
+        for path, lane in lanes.values():
+            workspace.git(repo, "worktree", "remove", "--force", path)
+            workspace.git(repo, "branch", "-D", lane)
+    if errors:
+        raise next(iter(errors.values()))
+    return [results[name] for name in group]
+
+
+def integrate(root, key, profile, name, main, lane):
+    """Cherry-pick a parallel milestone's commits onto the task branch and point its stages at the new commits."""
+    item = define(load_plan(root, key), name)
+    start = next(entry["start"] for entry in cards.read(root, key)["milestones"] if entry["id"] == name)
+    commits = git(lane, "rev-list", "--reverse", start + "..HEAD").split()
+    before = git(main, "rev-parse", "HEAD").strip()
+    names = identity(main)
+    if commits:
+        result = subprocess.run(["git", "-C", main, "-c", "core.hooksPath=/dev/null", "-c", "user.name=" + names["GIT_AUTHOR_NAME"],
+                                 "-c", "user.email=" + names["GIT_AUTHOR_EMAIL"], "cherry-pick", *commits], capture_output=True, text=True)
+        if result.returncode:
+            subprocess.run(["git", "-C", main, "cherry-pick", "--abort"], capture_output=True)
+            set_state(root, key, name, state="failed")
+            raise FridayError("merge_conflict", "Parallel milestone %s conflicts with the task branch: %s" % (name, result.stderr.strip()))
+    subjects = [line.split(" ", 1) for line in git(main, "log", "--format=%H %s", before + "..HEAD").splitlines()]
+    stages = [{"id": stage["id"], "commit": next((sha for sha, subject in subjects if (" " + stage["id"] + ":") in (" " + subject)), None)}
+              for stage in item["stages"]]
+    set_state(root, key, name, stages=stages, head=git(main, "rev-parse", "HEAD").strip(), start=before)
+    cards.record(root, key, "parallel_integrated", milestone=name, commits=len(commits))
 
 
 def decide(root, key, name, text, reopen=()):

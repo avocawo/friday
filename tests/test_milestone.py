@@ -148,7 +148,7 @@ class MilestoneTests(unittest.TestCase):
     def test_gate_failures_feed_errors_and_escalate_after_two(self):
         self.profile.update(gate=["check"], gate_image="img")
         outcomes = iter([{"status": "failed", "log": "fail-1"}, {"status": "failed", "log": "fail-2"}, {"status": "passed", "log": "ok"}])
-        def fake_gate(root, profile, worktree, base, log):
+        def fake_gate(root, profile, worktree, base, log, on_wait=None):
             record = dict(next(outcomes), head="h", exit_code=0, unchanged=True)
             Path(log).parent.mkdir(parents=True, exist_ok=True)
             Path(log).write_text("—→ ESLint\n  3:7 error no-shadow\n—→ Tests\n ✓ ok\n" if record["status"] == "failed" else "fine")
@@ -172,7 +172,7 @@ class MilestoneTests(unittest.TestCase):
 
     def test_gate_that_never_passes_fails_the_milestone(self):
         self.profile.update(gate=["check"], gate_image="img", milestone_rounds=2)
-        def failing(root, profile, worktree, base, log):
+        def failing(root, profile, worktree, base, log, on_wait=None):
             Path(log).parent.mkdir(parents=True, exist_ok=True)
             Path(log).write_text("error: broken")
             return {"status": "failed", "log": str(log), "head": "h", "exit_code": 1, "unchanged": True}

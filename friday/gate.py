@@ -269,7 +269,7 @@ SUMMARY = re.compile(r"(?i)\d+ of \d+ checks failed|\b0 (errors?|failed)\b")
 FAILURE = re.compile(r"(?i)\b(error|errors|failed|fail|failing)\b|✗|×|\bTS\d{4}\b")
 
 
-def check(root, profile, worktree, base, log_path):
+def check(root, profile, worktree, base, log_path, on_wait=None):
     """Run the gate on the worktree's committed HEAD for the new core; the log goes to log_path."""
     selected = dict(profile, repository=str(worktree))
     if not selected.get("gate") or not isinstance(selected.get("gate_image"), str) or not selected["gate_image"]:
@@ -279,9 +279,11 @@ def check(root, profile, worktree, base, log_path):
             raise FridayError("invalid_plan", "A git-diff gate needs the task's base commit.")
         git(worktree, "merge-base", "--is-ancestor", base, "HEAD")
         selected["gate_base"] = base
+    from . import resources
     with contextlib.ExitStack() as stack:
-        for name in sorted(set(selected.get("gate_resources", []))):
-            stack.enter_context(locked(root, "resource:" + name, timeout=3600))
+        # Counted slots, not global locks: machine.json decides how many gates may run at once (ADR 0005).
+        for name in ["gate"] + sorted(set(selected.get("gate_resources", [])) - {"gate"}):
+            stack.enter_context(resources.slot(root, name, on_wait=on_wait))
         head, digest, archive = snapshot(selected)
         image = image_id(selected["gate_image"])
         result = container(selected, image, head, archive)
