@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from friday import card, doctor, milestone, plan, profile, state, status, tasks, tracker, workspace
+from friday import card, doctor, journal, milestone, plan, profile, state, status, tasks, tracker, workspace
 from friday.errors import FridayError
 
 VERSION = "0.2.0"
@@ -40,6 +40,7 @@ def main(argv=None):
     archive = commands.add_parser("archive", help="убрать рабочую копию и карточку, чтобы начать задачу заново")
     archive.add_argument("key")
     archive.add_argument("--force", action="store_true", help="удалить и незакоммиченные изменения")
+    commands.add_parser("journal", help="обновить журналы задачи из её карточки").add_argument("key")
     check = commands.add_parser("doctor", help="готовность машины и профиля")
     check.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
     check.add_argument("--json", action="store_true")
@@ -91,6 +92,9 @@ def dispatch(root, args):
     elif args.command == "archive":
         result = tasks.archive(root, args.key, task_profile(root, args.key), force=args.force)
         print("Задача в архиве: %s. Ветка %s сохранена." % (result["archive"], result["branch"]))
+    elif args.command == "journal":
+        written = journal.sync(root, args.key)
+        print("\n".join(written) if written else "В профиле не настроены журналы (journal или journal_dir).")
     elif args.command == "doctor":
         report = doctor.inspect(args.profile)
         print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else doctor.render(report))

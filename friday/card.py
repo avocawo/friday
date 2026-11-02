@@ -76,6 +76,8 @@ def record(root, key, kind, **fields):
     with locked(root, "events:" + state.validate_key(key)):
         with open(directory(root, key) / "events.jsonl", "a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    from . import journal  # journals render the card, so they come after it
+    journal.on_event(root, key, event)
     return event
 
 

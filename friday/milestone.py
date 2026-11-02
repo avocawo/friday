@@ -151,6 +151,8 @@ def run(root, key, profile, milestone_id, worktree=None):
             raise FridayError("agent_failed", "Executor failed on %s (%s): %s" % (milestone_id, result.status, result.error))
         session = result.session
         answer = result.structured or {}
+        if answer.get("summary"):
+            set_state(root, key, milestone_id, summary=answer["summary"], executor=entry["model"])
         extra = answer.get("extra_files", extra)
         for dispute in answer.get("disputes", []):
             if 0 <= dispute["finding"] < len(findings):

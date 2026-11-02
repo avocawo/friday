@@ -52,6 +52,7 @@ cp examples/models.json examples/project-profile.json profiles/
 | `decide KEY name "текст" [--reopen M2]` | Решение владельца; переоткрывает только названные вехи |
 | `run KEY` / `resume KEY` / `stop KEY` | Исполнить в этом терминале, продолжить, остановить |
 | `archive KEY [--force]` | Убрать рабочую копию и карточку; ветка остаётся |
+| `journal KEY` | Обновить журналы задачи (Obsidian, jsonl) |
 | `doctor --profile P` | Готовность машины и профиля |
 
 Подробно о профиле, моделях и границах — в [руководстве](docs/guide.md). Почему конвейер устроен так — в [разборе пилота](docs/process-redesign.md) и [ADR](docs/adr/).
