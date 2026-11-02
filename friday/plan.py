@@ -253,14 +253,15 @@ def make(root, key, profile, ticket):
     return document
 
 
-def approve(root, key):
+def approve(root, key, by="owner"):
+    """Approve the waiting plan; by="auto" when the profile's approval is auto and nobody looked at it."""
     def change(value):
         if value["state"] != "awaiting_approval":
             raise FridayError("invalid_state", "Task %s has no plan waiting for approval." % key)
         value["plan"]["approved"] = True
         value["state"] = "approved"
     cards.update(root, key, change)
-    cards.record(root, key, "plan_approved")
+    cards.record(root, key, "plan_approved", by=by)
 
 
 def render(root, key):

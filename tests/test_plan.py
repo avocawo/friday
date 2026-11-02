@@ -231,6 +231,22 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(card.read(self.root, "T-9")["state"], "approved")
 
+    def test_auto_approval_skips_the_owner(self):
+        self.calls(("p", PLAN), ("r", {"verdict": "ok", "findings": []}))
+        self.profile_path.write_text(json.dumps(dict(json.loads(self.profile_path.read_text()), approval="auto")))
+        brief = Path(self.directory.name) / "brief.md"
+        brief.write_text("Сделать приветствие.")
+        script = ("import sys, runpy; from unittest.mock import patch; "
+                  "patch('friday.models.environment', return_value={'FAKE_DIR': %r}).start(); "
+                  "sys.argv = ['friday', 'start', 'T-8', '--profile', %r, '--brief', %r, '--no-run']; "
+                  "runpy.run_path(%r, run_name='__main__')") % (str(self.fake), str(self.profile_path), str(brief), str(CLI))
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                                env=dict(os.environ, FRIDAY_HOME=str(self.root)), cwd=str(Path(__file__).resolve().parents[1]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("План утверждён автоматически", result.stdout)
+        self.assertEqual(card.read(self.root, "T-8")["state"], "approved")
+        self.assertEqual(card.events(self.root, "T-8")[-1], dict(card.events(self.root, "T-8")[-1], type="plan_approved", by="auto"))
+
 
 if __name__ == "__main__":
     unittest.main()

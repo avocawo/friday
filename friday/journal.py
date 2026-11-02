@@ -92,7 +92,7 @@ def describe(event):
         "plan_invalid": lambda: "План не прошёл проверку выполнимости и ушёл на доработку (%d проблем)." % len(event.get("errors", [])),
         "plan_reviewed": lambda: "План проверен: %s, замечаний %s, блокирующих %s." % (event.get("verdict"), event.get("findings"), event.get("blocking")),
         "plan_ready": lambda: "План готов: вех %s, несогласованных замечаний %s." % (event.get("milestones"), event.get("open_notes")),
-        "plan_approved": lambda: "План утверждён.",
+        "plan_approved": lambda: "План утверждён автоматически." if event.get("by") == "auto" else "План утверждён.",
         "cast_note": lambda: "Модели: %s" % event.get("note", ""),
         "milestone_started": lambda: "%s: начата." % milestone,
         "gate": lambda: "%s: гейт %s." % (milestone, {"passed": "прошёл", "failed": "не прошёл"}.get(event.get("status"), event.get("status"))),

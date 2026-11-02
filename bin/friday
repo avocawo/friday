@@ -23,6 +23,7 @@ def main(argv=None):
     start.add_argument("key")
     start.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
     start.add_argument("--brief", help="файл с постановкой, если задачи нет в трекере")
+    start.add_argument("--no-run", action="store_true", help="при approval: auto только утвердить, без запуска")
     for name, text in (("plan", "показать план задачи"), ("run", "исполнить утверждённый план в этом терминале"),
                        ("resume", "продолжить остановленную или упавшую задачу"), ("stop", "остановить идущую задачу")):
         commands.add_parser(name, help=text).add_argument("key")
@@ -56,6 +57,15 @@ def main(argv=None):
         return 130
 
 
+def launch(root, key):
+    """Run the pipeline of an approved task in the background; returns where to follow it."""
+    log = card.directory(root, key) / "run.log"
+    with open(log, "a") as output:
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "run", key], stdout=output, stderr=output,
+                         stdin=subprocess.DEVNULL, start_new_session=True, env=dict(os.environ, FRIDAY_HOME=str(root)))
+    return "конвейер запущен в фоне. Ход: friday status %s, лог: %s" % (key, log)
+
+
 def task_profile(root, key):
     return profile.load(card.read(root, key)["profile"])
 
@@ -70,11 +80,7 @@ def dispatch(root, args):
         if args.no_run:
             print("План %s утверждён." % args.key)
         else:
-            log = card.directory(root, args.key) / "run.log"
-            with open(log, "a") as output:
-                subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "run", args.key], stdout=output, stderr=output,
-                                 stdin=subprocess.DEVNULL, start_new_session=True, env=dict(os.environ, FRIDAY_HOME=str(root)))
-            print("План %s утверждён, конвейер запущен в фоне. Ход: friday status %s, лог: %s" % (args.key, args.key, log))
+            print("План %s утверждён, %s" % (args.key, launch(root, args.key)))
     elif args.command in ("run", "resume"):
         selected = task_profile(root, args.key)
         result = (milestone.run_task if args.command == "run" else milestone.resume)(root, args.key, selected)
@@ -131,7 +137,11 @@ def start_task(root, args):
         card.record(root, args.key, "start_failed", error=str(exc))
         raise
     print(plan.render(root, args.key))
-    print("\nУтвердить и запустить: friday approve " + args.key)
+    if selected.get("approval") == "auto":
+        plan.approve(root, args.key, by="auto")
+        print("\nПлан утверждён автоматически (approval: auto), " + (launch(root, args.key) if not args.no_run else "запуск: friday run " + args.key))
+    else:
+        print("\nУтвердить и запустить: friday approve " + args.key)
     return 0
 
 
