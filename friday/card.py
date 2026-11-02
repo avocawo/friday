@@ -11,7 +11,7 @@ from .errors import FridayError
 from .locks import locked
 
 VERSION = 2
-STATES = ("planning", "awaiting_approval", "running", "stopped", "done", "failed")
+STATES = ("planning", "awaiting_approval", "approved", "running", "stopped", "done", "failed")
 
 
 def directory(root, key):

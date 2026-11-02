@@ -2,12 +2,13 @@
 """Entry point of the new Friday core while it is built next to the old one."""
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from friday import state, status
+from friday import card, intake, plan, profile, state, status, workspace
 from friday.errors import FridayError
 
 
@@ -17,17 +18,60 @@ def main(argv=None):
     show = commands.add_parser("status", help="что делают задачи сейчас и сколько потрачено")
     show.add_argument("key", nargs="?")
     show.add_argument("--json", action="store_true", help="машиночитаемый вывод")
+    start = commands.add_parser("start", help="подготовить задачу: рабочая копия, план, проверка плана")
+    start.add_argument("key")
+    start.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
+    start.add_argument("--brief", help="файл с постановкой, если задачи нет в трекере")
+    show_plan = commands.add_parser("plan", help="показать план задачи")
+    show_plan.add_argument("key")
+    approve = commands.add_parser("approve", help="утвердить план")
+    approve.add_argument("key")
     args = parser.parse_args(argv)
     root = state.home()
     try:
+        if args.command == "start":
+            return start_task(root, args)
+        if args.command == "plan":
+            print(plan.render(root, args.key))
+        if args.command == "approve":
+            plan.approve(root, args.key)
+            print("План %s утверждён." % args.key)
         if args.command == "status":
             if args.json:
                 print(json.dumps(status.task(root, args.key) if args.key else status.overview(root), ensure_ascii=False, indent=2))
             else:
                 print(status.render_task(root, args.key) if args.key else status.render(status.overview(root)))
-    except FridayError as exc:
+    except (FridayError, OSError) as exc:
         print("Ошибка: " + str(exc), file=sys.stderr)
         return 1
+    return 0
+
+
+def start_task(root, args):
+    selected = profile.load(args.profile)
+    try:
+        existing = card.read(root, args.key)
+    except FridayError as exc:
+        if exc.code != "not_found":
+            raise
+        existing = card.create(root, args.key, selected["path"])
+    if existing["state"] not in ("planning", "failed"):
+        raise FridayError("invalid_state", "Task %s is already %s." % (args.key, existing["state"]))
+    try:
+        workspace.create(root, args.key, selected)
+        if args.brief:
+            ticket = Path(args.brief).read_text(encoding="utf-8")
+        else:
+            ticket = intake.ticket(selected, args.key)
+            if ticket is None:
+                raise FridayError("ticket_missing", "The profile has no tracker; pass --brief with the task statement.")
+        plan.make(root, args.key, selected, ticket)
+    except (FridayError, OSError) as exc:
+        card.update(root, args.key, lambda value: value.update(state="failed"))
+        card.record(root, args.key, "start_failed", error=str(exc))
+        raise
+    print(plan.render(root, args.key))
+    print("\nУтвердить: friday-next approve " + args.key)
     return 0
 
 

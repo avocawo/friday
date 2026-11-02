@@ -5,7 +5,7 @@ from . import card as cards
 
 ROLE_NAMES = {"plan": "план", "plan-review": "проверка плана", "develop": "исполнение", "review": "ревью",
               "final-review": "финальное ревью", "blind-code": "слепая проверка", "browser": "браузер", "gate": "гейт"}
-STATE_NAMES = {"planning": "план", "awaiting_approval": "ждёт утверждения", "running": "в работе",
+STATE_NAMES = {"planning": "план", "awaiting_approval": "ждёт утверждения", "approved": "утверждена", "running": "в работе",
                "stopped": "остановлена", "done": "готова", "failed": "сбой"}
 
 
