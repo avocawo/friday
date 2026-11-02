@@ -153,8 +153,9 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("Read(.env)", permissions["deny"])
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "acceptEdits")
         self.assertIn("--session-id", argv)
-        runner.run(self.spec(resume="s-1", schema={"type": "object"}))
+        runner.run(self.spec(resume="s-1", schema={"type": "object"}, effort="max"))
         argv = self.invocation()["argv"]
+        self.assertEqual(argv[argv.index("--effort") + 1], "max")
         self.assertEqual(argv[argv.index("--tools") + 1], "Read,Glob,Grep")
         self.assertEqual(argv[argv.index("--resume") + 1], "s-1")
         self.assertEqual(json.loads(argv[argv.index("--json-schema") + 1]), {"type": "object"})
@@ -212,8 +213,9 @@ class RunnerTests(unittest.TestCase):
 
     def test_codex_resume_continues_the_thread(self):
         self.scenario([{"emit": {"type": "turn.completed", "usage": {}}}])
-        runner.run(self.spec(driver="codex", resume="th-1", write=True))
+        runner.run(self.spec(driver="codex", resume="th-1", write=True, effort="high"))
         argv = self.invocation()["argv"]
+        self.assertIn('model_reasoning_effort="high"', argv)
         self.assertEqual(argv[:2], ["exec", "resume"])
         self.assertEqual(argv[-2:], ["th-1", "-"])
 

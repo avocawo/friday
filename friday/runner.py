@@ -32,6 +32,7 @@ class Spec:
     write: bool = False              # executor: may edit files in cwd
     commands: list = field(default_factory=list)   # executor shell allowlist, e.g. ["npm run lint"]
     schema: dict = None              # structured final answer
+    effort: str = None               # reasoning effort, e.g. "medium" or "max"
     resume: str = None               # session id of a previous run to continue
     env: dict = field(default_factory=dict)
     idle_timeout: float = 600        # seconds without output while no tool call is open
@@ -84,6 +85,8 @@ class Claude:
         args += ["--resume", self.session] if spec.resume else ["--session-id", self.session]
         if spec.write:
             args += ["--permission-mode", "acceptEdits"]
+        if spec.effort:
+            args += ["--effort", spec.effort]
         if spec.schema is not None:
             args += ["--json-schema", json.dumps(spec.schema)]
         return args
@@ -173,6 +176,8 @@ class Codex:
                    "--disable", "browser_use", "--disable", "computer_use",
                    *codex_policy.options("develop" if spec.write else "review", directory),
                    "-c", 'web_search="disabled"', "-c", 'approval_policy="never"', "--model", spec.model]
+        if spec.effort:
+            options += ["-c", "model_reasoning_effort=" + json.dumps(spec.effort)]
         if spec.schema is not None:
             schema = Path(directory) / "schema.json"
             schema.write_text(json.dumps(spec.schema))

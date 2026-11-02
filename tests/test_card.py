@@ -58,7 +58,8 @@ class CardTests(unittest.TestCase):
             if event["note"].startswith("text"):
                 time.sleep(1.05)  # let the throttled status file catch up
                 seen.append(status.overview(self.root)[0])
-        result = card.run_agent(self.root, "T-1", self.spec(), role="develop", milestone="M1", tier="strong", vendor="zai",
+        result = card.run_agent(self.root, "T-1", self.spec(), role="develop", milestone="M1",
+                                entry={"name": "glm", "vendor": "zai", "tier": "strong"},
                                 on_event=observe)
         self.assertEqual(result.status, "ok")
         now = seen[0]["now"]

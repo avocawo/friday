@@ -1,0 +1,24 @@
+{
+  "name": "models",
+  "repository": ".",
+  "models": {
+    "fable": {"model": "claude-fable-5-1", "vendor": "anthropic", "driver": "claude", "tier": "frontier", "strength": 1, "scarce": true, "effort": "high"},
+    "opus-xhigh": {"model": "claude-opus-5-5", "vendor": "anthropic", "driver": "claude", "tier": "frontier", "effort": "xhigh"},
+    "opus-high": {"model": "claude-opus-5-5", "vendor": "anthropic", "driver": "claude", "tier": "frontier", "effort": "high"},
+    "astra-high": {"model": "gpt-6-astra", "vendor": "openai", "driver": "codex", "tier": "frontier", "strength": 1, "effort": "high"},
+    "sonnet-high": {"model": "claude-sonnet-5-5", "vendor": "anthropic", "driver": "claude", "tier": "strong", "effort": "high"},
+    "sonnet": {"model": "claude-sonnet-5-5", "vendor": "anthropic", "driver": "claude", "tier": "strong", "effort": "medium"},
+    "sol": {"model": "gpt-6.1-sol", "vendor": "openai", "driver": "codex", "tier": "strong"},
+    "glm-high": {"model": "glm-5.3", "vendor": "zai", "driver": "claude", "tier": "strong", "effort": "high", "token_file": "~/.config/friday/zai.env", "token_key": "ZAI_API_KEY"},
+    "glm-flash": {"model": "glm-5.3-flash", "vendor": "zai", "driver": "claude", "tier": "efficient", "token_file": "~/.config/friday/zai.env", "token_key": "ZAI_API_KEY"}
+  },
+  "roles": {
+    "plan": ["fable", "opus-xhigh"],
+    "plan-review": ["astra-high", "fable"],
+    "develop": ["glm-high", "sonnet-high", "opus-high"],
+    "review": ["opus-high"],
+    "final-review": ["opus-xhigh"],
+    "blind-code": ["astra-high", "opus-high"],
+    "browser": ["sonnet"]
+  }
+}

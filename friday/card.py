@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import runner, state
+from . import models, runner, state
 from .errors import FridayError
 from .locks import locked
 
@@ -136,7 +136,7 @@ def recover(root, key):
     return current
 
 
-def run_agent(root, key, spec, *, role, milestone=None, phase=None, tier=None, vendor=None, on_event=None):
+def run_agent(root, key, spec, *, role, milestone=None, phase=None, entry=None, profile=None, on_event=None):
     """Run one agent for a task: the card shows it as current while it works and the result lands in events."""
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     spec.log_dir = str(directory(root, key) / "runs" / run_id)
@@ -156,10 +156,16 @@ def run_agent(root, key, spec, *, role, milestone=None, phase=None, tier=None, v
     finally:
         update(root, key, lambda card: card.update(current=None))
         finished = {"run": run_id, "role": role, "milestone": milestone, "model": spec.model, "driver": spec.driver,
-                    "vendor": vendor, "tier": tier}
+                    "vendor": (entry or {}).get("vendor"), "tier": (entry or {}).get("tier")}
         if result is None:
             finished.update(status="interrupted", error=run_status(root, key, run_id).get("error", ""))
         else:
             finished.update(status=result.status, session=result.session, usage=result.usage, duration_ms=result.duration_ms,
                             turns=result.turns, error=result.error, denials=len(result.denials))
+            if entry is not None and profile is not None and result.usage.get("cost_usd") is None:
+                estimate = models.estimate(entry, profile, result.usage)
+                if estimate is not None:
+                    finished["usage"] = dict(result.usage, cost_usd=estimate, cost_estimated=True)
+            if result.status == "quota" and entry is not None:
+                finished["quota_until"] = models.exhausted(root, entry["vendor"], result.error, result.limits)
         record(root, key, "run_finished", **finished)
