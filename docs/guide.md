@@ -40,6 +40,7 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 | `models`, `roles` | Каталог моделей и предпочтения по ролям (ниже) |
 | `engineering_policy` | Правила для планировщика и ревью |
 | `limits` | `stage_files` и `stage_lines` — лимиты этапа (10 и 500) |
+| `worktree_setup` | Команды, которые Friday запускает в новой рабочей копии до планирования (зависимости и подобное): массивы аргументов с подстановкой `{repository}` и `{worktree}`; должны быть повторяемыми. Пример для npm на macOS: `["sh", "-c", "[ -e node_modules ] \|\| cp -cR {repository}/node_modules node_modules"]` |
 | `executor_commands` | Команды, которые исполнитель может запускать сам, точной формой: `"python3 -m pytest"`, а не `python` |
 | `executor_deny_read` | Дополнительные пути, которые shell исполнителя не может читать |
 | `milestone_rounds` | Сколько раундов исполнителя на веху (4) |

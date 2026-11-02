@@ -200,6 +200,18 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(subprocess.run(["git", "-C", first, "branch", "--show-current"], capture_output=True, text=True).stdout.strip(),
                          "friday/T-1")
 
+    def test_worktree_setup_runs_in_a_new_worktree_and_failures_stop_the_start(self):
+        self.profile["worktree_setup"] = [["sh", "-c", "[ -e deps ] || cp -R {repository}/app.py deps"]]
+        card.create(self.root, "T-1", str(self.profile_path))
+        worktree = Path(workspace.create(self.root, "T-1", self.profile))
+        self.assertEqual((worktree / "deps").read_text(), "print('hi')\n")
+        self.profile["worktree_setup"] = [["false"]]
+        card.create(self.root, "T-2", str(self.profile_path))
+        with self.assertRaises(FridayError) as error:
+            workspace.create(self.root, "T-2", self.profile)
+        self.assertEqual(error.exception.code, "worktree_setup_failed")
+        self.assertIsNone(card.read(self.root, "T-2").get("worktree"))
+
     def test_start_command_plans_from_a_brief(self):
         clean = {"verdict": "ok", "findings": []}
         self.calls(("p", PLAN), ("r", clean))

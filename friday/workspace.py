@@ -27,6 +27,20 @@ def registered(repo, target, branch):
     return any("worktree " + str(target) in record and "branch refs/heads/" + branch in record for record in records)
 
 
+def prepare(profile, worktree):
+    """Run the profile's worktree_setup commands (dependencies and the like) in a worktree new to this task."""
+    for command in profile.get("worktree_setup") or []:
+        if not isinstance(command, list) or not command or any(not isinstance(part, str) for part in command):
+            raise FridayError("invalid_profile", "worktree_setup must be a list of argument arrays.")
+        argv = [part.replace("{repository}", profile["repository"]).replace("{worktree}", worktree) for part in command]
+        try:
+            result = subprocess.run(argv, cwd=worktree, capture_output=True, text=True, timeout=900)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise FridayError("worktree_setup_failed", str(exc))
+        if result.returncode:
+            raise FridayError("worktree_setup_failed", " ".join(argv) + ": " + (result.stderr.strip() or result.stdout.strip())[-2000:])
+
+
 def create(root, key, profile):
     """Return the worktree path, creating the branch from origin/<base> once; a rerun reuses what exists."""
     repo = profile["repository"]
@@ -52,6 +66,7 @@ def create(root, key, profile):
             base_commit = git(repo, "rev-parse", "FETCH_HEAD^{commit}")
             target.parent.mkdir(parents=True, exist_ok=True)
             git(repo, "worktree", "add", "-b", branch, str(target), base_commit)
+    prepare(profile, str(target))  # also on a rerun after a failed setup, so commands must be repeatable
     cards.update(root, key, lambda value: value.update(branch=branch, worktree=str(target), base=base_commit))
     cards.record(root, key, "worktree_created", branch=branch, worktree=str(target), base=base_commit)
     return str(target)
