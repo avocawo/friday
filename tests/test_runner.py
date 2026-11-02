@@ -8,6 +8,10 @@ from unittest.mock import patch
 
 from friday import runner
 
+# Idle timeout for tests that read files the fake agent writes on start: a loaded machine starts Python slower
+# than a sub-second timeout, and the agent would be killed before writing them.
+STARTUP_SLACK = 3
+
 FAKE = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys, time
 if sys.argv[1:4] == ["mcp", "list", "--json"]:
@@ -105,7 +109,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_idle_agent_and_its_children_are_killed(self):
         self.scenario([{"emit": INIT}, {"child": True}, {"sleep": 300}])
-        result = runner.run(self.spec(idle_timeout=0.5))
+        result = runner.run(self.spec(idle_timeout=STARTUP_SLACK))
         self.assertEqual(result.status, "idle")
         child = int((self.root / "child.pid").read_text())
         deadline = time.time() + 5
@@ -117,8 +121,8 @@ class RunnerTests(unittest.TestCase):
     def test_open_tool_call_waits_for_the_tool_timeout(self):
         call = {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "npm test"}}]}}
         done = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
-        self.scenario([{"emit": INIT}, {"emit": call}, {"sleep": 1.5}, {"emit": done}, {"emit": RESULT}])
-        self.assertEqual(runner.run(self.spec(idle_timeout=0.5, tool_timeout=10)).status, "ok")
+        self.scenario([{"emit": INIT}, {"emit": call}, {"sleep": STARTUP_SLACK + 1}, {"emit": done}, {"emit": RESULT}])
+        self.assertEqual(runner.run(self.spec(idle_timeout=STARTUP_SLACK, tool_timeout=30)).status, "ok")
         self.scenario([{"emit": INIT}, {"emit": call}, {"sleep": 300}])
         result = runner.run(self.spec(idle_timeout=0.5, tool_timeout=1))
         self.assertEqual(result.status, "idle")
@@ -164,7 +168,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_session_id_is_known_before_the_agent_reports_it(self):
         self.scenario([{"sleep": 300}])
-        result = runner.run(self.spec(idle_timeout=0.5))
+        result = runner.run(self.spec(idle_timeout=STARTUP_SLACK))
         argv = self.invocation()["argv"]
         self.assertEqual(result.session, argv[argv.index("--session-id") + 1])
 

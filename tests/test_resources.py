@@ -91,7 +91,7 @@ class SlotTests(unittest.TestCase):
         (fake / "scenario.json").write_text(json.dumps([{"emit": INIT}, {"child": True}, {"sleep": 300}]))
         spec = runner.Spec(driver="claude", model="m", prompt="p", cwd=str(self.root), log_dir=str(self.root / "logs"),
                            env={"FAKE_DIR": str(fake)})
-        threading.Timer(1.0, runner.CANCEL.set).start()
+        threading.Timer(3.0, runner.CANCEL.set).start()  # after the fake agent has started its child on a loaded machine
         self.addCleanup(runner.CANCEL.clear)
         with patch.dict(os.environ, {"PATH": str(fake / "bin") + os.pathsep + os.environ.get("PATH", "")}):
             result = runner.run(spec)
