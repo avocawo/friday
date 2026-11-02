@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from friday import card, intake, plan, profile, state, status, workspace
+from friday import card, intake, milestone, plan, profile, state, status, workspace
 from friday.errors import FridayError
 
 
@@ -26,6 +26,13 @@ def main(argv=None):
     show_plan.add_argument("key")
     approve = commands.add_parser("approve", help="утвердить план")
     approve.add_argument("key")
+    run = commands.add_parser("run", help="исполнить утверждённый план веха за вехой")
+    run.add_argument("key")
+    decide = commands.add_parser("decide", help="записать решение владельца")
+    decide.add_argument("key")
+    decide.add_argument("name")
+    decide.add_argument("text")
+    decide.add_argument("--reopen", default="", help="вехи, которые решение меняет, через запятую")
     args = parser.parse_args(argv)
     root = state.home()
     try:
@@ -36,6 +43,13 @@ def main(argv=None):
         if args.command == "approve":
             plan.approve(root, args.key)
             print("План %s утверждён." % args.key)
+        if args.command == "run":
+            selected = profile.load(card.read(root, args.key)["profile"])
+            result = milestone.run_task(root, args.key, selected)
+            print("Готово вех: %d. Осталось: %s" % (len(result["completed"]), ", ".join(result["left"]) or "нет"))
+        if args.command == "decide":
+            reopened = milestone.decide(root, args.key, args.name, args.text, [x for x in args.reopen.split(",") if x])
+            print("Решение записано. Переоткрыты: " + (", ".join(reopened) or "ничего"))
         if args.command == "status":
             if args.json:
                 print(json.dumps(status.task(root, args.key) if args.key else status.overview(root), ensure_ascii=False, indent=2))

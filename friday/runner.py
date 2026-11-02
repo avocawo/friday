@@ -19,6 +19,8 @@ from .errors import FridayError
 
 BASE_ENV = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SHELL", "USER")
 SECRET_FILES = ["Read(.env)", "Read(.env.*)", "Read(.npmrc)", "Read(*.pem)"]
+CREDENTIALS = ["~/.ssh", "~/.aws", "~/.config", "~/.netrc", "~/.npmrc", "~/.docker", "~/.gnupg", "~/.kube",
+               "~/.codex", "~/.claude", "~/.local/share/friday", "~/Library/Keychains"]
 QUOTA_TEXT = re.compile(r"(?i)usage limit|rate limit|quota|too many requests")
 
 
@@ -33,6 +35,7 @@ class Spec:
     commands: list = field(default_factory=list)   # executor shell allowlist, e.g. ["npm run lint"]
     schema: dict = None              # structured final answer
     effort: str = None               # reasoning effort, e.g. "medium" or "max"
+    deny_read: list = field(default_factory=list)  # extra paths the executor's shell may not read
     resume: str = None               # session id of a previous run to continue
     env: dict = field(default_factory=dict)
     idle_timeout: float = 600        # seconds without output while no tool call is open
@@ -75,13 +78,19 @@ class Claude:
         spec = self.spec
         tools = ["Read", "Glob", "Grep"] + (["Edit", "Write"] if spec.write else []) + (["Bash"] if spec.commands else [])
         permissions = {"deny": SECRET_FILES + ["mcp__*"]}
-        # Scoping, not a security boundary: under acceptEdits Claude Code also auto-approves read-only and in-cwd
-        # edit commands, and an allowed project script can be rewritten by the executor. The OS sandbox is the boundary.
+        settings = {"permissions": permissions}
+        # The allowlist only scopes the executor: under acceptEdits Claude Code also auto-approves read-only and in-cwd
+        # edit commands, and an allowed project script can be rewritten by the executor. The OS sandbox is the boundary:
+        # shell writes stay in cwd, there is no network, credential files are unreadable, and nothing runs unsandboxed.
         if spec.commands:
             permissions["allow"] = ["Bash(" + command + ":*)" for command in spec.commands]
+            settings["sandbox"] = {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
+                                   "autoAllowBashIfSandboxed": False, "excludedCommands": [],
+                                   "network": {"allowedDomains": [], "strictAllowlist": True},
+                                   "filesystem": {"denyRead": CREDENTIALS + list(spec.deny_read)}}
         args = [shutil.which("claude") or "claude", "-p", "--output-format", "stream-json", "--verbose",
                 "--restricted", "--strict-mcp-config", "--no-chrome", "--model", spec.model,
-                "--tools", ",".join(tools), "--settings", json.dumps({"permissions": permissions})]
+                "--tools", ",".join(tools), "--settings", json.dumps(settings)]
         args += ["--resume", self.session] if spec.resume else ["--session-id", self.session]
         if spec.write:
             args += ["--permission-mode", "acceptEdits"]
