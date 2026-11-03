@@ -203,6 +203,40 @@ class PlanTests(unittest.TestCase):
         self.assertIn("digest_reused", [event["type"] for event in card.events(self.root, "T-2")])
         self.assertEqual(plan.rules_sources(dict(self.profile, rules_docs=["docs/**/*.md"]), self.repo), ["docs/GUIDE.md", "docs/ideas/one.md"])
 
+    def test_repository_map_reaches_the_planner_and_the_reviewer_gets_the_files_of_the_plan(self):
+        (self.repo / ".gitignore").write_text("node_modules/\n")
+        (self.repo / "node_modules").mkdir()
+        (self.repo / "node_modules" / "dep.js").write_text("x\n")
+        git("add", ".", cwd=self.repo)
+        git("commit", "-qm", "ignore", cwd=self.repo)
+        git("push", "-q", "origin", "HEAD:main", cwd=self.repo)
+        self.profile["repo_map"] = "builtin"
+        clean = {"verdict": "ok", "findings": []}
+        self.calls(("p1", PLAN), ("r1", clean))
+        self.start("T-1")
+        planner, reviewer = self.call(0), self.call(1)
+        self.assertIn("Repository map (tracked files: lines):\n.gitignore (1)\napp.py (1)\npage.html (1)", planner["prompt"])
+        self.assertNotIn("node_modules/dep.js", planner["prompt"])
+        self.assertIn("Use the repository map below", planner["prompt"])
+        self.assertIn("--- app.py\nprint('hi')", reviewer["prompt"])
+        self.assertIn("--- page.html\n<p></p>", reviewer["prompt"])
+        self.assertNotIn("--mcp-config", planner["argv"])
+        self.calls(("p2", PLAN), ("r2", clean))
+        self.start("T-2")
+        self.assertIn("map_reused", [event["type"] for event in card.events(self.root, "T-2")])
+        self.profile["repo_map"] = "none"
+        self.calls(("p3", PLAN), ("r3", clean))
+        self.start("T-3")
+        self.assertNotIn("Repository map", self.call(0)["prompt"])
+        self.assertNotIn("Use the repository map", self.call(0)["prompt"])
+
+    def test_reviewer_sources_are_capped_and_name_what_was_left_out(self):
+        (self.repo / "big.py").write_text("x" * 500)
+        text = plan.plan_sources(self.repo, {"milestones": [{"files": ["app.py", "big.py", "new.py"]}]}, limit=100)
+        self.assertIn("--- app.py", text)
+        self.assertIn("Not included, read if needed: big.py", text)
+        self.assertNotIn("new.py", text)
+
     def test_feasibility_checks(self):
         worktree = self.repo
         def problems(change):

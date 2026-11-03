@@ -50,6 +50,13 @@ def inspect(path):
     if not selected.get("executor_commands"):
         checks.append({"name": "executor_commands", "status": "warning",
                        "reason": "No executor_commands: the executor cannot run lint, typecheck or tests itself."})
+    if selected.get("repo_map") == "graphify":
+        check("graphify", lambda: tool_version("graphify"))
+        if selected.get("repo_map_mcp"):
+            def graphify_mcp():
+                if not shutil.which("graphify-mcp"):
+                    raise FridayError("missing", "graphify-mcp is not installed (uv tool install 'graphifyy[mcp]').")
+            check("graphify_mcp", graphify_mcp)
     if selected.get("gate"):
         def gate_image():
             from . import gate

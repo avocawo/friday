@@ -75,6 +75,13 @@ def load(path):
     if not isinstance(docs, list) or any(not isinstance(item, str) or not item or item.startswith("/") or ".." in item.split("/")
                                          for item in docs):
         raise FridayError("invalid_profile", "rules_docs must be an array of patterns relative to the repository.")
+    if profile.get("repo_map", "none") not in ("none", "builtin", "graphify"):
+        raise FridayError("invalid_profile", "repo_map must be none, builtin or graphify.")
+    budget = profile.get("repo_map_budget", 60000)
+    if not isinstance(budget, int) or isinstance(budget, bool) or budget < 1000:
+        raise FridayError("invalid_profile", "repo_map_budget must be a number of characters, at least 1000.")
+    if profile.get("repo_map_mcp") not in (None, True, False) or (profile.get("repo_map_mcp") and profile.get("repo_map") != "graphify"):
+        raise FridayError("invalid_profile", "repo_map_mcp is a boolean and needs repo_map graphify.")
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
     profile["path"] = str(path)

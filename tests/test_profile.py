@@ -60,6 +60,18 @@ class ProfileTests(unittest.TestCase):
                     profile.load(path)
                 self.assertEqual(error.exception.code, "invalid_profile")
 
+    def test_repo_map_settings_are_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            for extra in ({"repo_map": "tree"}, {"repo_map_budget": 10}, {"repo_map_budget": True},
+                          {"repo_map_mcp": True}, {"repo_map": "graphify", "repo_map_mcp": "yes"}):
+                path.write_text(json.dumps(dict({"name": "test", "repository": "."}, **extra)))
+                with self.assertRaises(FridayError) as error:
+                    profile.load(path)
+                self.assertEqual(error.exception.code, "invalid_profile")
+            path.write_text(json.dumps({"name": "test", "repository": ".", "repo_map": "graphify", "repo_map_mcp": True}))
+            self.assertTrue(profile.load(path)["repo_map_mcp"])
+
 
 if __name__ == "__main__":
     unittest.main()

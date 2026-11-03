@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import card as cards
-from . import models, runner
+from . import models, repomap, runner
 from . import profile as profiles
 from .errors import FridayError
 
@@ -46,6 +46,7 @@ DOCUMENT = {"type": "object", "additionalProperties": False, "required": ["path"
 DIGEST_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["rules", "documents"],
                  "properties": {"rules": STRINGS, "documents": {"type": "array", "items": DOCUMENT}}}
 RULES_DOCS = ["AGENTS.md", "CLAUDE.md", "docs/*.md"]
+SOURCES_LIMIT = 40000
 
 PIPELINE = (
     "Friday runs the plan as a pipeline: each milestone (2-5 stages) is implemented in one session by a cheaper executor "
@@ -78,14 +79,18 @@ PLAN_RULES = (
     "must be observable in the browser and is allowed only in ui milestones, and every ui milestone has at least one. "
     "No criterion may depend on work planned for a later stage.\n"
     "Resolve uncertainties from the repository and the ticket, record each choice with its reason in assumptions, and "
-    "put in questions only what blocks a correct result; the owner reads them at approval. Do not edit any file.")
+    "put in questions only what blocks a correct result; the owner reads them at approval. Do not edit any file.\n"
+    "{reading}When you need several files, read them all in one turn with parallel Read calls rather than one per turn.")
+USE_MAP = "Use the repository map below instead of listing directories. "
 
 REVIEW_RULES = (
     "Review the plan against the ticket, the owner's decisions and the repository. Report every problem in one pass. "
     "Look for: requirements of the ticket the plan misses or exceeds; criteria that depend on a later stage (for "
     "example a stage that must prove a route filter works while the route itself is wired in the next stage); criteria "
     "that cannot be verified from the stage diff or in the browser; unrealistic sizes; wrong or missing files; breaches "
-    "of the project's rules; milestones marked parallel that can collide. Use blocking for problems that would make "
+    "of the project's rules; milestones marked parallel that can collide. The current text of the "
+    "files the plan changes is below; read other files only to check a point, several in one turn with parallel Read "
+    "calls. Use blocking for problems that would make "
     "the result wrong or the pipeline fail, minor otherwise. Do not report wording or style. Write problem and "
     "suggestion in the task's language. Do not edit any file. verdict is ok only when there are no blocking findings.")
 
@@ -238,8 +243,9 @@ def rules_digest(root, key, profile, worktree):
 def agent(root, key, profile, role, prompt, schema, cast_role=None):
     card = cards.read(root, key)
     entry = card["cast"][cast_role or role]
+    mcp = repomap.server(root, profile, card["worktree"]) if role in ("plan", "plan-review") else None
     spec = runner.Spec(driver=entry["driver"], model=entry["model"], effort=entry.get("effort"), prompt=prompt,
-                       cwd=card["worktree"], log_dir="", schema=schema, env=models.environment(entry, profile))
+                       cwd=card["worktree"], log_dir="", schema=schema, env=models.environment(entry, profile), mcp=mcp)
     result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
     if result.status != "ok" or not isinstance(result.structured, dict):
         raise FridayError("agent_failed", "%s did not return a result (%s): %s" % (role, result.status, result.error or "no structured answer"))
@@ -266,6 +272,24 @@ def checked(root, key, profile, worktree, result, limits, prompt, retries=1):
         result = revise(root, key, profile, prompt, result.structured,
                         "Friday's feasibility checks rejected the plan. Fix every problem and return the whole plan again "
                         "with the same schema; keep responses as they were.\n- " + "\n- ".join(errors))
+
+
+def plan_sources(worktree, plan, limit=SOURCES_LIMIT):
+    """The current text of the files the plan changes, for the reviewer; what does not fit is named, to be read."""
+    parts, left, cut = [], limit, []
+    for name in sorted(plan_files(plan)):
+        path = Path(worktree) / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if len(text) > left:
+            cut.append(name)
+            continue
+        parts.append("--- %s\n%s" % (name, text))
+        left -= len(text)
+    if cut:
+        parts.append("Not included, read if needed: " + ", ".join(cut))
+    return "\n\n".join(parts)
 
 
 def draft_path(root, key):
@@ -308,10 +332,10 @@ def make(root, key, profile, ticket):
     """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval."""
     card = cards.read(root, key)
     limits = profile.get("limits")
-    def rules(docs):
-        return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs))
+    def rules(docs, reading=""):
+        return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading))
     task = "\n\nTask:\n" + context(card, profile, ticket)
-    identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest cache
+    identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest or map caches
     saved = saved_draft(root, key, identity)
     layout, notes = models.cast(profile, models.availability(root), planner=saved and saved["planner"])
     cards.update(root, key, lambda value: value.update(cast=layout, state="planning"))
@@ -319,8 +343,9 @@ def make(root, key, profile, ticket):
         cards.record(root, key, "cast_note", note=note)
     worktree = card["worktree"]
     digest = rules_digest(root, key, profile, worktree)
-    project = "\n\n" + digest_text(digest) if digest else ""
-    prompt = PIPELINE + "\n\n" + rules(USE_DIGEST if digest else READ_DOCS) + task + project
+    repo_map = repomap.make(root, key, profile, worktree)
+    project = ("\n\n" + digest_text(digest) if digest else "") + ("\n\n" + repo_map if repo_map else "")
+    prompt = PIPELINE + "\n\n" + rules(USE_DIGEST if digest else READ_DOCS, USE_MAP if repo_map else "") + task + project
     if saved and saved["planner"] == layout["plan"]["name"]:
         planned = SimpleNamespace(structured=saved["plan"], session=saved["session"])
         cards.record(root, key, "plan_reused", reason="the checked plan of the failed start")
@@ -328,7 +353,8 @@ def make(root, key, profile, ticket):
         planned = save_draft(root, key, identity, layout["plan"]["name"],
                              checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA), limits, prompt))
     review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + task + project +
-                     "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2))
+                     "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2) +
+                     "\n\nFiles the plan changes:\n" + plan_sources(worktree, planned.structured))
     review = plan_review(root, key, profile, review_prompt)
     findings = review["findings"]
     cards.record(root, key, "plan_reviewed", verdict=review["verdict"], findings=len(findings),
