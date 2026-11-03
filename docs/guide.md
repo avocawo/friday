@@ -1,5 +1,7 @@
 # Friday guide
 
+**English** · [Русский](ru/guide.md) · [简体中文](zh-cn/guide.md) · [日本語](ja/guide.md) · [한국어](ko/guide.md) · [Português (Brasil)](pt-br/guide.md) · [Español](es/guide.md) · [Deutsch](de/guide.md) · [Français](fr/guide.md) · [Bahasa Indonesia](id/guide.md)
+
 ## Installation
 
 1. Clone Friday and add `bin` to `PATH`, or set `FRIDAY_BIN`.

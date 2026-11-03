@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Keep the translated user docs in step with their English source.
+
+lint      fail on broken translations: marker, switcher, code, links, headings
+check     list missing and stale translations (warning only, unless --strict)
+diff F    show how the English source of translation F changed since it was translated
+stamp F   record the current English source hash in translation F after refreshing it
+switchers [F...]  rewrite the language switcher line in the given files, or in all of them
+"""
+import argparse
+import collections
+import hashlib
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+LANGUAGES = [("en", "English"), ("ru", "Русский"), ("zh-cn", "简体中文"), ("ja", "日本語"), ("ko", "한국어"),
+             ("pt-br", "Português (Brasil)"), ("es", "Español"), ("de", "Deutsch"), ("fr", "Français"),
+             ("id", "Bahasa Indonesia")]
+SOURCES = {"README.md": "README.md", "docs/guide.md": "guide.md", "GLOSSARY.md": "GLOSSARY.md"}
+MARKER = re.compile(r"^<!-- i18n: source=(\S+) sha256=([0-9a-f]{12}) -->$")
+SWITCHER = re.compile(r"^(\*\*English\*\*|\[English\]\()")
+FENCE = re.compile(r"^\s*```")
+HEADING = re.compile(r"^(#{1,6} |<h[1-6][ >])")
+INLINE_CODE = re.compile(r"`([^`]+)`")
+MD_LINK = re.compile(r"\]\(([^)\s]+)\)")
+HTML_LINK = re.compile(r"""(?:src|href)="([^"]+)\"""")
+
+
+def translation_path(source, lang):
+    return "docs/%s/%s" % (lang, SOURCES[source])
+
+
+def doc_path(source, lang):
+    return source if lang == "en" else translation_path(source, lang)
+
+
+def documents():
+    for source in SOURCES:
+        for lang, _ in LANGUAGES:
+            yield source, lang, doc_path(source, lang)
+
+
+def source_text(text):
+    """The source as translations follow it: the switcher line does not count."""
+    return "".join(line for line in text.splitlines(True) if not SWITCHER.match(line))
+
+
+def source_hash(text):
+    return hashlib.sha256(source_text(text).encode("utf-8")).hexdigest()[:12]
+
+
+def switcher(source, lang):
+    here = os.path.dirname(doc_path(source, lang))
+    items = []
+    for code, name in LANGUAGES:
+        if code == lang:
+            items.append("**%s**" % name)
+        else:
+            items.append("[%s](%s)" % (name, os.path.relpath(doc_path(source, code), here or ".")))
+    return " · ".join(items)
+
+
+def parse(text):
+    """Split a Markdown file into what must survive translation unchanged."""
+    blocks, code, headings, links = [], [], 0, []
+    block = None
+    for line in text.splitlines():
+        if FENCE.match(line):
+            if block is None:
+                block = (line.strip()[3:].strip(), [])
+            else:
+                lang, body = block
+                if lang != "text":
+                    if lang in ("sh", "bash"):
+                        body = [item for item in body if not item.lstrip().startswith("#")]
+                    blocks.append((lang, "\n".join(body)))
+                block = None
+            continue
+        if block is not None:
+            block[1].append(line)
+            continue
+        if MARKER.match(line) or SWITCHER.match(line):
+            continue
+        if HEADING.match(line):
+            headings += 1
+        code.extend(INLINE_CODE.findall(line))
+        bare = INLINE_CODE.sub("", line)
+        links.extend(MD_LINK.findall(bare) + HTML_LINK.findall(bare))
+    return blocks, collections.Counter(code), headings, links
+
+
+def local_target(path, link):
+    """Repository path a relative link points to, or None for external links and anchors."""
+    if re.match(r"^[a-z]+:", link) or link.startswith("#"):
+        return None
+    link = link.split("#", 1)[0]
+    return os.path.normpath(os.path.join(os.path.dirname(path), link))
+
+
+def expected_target(target, lang):
+    for source in SOURCES:
+        if target == os.path.normpath(source):
+            return translation_path(source, lang)
+    return target
+
+
+def lint(root):
+    problems = []
+    for source, lang, path in documents():
+        file = root / path
+        if not file.exists():
+            problems.append("%s: missing" % path)
+            continue
+        text = file.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        if [line for line in lines if SWITCHER.match(line)] != [switcher(source, lang)]:
+            problems.append("%s: needs exactly one switcher line: %s" % (path, switcher(source, lang)))
+        _, _, _, links = parse(text)
+        for link in links:
+            target = local_target(path, link)
+            if target is not None and not (root / target).exists():
+                problems.append("%s: broken link %s" % (path, link))
+        if lang == "en":
+            continue
+        marker = MARKER.match(lines[0]) if lines else None
+        if not marker or marker.group(1) != source:
+            problems.append("%s: first line must be <!-- i18n: source=%s sha256=... -->" % (path, source))
+        original = (root / source).read_text(encoding="utf-8")
+        blocks, code, headings, links = parse(text)
+        en_blocks, en_code, en_headings, en_links = parse(original)
+        if blocks != en_blocks:
+            problems.append("%s: code blocks differ from %s" % (path, source))
+        if code != en_code:
+            missing, extra = sorted((en_code - code).elements()), sorted((code - en_code).elements())
+            problems.append("%s: inline code differs from %s (missing %s, extra %s)" % (path, source, missing, extra))
+        if headings != en_headings:
+            problems.append("%s: %d headings, %s has %d" % (path, headings, source, en_headings))
+        want = collections.Counter(expected_target(t, lang) if t else l
+                                   for l, t in ((l, local_target(source, l)) for l in en_links))
+        have = collections.Counter(local_target(path, l) or l for l in links)
+        if want != have:
+            problems.append("%s: links differ from %s (missing %s, extra %s)" % (
+                path, source, sorted((want - have).elements()), sorted((have - want).elements())))
+    return problems
+
+
+def status(root):
+    missing, stale = [], []
+    for source, lang, path in documents():
+        if lang == "en":
+            continue
+        file = root / path
+        if not file.exists():
+            missing.append(path)
+            continue
+        lines = file.read_text(encoding="utf-8").splitlines()
+        marker = MARKER.match(lines[0]) if lines else None
+        if not marker or marker.group(2) != source_hash((root / source).read_text(encoding="utf-8")):
+            stale.append(path)
+    return missing, stale
+
+
+def git(root, *args):
+    return subprocess.run(["git", "-C", str(root)] + list(args), check=True, capture_output=True, text=True).stdout
+
+
+def translated_from(root, path):
+    """The latest commit whose English source has the hash recorded in translation `path`."""
+    lines = (root / path).read_text(encoding="utf-8").splitlines()
+    marker = MARKER.match(lines[0]) if lines else None
+    if not marker:
+        raise SystemExit("%s has no i18n marker" % path)
+    source, recorded = marker.groups()
+    for commit in git(root, "log", "--format=%H", "--", source).split():
+        if source_hash(git(root, "show", "%s:%s" % (commit, source))) == recorded:
+            return source, commit
+    raise SystemExit("No commit of %s has hash %s" % (source, recorded))
+
+
+def stamp(root, path):
+    file = root / path
+    source = next((s for s in SOURCES if path in (translation_path(s, lang) for lang, _ in LANGUAGES[1:])), None)
+    if source is None:
+        raise SystemExit("%s is not a translation" % path)
+    line = "<!-- i18n: source=%s sha256=%s -->" % (source, source_hash((root / source).read_text(encoding="utf-8")))
+    lines = file.read_text(encoding="utf-8").splitlines(True)
+    if lines and MARKER.match(lines[0].rstrip("\n")):
+        lines[0] = line + "\n"
+    else:
+        lines.insert(0, line + "\n")
+    file.write_text("".join(lines), encoding="utf-8")
+
+
+def switchers(root, only=()):
+    for source, lang, path in documents():
+        file = root / path
+        if file.exists() and (not only or path in only):
+            lines = file.read_text(encoding="utf-8").splitlines(True)
+            new = [switcher(source, lang) + "\n" if SWITCHER.match(line) else line for line in lines]
+            if new != lines:
+                file.write_text("".join(new), encoding="utf-8")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="docs-i18n", description=__doc__.splitlines()[0])
+    parser.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("lint")
+    commands.add_parser("check").add_argument("--strict", action="store_true")
+    commands.add_parser("diff").add_argument("path")
+    commands.add_parser("stamp").add_argument("path", nargs="+")
+    commands.add_parser("switchers").add_argument("path", nargs="*")
+    args = parser.parse_args(argv)
+    root = Path(args.root)
+    if args.command == "lint":
+        problems = lint(root)
+        for problem in problems:
+            print(problem)
+        return 1 if problems else 0
+    if args.command == "check":
+        missing, stale = status(root)
+        for path in missing:
+            print("missing: " + path)
+        for path in stale:
+            print("stale: %s (see: bin/docs-i18n diff %s)" % (path, path))
+        if not missing and not stale:
+            print("All translations follow their English source.")
+        return 1 if args.strict and (missing or stale) else 0
+    if args.command == "diff":
+        source, commit = translated_from(root, args.path)
+        sys.stdout.write(git(root, "diff", commit, "--", source))
+        return 0
+    if args.command == "stamp":
+        for path in args.path:
+            stamp(root, path)
+        return 0
+    switchers(root, args.path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

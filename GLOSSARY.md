@@ -1,5 +1,7 @@
 # Friday
 
+**English** · [Русский](docs/ru/GLOSSARY.md) · [简体中文](docs/zh-cn/GLOSSARY.md) · [日本語](docs/ja/GLOSSARY.md) · [한국어](docs/ko/GLOSSARY.md) · [Português (Brasil)](docs/pt-br/GLOSSARY.md) · [Español](docs/es/GLOSSARY.md) · [Deutsch](docs/de/GLOSSARY.md) · [Français](docs/fr/GLOSSARY.md) · [Bahasa Indonesia](docs/id/GLOSSARY.md)
+
 A personal development pipeline: it takes a task from a plan to a draft MR using models from different vendors and checks their work.
 
 ## Work
