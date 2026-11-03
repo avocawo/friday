@@ -1,72 +1,75 @@
 # Friday
 
-Личный конвейер разработки: ведёт задачу от плана до чернового MR силами моделей разных вендоров и проверяет их работу.
+A personal development pipeline: it takes a task from a plan to a draft MR using models from different vendors and checks their work.
 
-## Работа
+## Work
 
-**Задача**:
-Единица работы владельца со своей карточкой, веткой и worktree; обычно соответствует тикету трекера.
-_Avoid_: таска, миссия
+**Task**:
+A unit of work for the owner, with its own card, branch and worktree; usually matches a tracker ticket.
+_Avoid_: job, mission
 
-**План**:
-Утверждённый владельцем список вех и этапов задачи с критериями приёмки.
+**Plan**:
+The list of milestones and stages for a task, with acceptance criteria, approved by the owner.
 
-**Веха**:
-Группа из 2–5 последовательных этапов, которая целиком проходит гейт и ревью.
-_Avoid_: milestone, фаза
+**Milestone**:
+A group of 2–5 consecutive stages that passes the gate and review as a whole.
+_Avoid_: phase
 
-**Этап**:
-Наименьшая часть плана, которая заканчивается одним коммитом.
-_Avoid_: стейдж, шаг
+**Stage**:
+The smallest part of a plan; it ends with one commit.
+_Avoid_: step
 
-**Критерий**:
-Проверяемое условие приёмки этапа; бывает кодовым (проверяется по диффу) или поведенческим (наблюдается в браузере).
+**Criterion**:
+A verifiable acceptance condition for a stage; it is either a code criterion (checked against the diff) or a behavior criterion (observed in the browser).
 
-## Роли
+**Profile**:
+The JSON file that configures Friday for one project (repository, models, roles, gate, browser, tracker, journal, delivery); it may extend another profile through the `extends` key.
 
-**Владелец**:
-Человек, который утверждает план, принимает черновой MR и разбирает спорные находки.
-_Avoid_: оператор, пользователь
+## Roles
 
-**Планировщик**:
-Модель, которая составляет план.
+**Owner**:
+The person who approves the plan, accepts the draft MR and resolves disputed findings.
+_Avoid_: operator, user
 
-**Исполнитель**:
-Модель, которая пишет код вехи.
-_Avoid_: разработчик, developer
+**Planner**:
+The model that writes the plan.
 
-**Ревьюер**:
-Модель, которая проверяет план, веху или итоговый дифф и выносит вердикт по критериям.
+**Executor**:
+The model that writes the code of a milestone.
+_Avoid_: developer
 
-**Уровень модели**:
-Класс возможностей модели: `frontier`, `strong` или `efficient`.
+**Reviewer**:
+The model that reviews the plan, a milestone or the final diff and gives a verdict on the criteria.
 
-**Раскладка ролей**:
-Назначение конкретных моделей на роли задачи, зафиксированное до утверждения плана.
+**Model tier**:
+The capability class of a model: `frontier`, `strong` or `efficient`.
 
-## Проверки
+**Role assignment**:
+The assignment of specific models to the roles of a task, fixed before the plan is approved.
 
-**Гейт**:
-Детерминированные проверки без моделей, которые идут в изолированном контейнере на конкретном коммите.
-_Avoid_: CI, валидация
+## Checks
 
-**Ревью вехи**:
-Проверка диффа вехи ревьюером другого вендора с логом гейта.
+**Gate**:
+Deterministic checks without models, run in an isolated container on a specific commit.
+_Avoid_: CI, validation
 
-**Финальное ревью**:
-Проверка всего диффа задачи перед MR, включая слепую проверку кода.
+**Milestone review**:
+A review of the milestone diff, with the gate log, by a reviewer from a different vendor.
 
-**Браузерная приёмка**:
-Наблюдение поведенческих критериев вехи в браузере на локальном стенде.
+**Final review**:
+A review of the whole task diff before the MR, including the blind check of the code.
+
+**Browser acceptance**:
+Observation of the behavior criteria of a milestone in the browser on a local test environment.
 _Avoid_: blind-behavior
 
-**Спорная находка**:
-Замечание ревьюера, с которым исполнитель не согласился и которое ушло владельцу через журнал.
+**Disputed finding**:
+A reviewer finding that the executor disagreed with and that was sent to the owner through the journal.
 
-## Записи
+## Records
 
-**Карточка**:
-Машинное состояние задачи у Friday: события, вехи, вердикты, расход.
+**Card**:
+Friday's machine state of a task: events, milestones, verdicts, spending.
 
-**Журнал**:
-Читаемая история задачи в Obsidian, собранная из карточки по шаблонам.
+**Journal**:
+The readable history of a task in Obsidian, built from the card with templates.
