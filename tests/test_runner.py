@@ -20,7 +20,7 @@ if sys.argv[1:4] == ["mcp", "list", "--json"]:
 directory = os.environ["FAKE_DIR"]
 prompt = sys.stdin.read()
 with open(os.path.join(directory, "argv.json"), "w") as handle:
-    json.dump({"argv": sys.argv[1:], "prompt": prompt}, handle)
+    json.dump({"argv": sys.argv[1:], "prompt": prompt, "ttl": os.environ.get("CLAUDE_CODE_PROMPT_CACHE_TTL")}, handle)
 for step in json.load(open(os.path.join(directory, "scenario.json"))):
     if "emit" in step:
         print(json.dumps(step["emit"]), flush=True)
@@ -89,6 +89,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual((result.session, result.text, result.turns, result.duration_ms), ("s-1", "hello", 2, 1200))
         self.assertEqual(result.usage, {"input": 4, "output": 9, "cache_read": 70, "cache_write": 110, "cost_usd": 0.25})
         self.assertEqual(self.invocation()["prompt"], "do it")
+        self.assertEqual(self.invocation()["ttl"], "5m")
         self.assertEqual(len(Path(result.transcript).read_text().splitlines()), 3)
         self.assertIn("warning", Path(result.stderr).read_text())
         status = json.loads((self.root / "logs" / "status.json").read_text())
@@ -221,6 +222,7 @@ class RunnerTests(unittest.TestCase):
         argv = self.invocation()["argv"]
         self.assertIn('model_reasoning_effort="high"', argv)
         self.assertEqual(argv[:2], ["exec", "resume"])
+        self.assertIsNone(self.invocation()["ttl"])
         self.assertEqual(argv[-2:], ["th-1", "-"])
 
     def test_unknown_driver_is_rejected(self):

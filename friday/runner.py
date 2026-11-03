@@ -72,6 +72,10 @@ def empty_usage():
 
 
 class Claude:
+    # Runs last 1-10 minutes with API calls about a minute apart: the 5-minute cache writes at 1.25x the input price
+    # instead of 2x for the hour a subscription gets by default.
+    ENV = {"CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}
+
     def __init__(self, spec):
         self.spec = spec
         self.session = spec.resume or str(uuid.uuid4())
@@ -172,6 +176,8 @@ class Claude:
 
 
 class Codex:
+    ENV = {}
+
     def __init__(self, spec):
         self.spec = spec
         self.open_tools = set()
@@ -304,6 +310,7 @@ def run(spec, on_event=None):
               "pid": None, "owner": os.getpid(), "started_at": started, "last_activity_at": started, "last_event": None, "usage": usage}
     write_status(status_path, status)
     environment = {key: value for key, value in os.environ.items() if key in BASE_ENV}
+    environment.update(driver.ENV)
     environment.update(spec.env)
     previous_handler = None
     if threading.current_thread() is threading.main_thread():
