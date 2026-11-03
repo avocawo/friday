@@ -71,6 +71,10 @@ def load(path):
     policy = profile.get("engineering_policy", [])
     if not isinstance(policy, list) or any(not isinstance(item, str) or not item.strip() for item in policy):
         raise FridayError("invalid_profile", "engineering_policy must be an array of non-empty instructions.")
+    docs = profile.get("rules_docs", [])
+    if not isinstance(docs, list) or any(not isinstance(item, str) or not item or item.startswith("/") or ".." in item.split("/")
+                                         for item in docs):
+        raise FridayError("invalid_profile", "rules_docs must be an array of patterns relative to the repository.")
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
     profile["path"] = str(path)

@@ -39,6 +39,7 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 | `base_branch`, `worktree_root`, `branch_template`, `worktree_layout` | Откуда и где создавать ветку задачи; шаблон по умолчанию `friday/{key}`, раскладка `key` или `branch` |
 | `models`, `roles` | Каталог моделей и предпочтения по ролям (ниже) |
 | `engineering_policy` | Правила для планировщика и ревью |
+| `rules_docs` | Документы с правилами проекта, по которым Friday один раз делает дайджест для планировщика и проверяющего план (по умолчанию `AGENTS.md`, `CLAUDE.md`, `docs/*.md`). Дайджест хранится по хешу содержимого и переиспользуется задачами, пока документы не меняются; планировщик не читает их целиком |
 | `approval` | `owner` (по умолчанию) — план ждёт `approve`; `auto` — план утверждается сам после проверки и конвейер сразу запускается, в журнал уходит «План утверждён автоматически» |
 | `limits` | `stage_files` и `stage_lines` — лимиты этапа (10 и 500) |
 | `worktree_setup` | Команды, которые Friday запускает в новой рабочей копии до планирования (зависимости и подобное): массивы аргументов с подстановкой `{repository}` и `{worktree}`; должны быть повторяемыми. Пример для npm на macOS: `["sh", "-c", "[ -e node_modules ] \|\| cp -cR {repository}/node_modules node_modules"]` |

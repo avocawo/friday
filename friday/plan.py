@@ -41,6 +41,11 @@ FINDING = {"type": "object", "additionalProperties": False, "required": ["milest
 REVIEW_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["verdict", "findings"],
                  "properties": {"verdict": {"type": "string", "enum": ["ok", "changes"]},
                                 "findings": {"type": "array", "items": FINDING}}}
+DOCUMENT = {"type": "object", "additionalProperties": False, "required": ["path", "covers"],
+            "properties": {"path": {"type": "string"}, "covers": {"type": "string"}}}
+DIGEST_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["rules", "documents"],
+                 "properties": {"rules": STRINGS, "documents": {"type": "array", "items": DOCUMENT}}}
+RULES_DOCS = ["AGENTS.md", "CLAUDE.md", "docs/*.md"]
 
 PIPELINE = (
     "Friday runs the plan as a pipeline: each milestone (2-5 stages) is implemented in one session by a cheaper executor "
@@ -50,12 +55,18 @@ PIPELINE = (
     "acceptance check on a local stand. At the end a final review and a blind check see the whole diff and the criteria "
     "only. The owner approves the plan once and next sees a draft merge request.")
 
+READ_DOCS = (
+    "Read the project's agent instructions (AGENTS.md, CLAUDE.md), its architecture index and the documents that apply "
+    "to this task once, and put a digest of the rules the executor must follow into rules, each ending with its source "
+    "path. Executors do not reread those documents.\n")
+USE_DIGEST = (
+    "The project's rules digest below was made from its agent instructions and documents. Put the rules that apply to "
+    "this task into rules, each ending with its source path. Do not read those documents whole: when the digest is not "
+    "enough, Grep the document the map names for the section you need. Executors do not reread those documents.\n")
 PLAN_RULES = (
     "Write brief, steps, criteria, goal, title, summary, rules, assumptions and questions in the task's language; in "
     "Russian call a milestone «веха» and a stage «этап».\n"
-    "Read the project's agent instructions (AGENTS.md, CLAUDE.md), its architecture index and the documents that apply "
-    "to this task once, and put a digest of the rules the executor must follow into rules, each ending with its source "
-    "path. Executors do not reread those documents.\n"
+    "{docs}"
     "Group stages into milestones that are reviewable as a whole. Order milestones with depends_on; set parallel only "
     "when the milestone shares no files with any milestone it is not ordered against.\n"
     "complexity is complex when the milestone needs design judgment across modules or the approach is uncertain; "
@@ -181,19 +192,70 @@ def context(card, profile, ticket):
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
-def agent(root, key, profile, role, prompt, schema, resume=None):
+def rules_sources(profile, worktree):
+    """The tracked documents the rules digest is made from, in a stable order."""
+    found = set()
+    for pattern in profile.get("rules_docs", RULES_DOCS):
+        found.update(path for path in Path(worktree).glob(pattern) if path.is_file())
+    return sorted(str(path.relative_to(worktree)) for path in found)
+
+
+def digest_text(digest):
+    lines = ["Rules digest (from %s):" % ", ".join(digest["files"])] + ["- " + rule for rule in digest["rules"]]
+    lines += ["", "Document map:"] + ["- %s: %s" % (item["path"], item["covers"]) for item in digest["documents"]]
+    return "\n".join(lines)
+
+
+def rules_digest(root, key, profile, worktree):
+    """A digest of the project's rules, made once per content of its documents and shared by every task that has the same."""
+    files = rules_sources(profile, worktree)
+    if not files:
+        return None
+    fingerprint = hashlib.sha256()
+    for name in files:
+        fingerprint.update(name.encode("utf-8") + b"\0" + (Path(worktree) / name).read_bytes() + b"\0")
+    path = Path(root) / "digests" / (fingerprint.hexdigest() + ".json")
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        cards.record(root, key, "digest_reused", files=len(files))
+        return cached
+    except (OSError, ValueError):
+        pass
+    prompt = ("Read these files of the repository whole: %s.\n"
+              "Write a digest for those who plan and implement changes here and will not read the files. rules: every rule "
+              "a change must follow (architecture and layers, naming, code style, tests, UI kit, what is forbidden), one "
+              "short rule per item, each ending with its source path and section. documents: for each file, the topics it "
+              "covers, so a planner can Grep the right section when a point is missing. Write in the documents' language. "
+              "Do not edit any file." % ", ".join(files))
+    result = agent(root, key, profile, "digest", prompt, DIGEST_SCHEMA, cast_role="plan")
+    digest = dict(result.structured, files=files)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(digest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    cards.record(root, key, "digest_made", files=len(files), rules=len(digest["rules"]))
+    return digest
+
+
+def agent(root, key, profile, role, prompt, schema, cast_role=None):
     card = cards.read(root, key)
-    entry = card["cast"][role]
+    entry = card["cast"][cast_role or role]
     spec = runner.Spec(driver=entry["driver"], model=entry["model"], effort=entry.get("effort"), prompt=prompt,
-                       cwd=card["worktree"], log_dir="", schema=schema, resume=resume, env=models.environment(entry, profile))
+                       cwd=card["worktree"], log_dir="", schema=schema, env=models.environment(entry, profile))
     result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
     if result.status != "ok" or not isinstance(result.structured, dict):
         raise FridayError("agent_failed", "%s did not return a result (%s): %s" % (role, result.status, result.error or "no structured answer"))
     return result
 
 
-def checked(root, key, profile, worktree, result, limits, retries=1):
-    """Return a plan that passes the feasibility checks, giving the planner its errors in the same session."""
+def revise(root, key, profile, prompt, document, instruction):
+    """Revise a plan in a new session: the planning prompt, the plan and what to change, without the first session's reading."""
+    text = (prompt + "\n\nYour plan:\n" + json.dumps(document, ensure_ascii=False, indent=2) + "\n\n"
+            "This is a revision of the plan above, not a new plan: change what the points below require and keep the rest; "
+            "read only the files you need to decide on each point.\n\n" + instruction)
+    return agent(root, key, profile, "plan", text, PLAN_SCHEMA)
+
+
+def checked(root, key, profile, worktree, result, limits, prompt, retries=1):
+    """Return a plan that passes the feasibility checks, giving the planner its errors in a revision."""
     for attempt in range(retries + 1):
         errors = validate(result.structured, worktree, limits)
         if not errors:
@@ -201,9 +263,9 @@ def checked(root, key, profile, worktree, result, limits, retries=1):
         cards.record(root, key, "plan_invalid", errors=errors)
         if attempt == retries:
             raise FridayError("plan_invalid", "The plan fails feasibility checks:\n- " + "\n- ".join(errors))
-        prompt = ("Friday's feasibility checks rejected the plan. Fix every problem and return the whole plan again "
-                  "with the same schema; keep responses as they were.\n- " + "\n- ".join(errors))
-        result = agent(root, key, profile, "plan", prompt, PLAN_SCHEMA, resume=result.session)
+        result = revise(root, key, profile, prompt, result.structured,
+                        "Friday's feasibility checks rejected the plan. Fix every problem and return the whole plan again "
+                        "with the same schema; keep responses as they were.\n- " + "\n- ".join(errors))
 
 
 def draft_path(root, key):
@@ -246,21 +308,26 @@ def make(root, key, profile, ticket):
     """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval."""
     card = cards.read(root, key)
     limits = profile.get("limits")
-    rules = PLAN_RULES.format(**dict(LIMITS, **(limits or {})))
-    prompt = PIPELINE + "\n\n" + rules + "\n\nTask:\n" + context(card, profile, ticket)
-    saved = saved_draft(root, key, prompt)
+    def rules(docs):
+        return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs))
+    task = "\n\nTask:\n" + context(card, profile, ticket)
+    identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest cache
+    saved = saved_draft(root, key, identity)
     layout, notes = models.cast(profile, models.availability(root), planner=saved and saved["planner"])
     cards.update(root, key, lambda value: value.update(cast=layout, state="planning"))
     for note in notes:
         cards.record(root, key, "cast_note", note=note)
     worktree = card["worktree"]
+    digest = rules_digest(root, key, profile, worktree)
+    project = "\n\n" + digest_text(digest) if digest else ""
+    prompt = PIPELINE + "\n\n" + rules(USE_DIGEST if digest else READ_DOCS) + task + project
     if saved and saved["planner"] == layout["plan"]["name"]:
         planned = SimpleNamespace(structured=saved["plan"], session=saved["session"])
         cards.record(root, key, "plan_reused", reason="the checked plan of the failed start")
     else:
-        planned = save_draft(root, key, prompt, layout["plan"]["name"],
-                             checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA), limits))
-    review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + "\n\nTask:\n" + context(card, profile, ticket) +
+        planned = save_draft(root, key, identity, layout["plan"]["name"],
+                             checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA), limits, prompt))
+    review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + task + project +
                      "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2))
     review = plan_review(root, key, profile, review_prompt)
     findings = review["findings"]
@@ -271,10 +338,10 @@ def make(root, key, profile, ticket):
         listing = "\n".join("%d. [%s] %s/%s: %s Suggestion: %s" % (index, item["severity"], item["milestone"], item["stage"],
                                                                   item["problem"], item["suggestion"])
                             for index, item in enumerate(findings))
-        prompt = ("A reviewer of another vendor checked your plan. For each finding decide on the evidence: accept it and "
-                  "change the plan, or reject it with a reason that cites the repository or the ticket. Return the whole "
-                  "revised plan and one response per finding, using the finding numbers below.\n\n" + listing)
-        final = checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA, resume=planned.session), limits)
+        instruction = ("A reviewer of another vendor checked your plan. For each finding decide on the evidence: accept it "
+                       "and change the plan, or reject it with a reason that cites the repository or the ticket. Return the "
+                       "whole revised plan and one response per finding, using the finding numbers below.\n\n" + listing)
+        final = checked(root, key, profile, worktree, revise(root, key, profile, prompt, planned.structured, instruction), limits, prompt)
     document = final.structured
     responses = {item["finding"]: item for item in document.get("responses", [])}
     open_notes = []

@@ -126,8 +126,11 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(planner["argv"][planner["argv"].index("--model") + 1], "big-1")
         self.assertEqual(reviewer["argv"][reviewer["argv"].index("--model") + 1], "rival-1")
         self.assertIn("Сделать приветствие", reviewer["prompt"])
-        self.assertEqual(revision["argv"][revision["argv"].index("--resume") + 1], "planner")
+        self.assertNotIn("--resume", revision["argv"])  # a revision starts a new session with the plan in the prompt
         self.assertIn("1. [minor] M2/M2.1", revision["prompt"])
+        self.assertIn("Your plan:", revision["prompt"])
+        self.assertIn("Функция greet", revision["prompt"])
+        self.assertIn("Сделать приветствие", revision["prompt"])
         self.assertIn("--json-schema", planner["argv"])
         text = plan.render(self.root, "T-1")
         for expected in ("### M2. Экран (сложная, интерфейс) после M1", "Несогласованные замечания", "[браузер]", "plan-review → rival-1"):
@@ -165,12 +168,40 @@ class PlanTests(unittest.TestCase):
         self.calls(("planner", broken), ("planner", PLAN), ("reviewer", clean))
         self.start()
         self.assertIn("not marked ui", self.call(1)["prompt"])
-        self.assertEqual(self.call(1)["argv"][self.call(1)["argv"].index("--resume") + 1], "planner")
+        self.assertNotIn("--resume", self.call(1)["argv"])
         self.assertEqual([event["type"] for event in card.events(self.root, "T-1")].count("plan_invalid"), 1)
         self.calls(("planner", broken), ("planner", broken))
         with self.assertRaises(FridayError) as error:
             self.start("T-2")
         self.assertEqual(error.exception.code, "plan_invalid")
+
+    def test_rules_digest_is_made_once_per_document_content_and_replaces_reading(self):
+        (self.repo / "AGENTS.md").write_text("Тесты рядом с кодом.\n")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "GUIDE.md").write_text("Слои по FSD.\n")
+        (self.repo / "docs" / "ideas").mkdir()
+        (self.repo / "docs" / "ideas" / "one.md").write_text("Идея задачи.\n")
+        git("add", ".", cwd=self.repo)
+        git("commit", "-qm", "docs", cwd=self.repo)
+        git("push", "-q", "origin", "HEAD:main", cwd=self.repo)
+        digest = {"rules": ["Тесты рядом с кодом (AGENTS.md)"], "documents": [{"path": "docs/GUIDE.md", "covers": "слои"}]}
+        clean = {"verdict": "ok", "findings": []}
+        self.calls(("d", digest), ("p1", PLAN), ("r1", clean))
+        self.start("T-1")
+        maker, planner, reviewer = self.call(0), self.call(1), self.call(2)
+        self.assertIn("AGENTS.md, docs/GUIDE.md.", maker["prompt"])
+        self.assertNotIn("ideas", maker["prompt"])
+        self.assertEqual(maker["argv"][maker["argv"].index("--model") + 1], "big-1")
+        for prompt in (planner["prompt"], reviewer["prompt"]):
+            self.assertIn("Rules digest (from AGENTS.md, docs/GUIDE.md):\n- Тесты рядом с кодом (AGENTS.md)", prompt)
+            self.assertIn("- docs/GUIDE.md: слои", prompt)
+        self.assertIn("Do not read those documents whole", planner["prompt"])
+        self.assertIn("digest_made", [event["type"] for event in card.events(self.root, "T-1")])
+        self.calls(("p2", PLAN), ("r2", clean))  # same documents: no digest run
+        self.start("T-2")
+        self.assertIn("Rules digest", self.call(0)["prompt"])
+        self.assertIn("digest_reused", [event["type"] for event in card.events(self.root, "T-2")])
+        self.assertEqual(plan.rules_sources(dict(self.profile, rules_docs=["docs/**/*.md"]), self.repo), ["docs/GUIDE.md", "docs/ideas/one.md"])
 
     def test_feasibility_checks(self):
         worktree = self.repo

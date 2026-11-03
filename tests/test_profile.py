@@ -51,6 +51,15 @@ class ProfileTests(unittest.TestCase):
                     profile.load(path)
                 self.assertEqual(error.exception.code, "invalid_profile")
 
+    def test_rules_docs_stay_inside_the_repository(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            for value in ("docs/*.md", [""], ["/etc/*"], ["../other/*.md"]):
+                path.write_text(json.dumps({"name": "test", "repository": ".", "rules_docs": value}))
+                with self.assertRaises(FridayError) as error:
+                    profile.load(path)
+                self.assertEqual(error.exception.code, "invalid_profile")
+
 
 if __name__ == "__main__":
     unittest.main()
