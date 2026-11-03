@@ -9,6 +9,8 @@ From a task to a draft MR: strong models plan and review, inexpensive models wri
 
 <p align="center">Python 3.9+ · macOS / Linux · <a href="LICENSE">MIT</a> · early version</p>
 
+**English** · [Русский](docs/ru/README.md) · [简体中文](docs/zh-cn/README.md) · [日本語](docs/ja/README.md) · [한국어](docs/ko/README.md) · [Português (Brasil)](docs/pt-br/README.md) · [Español](docs/es/README.md) · [Deutsch](docs/de/README.md) · [Français](docs/fr/README.md) · [Bahasa Indonesia](docs/id/README.md)
+
 ---
 
 ```text
