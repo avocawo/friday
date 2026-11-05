@@ -29,7 +29,7 @@ def safe_relative(value):
 def validate(value):
     if value is None:
         return
-    allowed = {"repository", "base_branch", "worktree_root", "mount", "setup", "commands", "image"}
+    allowed = {"repository", "base_branch", "worktree_root", "mount", "setup", "commands", "image", "build"}
     if not isinstance(value, dict) or set(value) - allowed:
         raise FridayError("invalid_profile", "stories takes " + ", ".join(sorted(allowed)) + ".")
     for name in ("repository", "base_branch", "worktree_root"):
@@ -47,6 +47,8 @@ def validate(value):
         raise FridayError("invalid_profile", "stories.commands must be an array of commands.")
     if value.get("image") is not None and (not isinstance(value["image"], str) or not value["image"]):
         raise FridayError("invalid_profile", "stories.image must be a local image name.")
+    from . import images
+    images.validate(value.get("build"), "stories.build")
 
 
 def mount(profile):

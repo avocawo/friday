@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import codex_policy, design, models, profile as profiles, resources, state, stories
+from . import codex_policy, design, images, models, profile as profiles, resources, state, stories
 from .errors import FridayError
 
 
@@ -58,11 +58,15 @@ def inspect(path):
                 if not shutil.which("graphify-mcp"):
                     raise FridayError("missing", "graphify-mcp is not installed (uv tool install 'graphifyy[mcp]').")
             check("graphify_mcp", graphify_mcp)
+    built = {item["name"]: item for item in images.specs(selected)}
     if selected.get("gate"):
-        def gate_image():
-            from . import gate
-            gate.image_id(selected.get("gate_image"))
-        check("gate_image", gate_image)
+        if "gate" in built:
+            image_check(checks, "gate_image", built["gate"])
+        else:
+            def gate_image():
+                from . import gate
+                gate.image_id(selected.get("gate_image"))
+            check("gate_image", gate_image)
     else:
         checks.append({"name": "gate", "status": "warning", "reason": "No gate: milestones are reviewed without an isolated check."})
     if isinstance(selected.get("browser"), dict):
@@ -85,11 +89,8 @@ def inspect(path):
             if result.returncode:
                 raise FridayError("missing", "%s is not a git repository that ignores %s." % (repository, stories.mount(selected)))
         check("stories_repository", showcase)
-        if config.get("image"):
-            def showcase_image():
-                from . import gate
-                gate.image_id(config["image"])
-            check("stories_image", showcase_image)
+        if "stories" in built:
+            image_check(checks, "stories_image", built["stories"])
     for name, operation, warning in design.doctor_checks(selected):
         check(name, operation, warning)
     delivery = (selected.get("delivery") or {}).get("transport", "none")
@@ -102,6 +103,20 @@ def inspect(path):
     if selected.get("tracker") is None:
         checks.append({"name": "tracker", "status": "warning", "reason": "No tracker: start needs --brief."})
     return {"ready": all(item["status"] != "missing" for item in checks), "checks": checks, "cast": layout}
+
+
+def image_check(checks, name, item):
+    """A missing image blocks; one built from an older lockfile only warns. Both name the command that builds it."""
+    try:
+        result = images.status(item)
+    except (FridayError, OSError, subprocess.SubprocessError) as exc:
+        checks.append({"name": name, "status": "missing", "reason": str(exc)})
+        return
+    if result["state"] == "ok":
+        checks.append({"name": name, "status": "ok", "detail": result["reason"]})
+    else:
+        checks.append({"name": name, "status": "missing" if result["state"] == "missing" else "warning",
+                       "reason": result["reason"]})
 
 
 def tool_version(name):

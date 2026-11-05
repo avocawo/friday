@@ -54,6 +54,8 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Убрать рабочую копию и карточку; ветка остаётся |
 | `journal KEY` | Обновить журналы задачи (Obsidian, jsonl) |
 | `doctor --profile P` | Готовность машины и профиля |
+| `image build --profile P [--only stories\|gate] [--npmrc F]` | Собрать Docker-образы профиля (`stories.image`; `gate_image`, если есть `gate_build`) из `origin/<базовая ветка>` их репозитория. `.npmrc` уходит в BuildKit-секрет по пути, Friday его не читает. Запускает владелец, роли-модели доступа к команде не получают |
+| `image status --profile P` | Есть ли образы и собраны ли они из текущего lockfile; то же показывает `doctor` |
 
 Подробно о профиле, моделях и границах — в [руководстве](docs/guide.md). Почему конвейер устроен так — в [разборе пилота](docs/process-redesign.md) и [ADR](docs/adr/).
 

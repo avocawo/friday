@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from . import design, stories
+from . import design, images, stories
 from .errors import FridayError
 
 
@@ -43,6 +43,8 @@ def read_layers(path, seen):
         for field in ("repository", "worktree_root"):
             if isinstance(showcase.get(field), str) and showcase[field]:
                 showcase[field] = str((path.parent / Path(showcase[field]).expanduser()).resolve())
+        images.resolve_paths(showcase.get("build"), path.parent)
+    images.resolve_paths(layer.get("gate_build"), path.parent)
     if parent is not None and (not isinstance(parent, str) or not parent):
         raise FridayError("invalid_profile", "extends must be a non-empty profile path.")
     for field in ("repository", "journal_dir", "worktree_root", "dor_file"):
@@ -92,5 +94,6 @@ def load(path):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
     design.validate(profile.get("design"))
     stories.validate(profile.get("stories"))
+    images.validate(profile.get("gate_build"), "gate_build")
     profile["path"] = str(path)
     return profile
