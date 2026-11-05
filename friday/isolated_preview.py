@@ -184,19 +184,17 @@ def showcase_of(selected, worktree):
 
 @contextlib.contextmanager
 def storybook_preview(selected, worktree):
-    """Storybook of the showcase with the kit's sources linked in, both from their committed snapshots.
+    """The showcase with the kit's sources at its mount, both from their committed snapshots, served by the profile's command.
 
-    The image is the showcase's own Dockerfile build (dependencies in /app/node_modules, installed with network at build
-    time). At run time there is no network: the link that npm run link:uikit makes is a symlink to the kit snapshot."""
+    The showcase snapshot is mounted read-only at /src and the kit snapshot at /src/<mount>; the container has no network.
+    The image (stories.image), the command, its port, environment, writable directories and links into the image all
+    come from the profile's preview block."""
     config = stories.settings(selected)
     spec = selected.get('preview') or {}
     if not config:
         raise FridayError('invalid_profile', 'The storybook preview needs stories in the profile.')
+    validate_storybook(spec)
     browser_session.configuration(selected.get('browser'), 'http://probe.localhost:12345/')
-    package = spec.get('package', '@frontend/vue-uikit')
-    if not re.fullmatch(r'@[a-z0-9-]+/[a-z0-9.-]+', package):
-        raise FridayError('invalid_profile', 'preview.package must be a scoped npm package name.')
-    scope = package.split('/')[0]
     mount = stories.mount(selected)
     image = gate.image_id(config.get('image'))
     showcase = showcase_of(selected, worktree)
@@ -206,25 +204,45 @@ def storybook_preview(selected, worktree):
         source = Path(directory) / 'src'
         extract(showcase_archive, source)
         extract(kit_archive, source / mount)
-        (source / 'node_modules').symlink_to('/app/node_modules')
+        for link, target in sorted((spec.get('links') or {}).items()):
+            (source / link).symlink_to(target)
         name = 'friday-storybook-' + uuid.uuid4().hex
-        start = ('ln -s /src/%s /app/node_modules/%s && exec /app/node_modules/.bin/storybook dev --ci --no-open '
-                 '--disable-telemetry --no-version-updates --host 127.0.0.1 -p 6006' % (mount, package))
+        command = [part.replace('{mount}', mount) for part in spec['command']]
+        port = spec['port']
+        options = [part for path in spec.get('tmpfs', []) for part in ('--tmpfs', path + ':rw,exec,nosuid,nodev,size=512m')]
+        options += [part for key, value in sorted((spec.get('env') or {}).items()) for part in ('-e', '%s=%s' % (key, value))]
         try:
-            docker('run', '-d', *ISOLATION,
-                   # npm run link:uikit at run time: the package's scope is a fresh directory holding only the link
-                   '--tmpfs', '/app/node_modules/%s:rw,nosuid,nodev,size=1m' % scope,
-                   '--tmpfs', '/app/node_modules/.cache:rw,exec,nosuid,nodev,size=512m',
-                   '--tmpfs', '/app/node_modules/.vite:rw,exec,nosuid,nodev,size=512m',
+            docker('run', '-d', *ISOLATION, *options,
                    '--mount', 'type=bind,src=' + str(source) + ',dst=/src,readonly', '--name', name, '-w', '/src',
-                   '-e', 'HOME=/tmp', '-e', 'NODE_ENV=development', '-e', 'STORYBOOK_DISABLE_TELEMETRY=1',
-                   '--entrypoint', 'sh', image, '-c', start)
-            wait_for_vite(name, 6006, attempts=240)
+                   '-e', 'HOME=/tmp', '--entrypoint', command[0], image, *command[1:])
+            wait_for_vite(name, port, attempts=240)
         except BaseException:
             try:
                 docker('stop', '--time', '1', name, timeout=10)
             except FridayError:
                 pass
             raise
-        with served(name, 6006) as url:
+        with served(name, port) as url:
             yield url
+
+
+def validate_storybook(spec):
+    """The storybook backend's own keys: command (argv, {mount} allowed), port, env, tmpfs paths and links into the image."""
+    # Other keys may come from a parent profile's preview of another backend; this backend reads only its own.
+    command = spec.get('command')
+    if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
+        raise FridayError('invalid_profile', 'preview.command is required: the argument array that serves the showcase.')
+    port = spec.get('port')
+    if not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536:
+        raise FridayError('invalid_profile', 'preview.port is required: the port the command serves on.')
+    env = spec.get('env', {})
+    if not isinstance(env, dict) or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', k) or not isinstance(v, str) for k, v in env.items()):
+        raise FridayError('invalid_profile', 'preview.env maps variable names to strings.')
+    tmpfs = spec.get('tmpfs', [])
+    if not isinstance(tmpfs, list) or any(not isinstance(p, str) or not p.startswith('/') or ':' in p or ',' in p or '..' in p.split('/')
+                                          for p in tmpfs):
+        raise FridayError('invalid_profile', 'preview.tmpfs lists absolute container paths.')
+    links = spec.get('links', {})
+    if not isinstance(links, dict) or any(not stories.safe_relative(k) or not isinstance(v, str) or not v.startswith('/')
+                                          for k, v in links.items()):
+        raise FridayError('invalid_profile', 'preview.links maps paths in the snapshot to absolute container paths.')

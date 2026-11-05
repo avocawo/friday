@@ -13,8 +13,6 @@ from .errors import FridayError
 from .locks import locked
 
 PREFIX = "stories:"
-MOUNT = "deps/vue-uikit"
-THEME_QUERY = "globals=theme:{theme}"
 GIT = ("add", "commit", "status", "diff", "log", "restore")
 
 
@@ -31,16 +29,15 @@ def safe_relative(value):
 def validate(value):
     if value is None:
         return
-    allowed = {"repository", "base_branch", "worktree_root", "mount", "setup", "commands", "image", "build", "themes",
-               "theme_query"}
+    allowed = {"repository", "base_branch", "worktree_root", "mount", "setup", "commands", "image", "themes", "theme_query"}
     if not isinstance(value, dict) or set(value) - allowed:
         raise FridayError("invalid_profile", "stories takes " + ", ".join(sorted(allowed)) + ".")
-    for name in ("repository", "base_branch", "worktree_root"):
+    for name in ("repository", "base_branch", "worktree_root", "mount"):
         if not isinstance(value.get(name), str) or not value[name]:
             raise FridayError("invalid_profile", "stories.%s is required." % name)
     if value["base_branch"].startswith("-"):
         raise FridayError("invalid_profile", "stories.base_branch is not a branch name.")
-    if not safe_relative(value.get("mount", MOUNT)):
+    if not safe_relative(value["mount"]):
         raise FridayError("invalid_profile", "stories.mount must be a path inside the showcase repository.")
     for command in value.get("setup", []):
         if not isinstance(command, list) or not command or any(not isinstance(part, str) for part in command):
@@ -53,19 +50,18 @@ def validate(value):
     themes = value.get("themes", [])
     if not isinstance(themes, list) or any(not isinstance(item, str) or not re.fullmatch(r"[a-z0-9-]+", item) for item in themes):
         raise FridayError("invalid_profile", "stories.themes must be an array of theme names (a-z, 0-9, -).")
-    query = value.get("theme_query", THEME_QUERY)
-    if not isinstance(query, str) or "{theme}" not in query or not re.fullmatch(r"[A-Za-z0-9_.:={}-]+", query):
-        raise FridayError("invalid_profile", "stories.theme_query must be a URL parameter with {theme}, like globals=theme:{theme}.")
-    from . import images
-    images.validate(value.get("build"), "stories.build")
+    query = value.get("theme_query")
+    if themes and (not isinstance(query, str) or "{theme}" not in query or not re.fullmatch(r"[A-Za-z0-9_.:={}-]+", query)):
+        raise FridayError("invalid_profile", "stories.theme_query is required with themes: the URL parameter that selects "
+                          "a theme, with {theme} where its name goes (for example name={theme}).")
 
 
 def mount(profile):
-    return settings(profile).get("mount", MOUNT)
+    return settings(profile)["mount"]
 
 
 def up(profile):
-    """The way from the kit's worktree to the showcase's root, e.g. ../.. for deps/vue-uikit."""
+    """The way from the kit's worktree to the showcase's root, e.g. ../.. for a mount two folders deep."""
     return "/".join([".."] * len(PurePosixPath(mount(profile)).parts))
 
 
@@ -171,7 +167,7 @@ def executor_text(profile, card):
 
 def themes(profile):
     config = settings(profile) or {}
-    return list(config.get("themes", [])), config.get("theme_query", THEME_QUERY)
+    return list(config.get("themes", [])), config.get("theme_query", "")
 
 
 def browser_text(profile):

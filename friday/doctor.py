@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import codex_policy, design, images, models, profile as profiles, resources, state, stories
+from . import codex_policy, design, models, profile as profiles, resources, state, steps, stories
 from .errors import FridayError
 
 
@@ -58,15 +58,11 @@ def inspect(path):
                 if not shutil.which("graphify-mcp"):
                     raise FridayError("missing", "graphify-mcp is not installed (uv tool install 'graphifyy[mcp]').")
             check("graphify_mcp", graphify_mcp)
-    built = {item["name"]: item for item in images.specs(selected)}
     if selected.get("gate"):
-        if "gate" in built:
-            image_check(checks, "gate_image", built["gate"])
-        else:
-            def gate_image():
-                from . import gate
-                gate.image_id(selected.get("gate_image"))
-            check("gate_image", gate_image)
+        def gate_image():
+            from . import gate
+            gate.image_id(selected.get("gate_image"))
+        check("gate_image", gate_image)
     elif isinstance(selected.get("preview"), dict) or stories.settings(selected):
         # A UI kit has nothing else that checks a milestone's build: without a gate every milestone ends unverified.
         checks.append({"name": "gate", "status": "missing", "reason": "No gate: a profile with a preview must set gate and "
@@ -94,8 +90,11 @@ def inspect(path):
             if result.returncode:
                 raise FridayError("missing", "%s is not a git repository that ignores %s." % (repository, stories.mount(selected)))
         check("stories_repository", showcase)
-        if "stories" in built:
-            image_check(checks, "stories_image", built["stories"])
+    for name, step in sorted((selected.get("steps") or {}).items()):
+        if step.get("secrets") and "check" not in step:
+            check("step:" + name, lambda step=step: steps.secrets_present(step))
+        if "check" in step:
+            step_check(checks, name, selected)
     for name, operation, warning in design.doctor_checks(selected):
         check(name, operation, warning)
     delivery = (selected.get("delivery") or {}).get("transport", "none")
@@ -110,18 +109,15 @@ def inspect(path):
     return {"ready": all(item["status"] != "missing" for item in checks), "checks": checks, "cast": layout}
 
 
-def image_check(checks, name, item):
-    """A missing image blocks; one built from an older lockfile only warns. Both name the command that builds it."""
+def step_check(checks, name, selected):
+    """A step's readiness: missing blocks, out of date only warns; both name the command that runs the step."""
     try:
-        result = images.status(item)
+        state, reason = steps.check(selected, name)
     except (FridayError, OSError, subprocess.SubprocessError) as exc:
-        checks.append({"name": name, "status": "missing", "reason": str(exc)})
-        return
-    if result["state"] == "ok":
-        checks.append({"name": name, "status": "ok", "detail": result["reason"]})
-    else:
-        checks.append({"name": name, "status": "missing" if result["state"] == "missing" else "warning",
-                       "reason": result["reason"]})
+        state, reason = "missing", "%s. Run: %s" % (exc, steps.hint(selected, name))
+    entry = {"name": "step:" + name, "status": {"ok": "ok", "stale": "warning"}.get(state, "missing")}
+    entry["detail" if state == "ok" else "reason"] = reason
+    checks.append(entry)
 
 
 def tool_version(name):

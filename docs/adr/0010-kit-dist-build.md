@@ -1,6 +1,8 @@
 ---
-status: accepted
+status: superseded by 0011
 ---
+
+> Заменено [ADR 0011](0011-profile-steps.md): команды `friday dist` больше нет. Сборка dist — шаг профиля, процедура — в скрипте рядом с профилем.
 
 # dist кита собирает владелец командой `friday dist` в контейнере проекта
 

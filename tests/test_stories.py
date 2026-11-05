@@ -87,7 +87,7 @@ class StoriesTests(unittest.TestCase):
                         "branch_template": "{key}", "models": MODELS,
                         "roles": {"plan": ["big"], "plan-review": ["rival"], "develop": ["worker"], "review": ["big"]},
                         "stories": {"repository": str(self.showcase_repo), "base_branch": "master",
-                                    "worktree_root": str(base / "wt-storybook"), "commands": ["npm --prefix ../.. run build"],
+                                    "worktree_root": str(base / "wt-storybook"), "mount": "deps/kit", "commands": ["npm --prefix ../.. run build"],
                                     "setup": [["sh", "-c", "echo {kit} > deps/setup.txt"]]}}
         self.profile_path.write_text(json.dumps(self.profile))
         self.profile = profile.load(self.profile_path)
@@ -112,7 +112,7 @@ class StoriesTests(unittest.TestCase):
         kit = Path(workspace.create(self.root, "T-1", self.profile))
         value = card.read(self.root, "T-1")
         showcase = Path(value["stories"]["worktree"])
-        self.assertEqual(kit, showcase / "deps" / "vue-uikit")
+        self.assertEqual(kit, showcase / "deps" / "kit")
         self.assertEqual(git("branch", "--show-current", cwd=showcase).strip(), "T-1")
         self.assertEqual(git("branch", "--show-current", cwd=kit).strip(), "T-1")
         self.assertEqual((showcase / "deps" / "setup.txt").read_text().strip(), str(kit))
@@ -127,7 +127,7 @@ class StoriesTests(unittest.TestCase):
         git("push", "-q", "origin", "HEAD:master", cwd=self.showcase_repo)
         with self.assertRaises(FridayError) as error:
             workspace.create(self.root, "T-1", self.profile)
-        self.assertIn("does not ignore deps/vue-uikit", str(error.exception))
+        self.assertIn("does not ignore deps/kit", str(error.exception))
 
     def test_plan_paths_with_the_prefix_are_checked_in_the_showcase(self):
         kit = workspace.create(self.root, "T-1", self.profile)
@@ -198,12 +198,15 @@ class StoriesTests(unittest.TestCase):
                       {"repository": "r", "base_branch": "m", "worktree_root": "w", "other": 1}):
             with self.subTest(value=value), self.assertRaises(FridayError):
                 stories.validate(value)
-        stories.validate({"repository": "r", "base_branch": "m", "worktree_root": "w", "image": "sb:local"})
+        stories.validate({"repository": "r", "base_branch": "m", "worktree_root": "w", "mount": "deps/kit", "image": "sb:local"})
+        with self.assertRaises(FridayError):  # no default mount
+            stories.validate({"repository": "r", "base_branch": "m", "worktree_root": "w"})
 
 
 
 class ThemeTests(unittest.TestCase):
-    PROFILE = {"stories": {"repository": "r", "base_branch": "m", "worktree_root": "w", "themes": ["light", "dark"]}}
+    PROFILE = {"stories": {"repository": "r", "base_branch": "m", "worktree_root": "w", "mount": "deps/kit",
+                           "themes": ["light", "dark"], "theme_query": "globals=theme:{theme}"}}
 
     def test_browser_text_names_each_theme_and_state_comparison(self):
         text = stories.browser_text(self.PROFILE)
@@ -220,7 +223,8 @@ class ThemeTests(unittest.TestCase):
                    {"criterion": "[dark] focus", "status": "pass"}]
         self.assertEqual(stories.theme_results(results, self.PROFILE), {"light": "pass", "dark": "fail"})
         self.assertEqual(stories.theme_results(results[:1], self.PROFILE), {"light": "pass", "dark": "unverifiable"})
-        for bad in ({"themes": "dark"}, {"themes": ["Dark Mode"]}, {"theme_query": "theme=dark"}, {"theme_query": "a&b={theme}"}):
+        for bad in ({"themes": "dark"}, {"themes": ["Dark Mode"]}, {"theme_query": "theme=dark"}, {"theme_query": "a&b={theme}"},
+                    {"theme_query": None}):
             with self.assertRaises(FridayError):
                 stories.validate(dict(self.PROFILE["stories"], **bad))
 

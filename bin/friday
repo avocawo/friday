@@ -9,7 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from friday import card, dist, doctor, images, journal, milestone, plan, profile, state, status, tasks, tracker, workspace
+from friday import card, doctor, journal, milestone, plan, profile, state, status, tasks, tracker, workspace
+from friday import steps
 from friday.errors import FridayError
 
 VERSION = "0.2.0"
@@ -42,23 +43,15 @@ def main(argv=None):
     archive = commands.add_parser("archive", help="убрать рабочую копию и карточку, чтобы начать задачу заново")
     archive.add_argument("key")
     archive.add_argument("--force", action="store_true", help="удалить и незакоммиченные изменения")
-    build_dist = commands.add_parser("dist", help="собрать dist кита в контейнере проекта и закоммитить его в ветку задачи")
-    build_dist.add_argument("key")
-    build_dist.add_argument("--dry-run", action="store_true", help="показать шаги, ничего не меняя")
-    build_dist.add_argument("--check-base", action="store_true", help="только проверить, что dist базовой ветки воспроизводится")
+    step = commands.add_parser("step", help="выполнить шаг профиля (steps): для задачи — с её ключом, для профиля — с --profile")
+    step.add_argument("name")
+    step.add_argument("key", nargs="?")
+    step.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"))
+    step.add_argument("--dry-run", action="store_true", help="показать команду, ничего не запуская")
     commands.add_parser("journal", help="обновить журналы задачи из её карточки").add_argument("key")
     check = commands.add_parser("doctor", help="готовность машины и профиля")
     check.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
     check.add_argument("--json", action="store_true")
-    image = commands.add_parser("image", help="Docker-образы профиля: собрать или проверить свежесть").add_subparsers(
-        dest="image_command", required=True)
-    for name, text in (("build", "собрать образы профиля из базовой ветки их репозиториев"),
-                       ("status", "есть ли образы и совпадают ли с lockfile")):
-        item = image.add_parser(name, help=text)
-        item.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
-        item.add_argument("--only", choices=("stories", "gate"), help="только этот образ")
-        if name == "build":
-            item.add_argument("--npmrc", help="путь к .npmrc для BuildKit-секрета (по умолчанию из профиля, иначе ~/.npmrc)")
     args = parser.parse_args(argv)
     root = state.home()
     try:
@@ -119,31 +112,16 @@ def dispatch(root, args):
         report = doctor.inspect(args.profile)
         print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else doctor.render(report))
         return 0 if report["ready"] else 1
-    elif args.command == "dist":
-        print(dist.text(dist.build(root, args.key, task_profile(root, args.key), dry_run=args.dry_run, check_base=args.check_base)))
-    elif args.command == "image":
-        return image_command(args)
+    elif args.command == "step":
+        if not args.key and not args.profile:
+            raise FridayError("invalid_state", "Pass the task key or --profile.")
+        selected = task_profile(root, args.key) if args.key else profile.load(args.profile)
+        print(steps.text(steps.run(root, selected, args.name, args.key, dry_run=args.dry_run)))
     elif args.command == "status":
         if args.json:
             print(json.dumps(status.task(root, args.key) if args.key else status.overview(root), ensure_ascii=False, indent=2))
         else:
             print(status.render_task(root, args.key) if args.key else status.render(status.overview(root)))
-    return 0
-
-
-def image_command(args):
-    items = images.select(profile.load(args.profile), args.only)
-    if args.image_command == "status":
-        states = [(item, images.status(item)) for item in items]
-        for item, result in states:
-            print("%s %s: %s" % ({"ok": "✓", "stale": "!", "missing": "✗"}[result["state"]], item["name"], result["reason"]))
-        return 0 if all(result["state"] == "ok" for _, result in states) else 1
-    for item in items:
-        code = images.build(item, npmrc=os.path.expanduser(args.npmrc) if args.npmrc else None)
-        if code:
-            print("Ошибка: docker build %s завершился с кодом %d." % (item["image"], code), file=sys.stderr)
-            return code
-        print("Образ %s собран." % item["image"])
     return 0
 
 

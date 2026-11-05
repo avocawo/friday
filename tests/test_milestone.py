@@ -152,14 +152,20 @@ class MilestoneTests(unittest.TestCase):
         self.assertIn("eslint: no-shadow в greet.py:1", self.call(1)["prompt"])
         self.assertEqual(self.call(2)["argv"][self.call(2)["argv"].index("--model") + 1], "big-1")
 
-    def test_the_merge_request_text_asks_for_the_dist(self):
-        from friday import final
-        texts = []
-        selected = dict(self.profile, dist={"checkout": "/x", "container": "c"})
+    def test_required_owner_steps_reach_the_merge_request_and_pipeline_steps_run_before_delivery(self):
+        from friday import final, status
+        texts, ran = [], []
+        selected = dict(self.profile, steps={
+            "bundle": {"scope": "task", "when": "owner", "required": True, "run": ["true"]},
+            "notes": {"scope": "task", "when": "before_delivery", "run": ["true"]}})
         with patch("friday.final.final_review", return_value=({}, {"model": "big-1"})), \
+                patch("friday.steps.run", side_effect=lambda root, profile, name, key=None, **kw: ran.append(name)), \
                 patch("friday.final.deliver", side_effect=lambda root, key, profile: texts.append(final.description(root, key))):
             REAL_FINISH(self.root, "T-1", selected)
-        self.assertIn("friday dist T-1", texts[0])
+        self.assertEqual(ran, ["notes"])
+        self.assertIn("## Шаги не выполнены", texts[0])
+        self.assertIn("- bundle: `friday step bundle T-1`", texts[0])
+        self.assertIn("Шаг не выполнен: bundle — friday step bundle T-1", status.render_task(self.root, "T-1"))
 
     def test_unverified_reasons(self):
         ui = {"ui": True}

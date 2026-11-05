@@ -12,8 +12,6 @@ from .errors import FridayError
 
 READ_TOOLS = ("get_metadata", "get_design_context", "get_screenshot", "get_variable_defs")
 FIGMA_URL = "http://127.0.0.1:3845/mcp"
-REFERENCES = {"develop": ["craft-floor.md", "polish.md"], "review": ["component-review.md"],
-              "final-review": ["component-review.md"]}
 ROLES = ("develop", "review", "final-review")
 LINK = re.compile(r"https://(?:www\.)?figma\.com/(?:design|file)/([A-Za-z0-9]+)/[^\s)\]>\"']*?[?&]node-id=([0-9]+[-:][0-9]+)")
 LOOPBACK = re.compile(r"^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/")
@@ -73,8 +71,8 @@ def validate(value):
     if impeccable is not None:
         if not isinstance(impeccable, dict) or not isinstance(impeccable.get("skill_dir"), str) or not impeccable["skill_dir"]:
             raise FridayError("invalid_profile", "design.impeccable needs skill_dir, the folder with the skill's SKILL.md.")
-        references = impeccable.get("references", REFERENCES)
-        if not isinstance(references, dict) or set(references) - set(ROLES):
+        references = impeccable.get("references")
+        if not isinstance(references, dict) or not references or set(references) - set(ROLES):
             raise FridayError("invalid_profile", "design.impeccable.references maps %s to file lists." % ", ".join(ROLES))
         for files in references.values():
             if not isinstance(files, list) or any(not isinstance(name, str) or not name or name.startswith("/")
@@ -221,7 +219,7 @@ def references(profile, role):
     impeccable = settings(profile).get("impeccable")
     if not impeccable:
         return ""
-    names = impeccable.get("references", REFERENCES).get(role, [])
+    names = impeccable["references"].get(role, [])
     folder = Path(impeccable["skill_dir"]).expanduser() / "reference"
     parts = []
     for name in names:

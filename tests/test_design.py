@@ -139,7 +139,7 @@ class DesignTests(unittest.TestCase):
         self.assertIsNone(design.prepare(self.root, key, {}, TICKET))
 
     def test_impeccable_references_reach_only_ui_work_of_their_role(self):
-        profile = {"design": {"impeccable": {"skill_dir": skill(self.directory.name)}}}
+        profile = {"design": {"impeccable": {"skill_dir": skill(self.directory.name), "references": {"develop": ["craft-floor.md", "polish.md"], "review": ["component-review.md"], "final-review": ["component-review.md"]}}}}
         develop = design.guidance(profile, "develop", {"design": ["Высота 40px (12:34)"]}, True)
         self.assertIn("CRAFT FLOOR", develop)
         self.assertIn("POLISH", develop)
@@ -150,7 +150,7 @@ class DesignTests(unittest.TestCase):
         self.assertNotIn(design.REVIEW_SPEC, review)
         self.assertEqual(design.guidance(profile, "develop", {"design": ["x"]}, False), "")
         self.assertEqual(design.guidance({}, "develop", {}, True), "")
-        broken = {"design": {"impeccable": {"skill_dir": self.directory.name + "/none"}}}
+        broken = {"design": {"impeccable": {"skill_dir": self.directory.name + "/none", "references": {"develop": ["craft-floor.md", "polish.md"], "review": ["component-review.md"], "final-review": ["component-review.md"]}}}}
         with self.assertRaises(FridayError):
             design.references(broken, "develop")
 
@@ -218,7 +218,7 @@ class MilestoneWithDesignTests(unittest.TestCase):
     setUp, calls, call = test_milestone.MilestoneTests.setUp, test_milestone.MilestoneTests.calls, test_milestone.MilestoneTests.call
 
     def test_ui_milestone_prompts_carry_the_spec_and_the_references(self):
-        self.profile["design"] = {"impeccable": {"skill_dir": skill(Path(self.root).parent)}}
+        self.profile["design"] = {"impeccable": {"skill_dir": skill(Path(self.root).parent), "references": {"develop": ["craft-floor.md", "polish.md"], "review": ["component-review.md"], "final-review": ["component-review.md"]}}}
         source = card.directory(self.root, "T-1") / "plan.json"
         document = json.loads(source.read_text())
         document["milestones"][0]["ui"] = True

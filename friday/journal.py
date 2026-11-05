@@ -109,8 +109,8 @@ def describe(event):
         "browser_unverifiable": lambda: "%s: в браузере проверить не удалось (%s)." % (milestone, event.get("reason", "")),
         "browser_skipped": lambda: "%s: браузерной приёмки нет (%s)." % (milestone, event.get("reason", "")),
         "milestone_done": lambda: "%s: готова за %s круг(а), коммитов %s, спорных %s." % (milestone, event.get("rounds"), event.get("commits"), event.get("disputes")),
-        "dist_built": lambda: "dist собран%s из `%s`." % (
-            " коммитом `%s`" % (event.get("commit") or "")[:10] if event.get("commit") else " (без изменений)", (event.get("source") or "")[:10]),
+        "step_done": lambda: "Шаг %s выполнен%s." % (event.get("name"), " коммитом `%s`" % event["commit"][:10] if event.get("commit") else ""),
+        "step_failed": lambda: "Шаг %s не удался (код %s)." % (event.get("name"), event.get("code")),
         "milestone_blocked": lambda: "%s: заблокирована, среда не даёт проверить (%s)." % (milestone, event.get("reason", "")),
         "milestone_unverified": lambda: "%s: готова, но не проверена: %s." % (milestone, "; ".join(event.get("reasons") or [])),
         "milestone_failed": lambda: "%s: сбой (%s)." % (milestone, event.get("reason") or "гейт так и не прошёл"),
@@ -172,6 +172,7 @@ def render_task(root, key, profile, sink, previous=""):
         if item.get("outside_files"):
             milestones.append("- Вне плана: " + ", ".join("`%s`" % path for path in item["outside_files"]))
         milestones.append("")
+    milestones += ["- Шаг не выполнен: %s — `%s`" % (step["name"], step["command"]) for step in card.get("pending_steps") or []]
     disputes = ["- **%s** `%s`: %s\n  - Ревьюер %s; исполнитель: %s" % (
         d.get("milestone", ""), d.get("file", ""), d["problem"], d.get("reviewer", ""), d.get("executor_reason", "")) for d in card["disputes"]]
     decisions = ["- **%s**: %s%s" % (d["name"], d["text"], " (переоткрыты: %s)" % ", ".join(d["reopen"]) if d.get("reopen") else "")

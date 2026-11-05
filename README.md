@@ -54,9 +54,7 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Убрать рабочую копию и карточку; ветка остаётся |
 | `journal KEY` | Обновить журналы задачи (Obsidian, jsonl) |
 | `doctor --profile P` | Готовность машины и профиля |
-| `image build --profile P [--only stories\|gate] [--npmrc F]` | Собрать Docker-образы профиля (`stories.image`; `gate_image`, если есть `gate_build`) из `origin/<базовая ветка>` их репозитория. `.npmrc` уходит в BuildKit-секрет по пути, Friday его не читает. Запускает владелец, роли-модели доступа к команде не получают |
-| `dist KEY [--dry-run] [--check-base]` | Собрать dist UI-кита в контейнере проекта и закоммитить его в ветку задачи отдельным коммитом ([ADR 0010](docs/adr/0010-kit-dist-build.md)); запускает владелец |
-| `image status --profile P` | Есть ли образы и собраны ли они из текущего lockfile; то же показывает `doctor` |
+| `step NAME [KEY] [--profile P] [--dry-run]` | Выполнить шаг профиля (`steps`): шаг задачи — с её ключом, шаг профиля — с `--profile`. Что делает шаг (сборка образа, бандла и т. п.), описывает профиль ([ADR 0011](docs/adr/0011-profile-steps.md)) |
 
 Подробно о профиле, моделях и границах — в [руководстве](docs/guide.md). Почему конвейер устроен так — в [разборе пилота](docs/process-redesign.md) и [ADR](docs/adr/).
 

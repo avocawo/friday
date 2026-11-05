@@ -26,8 +26,13 @@ class PreviewTests(unittest.TestCase):
             showcase = Path(directory) / 'storybook'
             kit = showcase / 'deps' / 'vue-uikit'
             kit.mkdir(parents=True)
-            profile = {'browser': {'mode': 'local'}, 'preview': {'backend': 'storybook'},
-                       'stories': {'repository': '/r', 'base_branch': 'master', 'worktree_root': '/w', 'image': 'sb'}}
+            # An example profile: everything project-specific (command, paths, environment) is the profile's.
+            profile = {'browser': {'mode': 'local'},
+                       'preview': {'backend': 'storybook', 'port': 6006, 'env': {'NODE_ENV': 'development'},
+                                   'command': ['sh', '-c', 'ln -s /src/{mount} /app/node_modules/@scope/kit && exec serve -p 6006'],
+                                   'tmpfs': ['/app/node_modules/@scope'], 'links': {'node_modules': '/app/node_modules'}},
+                       'stories': {'repository': '/r', 'base_branch': 'master', 'worktree_root': '/w', 'image': 'sb',
+                                   'mount': 'deps/vue-uikit'}}
             archives = {str(showcase): self.archive({'.storybook/main.ts': b'x', 'src/stories/Button.stories.ts': b'y'}),
                         str(kit): self.archive({'src/index.ts': b'z'})}
             seen = {}
@@ -52,11 +57,13 @@ class PreviewTests(unittest.TestCase):
             run = calls.call_args_list[0].args
             self.assertEqual(run[run.index('--network') + 1], 'none')
             self.assertIn('--read-only', run)
-            self.assertIn('/app/node_modules/@frontend:rw,nosuid,nodev,size=1m', run)
-            script = run[-1]
-            self.assertTrue(script.startswith('ln -s /src/deps/vue-uikit /app/node_modules/@frontend/vue-uikit && exec '))
-            self.assertIn('storybook dev --ci --no-open --disable-telemetry', script)
-            self.assertIn('--host 127.0.0.1 -p 6006', script)
+            self.assertIn('/app/node_modules/@scope:rw,exec,nosuid,nodev,size=512m', run)
+            self.assertIn('NODE_ENV=development', run)
+            self.assertEqual(run[run.index('--entrypoint') + 1], 'sh')
+            self.assertEqual(run[-1], 'ln -s /src/deps/vue-uikit /app/node_modules/@scope/kit && exec serve -p 6006')
+            for broken in ({'command': 'serve'}, {'port': None}, {'tmpfs': ['relative']}, {'links': {'../x': '/a'}}):
+                with self.assertRaises(FridayError):
+                    isolated_preview.validate_storybook(dict(profile['preview'], **broken))
             outside = Path(directory) / 'elsewhere'
             outside.mkdir()
             with self.assertRaises(FridayError):

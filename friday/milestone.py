@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import design, dist, final, gate, models, runner, stories, workspace
+from . import design, final, gate, models, runner, steps, stories, workspace
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -441,10 +441,9 @@ FIX_RULES = (
 
 def finish(root, key, profile):
     """Final review and blind check, one fix round for blocking findings, then the draft merge request."""
-    def pending(value):  # before the MR text is written: it tells the owner the dist is still to be built
+    def pending(value):  # before the MR text is written: it names the owner's steps still to run
         value["unverified"] = task_unverified(value)
-        if dist.required(profile) and (value.get("dist") or {}).get("state") != "built":
-            value["dist"] = dist.required(profile)
+        value["pending_steps"] = [{"name": name, "command": steps.hint(profile, name, key)} for name in steps.pending(profile, value)]
     cards.update(root, key, pending)
     card = cards.read(root, key)
     worktree, layout = card["worktree"], card["cast"]
@@ -487,6 +486,7 @@ def finish(root, key, profile):
                           reviewer=final_entry["model"], status="owner") for f in remaining]
         if disputes:
             cards.update(root, key, lambda value: value["disputes"].extend(disputes))
+    steps.before_delivery(root, key, profile)
     return final.deliver(root, key, profile)
 
 
