@@ -82,6 +82,14 @@ class DesignTests(unittest.TestCase):
         self.assertEqual(design.links("https://figma.com/file/K9/x?type=design&node-id=1:2")[0]["node"], "1:2")
         self.assertEqual(design.links("no mockup, see https://example.com/?node-id=1-2"), [])
 
+    def test_server_sent_events_are_read_whole(self):
+        # Figma desktop answers with SSE; layer names may hold Unicode line separators, and data may span lines.
+        name = json.dumps({"result": {"content": [{"type": "text", "text": 'name="a b"'}]}}, ensure_ascii=False)
+        self.assertEqual(design.message("event: message\ndata: " + name + "\n\n")["result"]["content"][0]["text"], 'name="a b"')
+        self.assertEqual(design.message('event: message\r\ndata: {"a":\r\ndata: 1}\r\n\r\ndata: {"b": 2}\r\n'), {"a": 1})
+        self.assertEqual(design.message('{"c": 3}'), {"c": 3})
+        self.assertIsNone(design.message(""))
+
     def test_frames_found_in_figma_are_recorded_on_the_card(self):
         url, calls, stop = figma_server({"12:34"})
         self.addCleanup(stop)

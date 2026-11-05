@@ -82,6 +82,22 @@ def links(text):
     return found
 
 
+def message(text):
+    """The JSON of a plain response or of the first server-sent event; an event's data may span several data: lines."""
+    if not text.lstrip().startswith(("event:", "data:", "id:", ":")):
+        return json.loads(text) if text.strip() else None
+    data = []
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):  # not splitlines(): Unicode separators occur in layer names
+        if not line.strip():
+            if data:
+                break
+            continue
+        if line.startswith("data:"):
+            value = line[5:]
+            data.append(value[1:] if value.startswith(" ") else value)
+    return json.loads("\n".join(data)) if data else None
+
+
 class Figma:
     """A minimal client of the Figma desktop Dev Mode MCP server (streamable HTTP)."""
 
@@ -96,10 +112,7 @@ class Figma:
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
             self.session = response.headers.get("mcp-session-id") or self.session
             text = response.read().decode("utf-8", "replace")
-        for line in text.splitlines():
-            if line.startswith("data:"):
-                return json.loads(line[5:])
-        return json.loads(text) if text.strip() else None
+        return message(text)
 
     def request(self, method, params=None):
         self.counter += 1
