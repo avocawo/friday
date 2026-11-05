@@ -42,9 +42,9 @@ class StepTests(unittest.TestCase):
         self.secret.write_text(TOKEN)
         self.profile_path = base / "profile.json"
         self.data = {"name": "demo", "repository": "repo", "base_branch": "main", "steps": {
-            "bundle": {"scope": "task", "when": "owner", "required": True, "run": ["{profile_dir}/build.sh", "{worktree}", "{key}"],
+            "bundle": {"scope": "task", "required": True, "lock": "{repository}", "run": ["{profile_dir}/build.sh", "{worktree}", "{key}"],
                        "commit": {"paths": ["bundle"], "message": "{key}: bundle"}},
-            "image": {"scope": "profile", "when": "owner", "run": ["{profile_dir}/check.sh", "{secret.token}", "0"],
+            "image": {"scope": "profile", "run": ["{profile_dir}/check.sh", "{secret.token}", "0"],
                       "check": ["{profile_dir}/check.sh", "img", "0"], "secrets": {"token": "secret/.npmrc"}}}}
         self.write()
         self.root = base / "home"
@@ -64,7 +64,7 @@ class StepTests(unittest.TestCase):
 
     def test_validation_names_what_is_wrong(self):
         base = self.data["steps"]["bundle"]
-        for broken in (dict(base, run="build.sh"), dict(base, scope=None), dict(base, when="always"),
+        for broken in (dict(base, run="build.sh"), dict(base, scope=None), dict(base, when="owner"), dict(base, container="c"),
                        dict(base, run=["x", "{nope}"]), dict(base, scope="profile"),  # commit and {worktree} need a task
                        dict(base, check=["x"]), dict(base, commit={"paths": ["../x"], "message": "m"}),
                        dict(base, run=["x", "{secret.missing}"]), dict(base, env={"1A": "x"}), dict(base, extra=1)):
@@ -89,17 +89,62 @@ class StepTests(unittest.TestCase):
             self.run_step("bundle")
         self.assertEqual(error.exception.code, "step_failed")
         self.assertIn("step_failed", [event["type"] for event in card.events(self.root, "T-1")])
-        self.assertNotIn("steps", card.read(self.root, "T-1"))
+        self.assertEqual(steps.state(self.profile, card.read(self.root, "T-1"), "bundle"), "failed")
+        self.assertEqual(git("log", "-1", "--format=%s", cwd=self.worktree).strip(), "init")
 
-    def test_dry_run_runs_nothing_and_container_steps_are_wrapped(self):
+    def test_dry_run_runs_nothing(self):
         report = self.run_step("bundle", dry_run=True)
         self.assertFalse((self.worktree / "bundle").exists())
         self.assertEqual(report["argv"][1:], [str(self.worktree), "T-1"])
-        self.write(bundle=dict(self.data["steps"]["bundle"], container="app-1", env={"MODE": "dev"}))
-        argv = self.run_step("bundle", dry_run=True)["argv"]
-        self.assertEqual(argv[:5], ["docker", "exec", "-e", "MODE=dev", "app-1"])
+        self.assertEqual(report["lock"], "repo:" + str(self.repo.resolve()))
         with self.assertRaises(FridayError):
             self.run_step("bundle", key=None)
+
+    def test_a_step_goes_stale_when_the_branch_changes_outside_its_paths(self):
+        self.run_step("bundle")
+        (self.worktree / "stray.txt").unlink()
+        value = lambda: card.read(self.root, "T-1")
+        self.assertEqual(steps.state(self.profile, value(), "bundle"), "done")
+        (self.worktree / "bundle" / "out.txt").write_text("edited by hand\n")
+        git("commit", "-qam", "touch the bundle only", cwd=self.worktree)
+        self.assertEqual(steps.state(self.profile, value(), "bundle"), "done")
+        (self.worktree / "a.txt").write_text("changed\n")
+        git("commit", "-qam", "change a source", cwd=self.worktree)
+        self.assertEqual(steps.state(self.profile, value(), "bundle"), "stale")
+        self.assertEqual(steps.pending(self.profile, value()), ["bundle"])
+        self.assertIn("bundle (задача, обязательный) — устарел", steps.listing(self.profile, value()))
+
+    def test_a_dist_recorded_before_steps_counts_as_the_step(self):
+        head = git("rev-parse", "HEAD", cwd=self.worktree).strip()
+        self.write(dist=dict(self.data["steps"]["bundle"]))
+        card.update(self.root, "T-1", lambda value: value.update(dist={"state": "built", "commit": head, "source": head}))
+        self.assertEqual(steps.state(self.profile, card.read(self.root, "T-1"), "dist"), "done")
+
+    def test_a_running_task_or_a_held_lock_refuses_the_step(self):
+        from friday.locks import locked
+        card.update(self.root, "T-1", lambda value: value.update(state="running", runner_pid=os.getpid()))
+        with self.assertRaises(FridayError):
+            self.run_step("bundle")
+        card.update(self.root, "T-1", lambda value: value.update(state="done"))
+        with locked(self.root, "repo:" + str(self.repo.resolve())):
+            with self.assertRaises(FridayError) as error:
+                self.run_step("bundle")
+        self.assertEqual(error.exception.code, "lock_timeout")
+        self.assertFalse((self.worktree / "bundle").exists())
+
+    def test_after_the_step_the_mr_text_is_current_and_a_delivered_branch_is_flagged(self):
+        from friday import final
+        directory = card.directory(self.root, "T-1")
+        (directory / "plan.json").write_text(json.dumps({"summary": "Задача.", "milestones": []}))
+        (directory / "merge-request.md").write_text("старый текст\n")
+        card.update(self.root, "T-1", lambda value: value.update(delivery={"head": "0" * 40, "branch": "T-1"}))
+        report = self.run_step("bundle")
+        text = (directory / "merge-request.md").read_text()
+        self.assertIn("## Шаги профиля\n- bundle: коммит", text)
+        self.assertNotIn("не выполнен", text)
+        self.assertIn("ещё не запушен", steps.text(report))
+        self.assertIn("stray.txt", steps.text(report))
+        self.assertNotIn("Шаги профиля не выполнены", final.description(self.root, "T-1"))
 
     def test_secrets_are_passed_by_path_and_never_opened(self):
         real_open = open

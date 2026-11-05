@@ -172,7 +172,8 @@ def render_task(root, key, profile, sink, previous=""):
         if item.get("outside_files"):
             milestones.append("- Вне плана: " + ", ".join("`%s`" % path for path in item["outside_files"]))
         milestones.append("")
-    milestones += ["- Шаг не выполнен: %s — `%s`" % (step["name"], step["command"]) for step in card.get("pending_steps") or []]
+    from . import steps
+    milestones += ["- Шаг %s: %s — `%s`" % (steps.STATES[item["state"]], item["name"], item["command"]) for item in steps.attention_of(card)]
     disputes = ["- **%s** `%s`: %s\n  - Ревьюер %s; исполнитель: %s" % (
         d.get("milestone", ""), d.get("file", ""), d["problem"], d.get("reviewer", ""), d.get("executor_reason", "")) for d in card["disputes"]]
     decisions = ["- **%s**: %s%s" % (d["name"], d["text"], " (переоткрыты: %s)" % ", ".join(d["reopen"]) if d.get("reopen") else "")

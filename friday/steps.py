@@ -1,8 +1,9 @@
 """Steps a profile describes: how its project builds an image, a bundle or anything else Friday itself knows nothing about.
 
-Friday only runs a step's command with placeholders filled in, on the host or in a named container, commits the files
-the step names, checks its readiness for doctor and reminds the owner about required steps that have not run. Which
-commands, paths, images and secrets a project needs lives in its profile (and in scripts next to it), never here."""
+The owner runs a step with `friday step`; the pipeline never does. Friday fills in the placeholders, runs the command on
+the host, commits the files the step names, checks a profile step's readiness for doctor, and tells whether a task
+step is done, out of date or still to run. Which commands, paths, images and secrets a project needs lives in its
+profile (and in scripts next to it), never here."""
 import os
 import re
 import subprocess
@@ -11,14 +12,15 @@ from pathlib import Path
 from . import card as cards
 from . import stories
 from .errors import FridayError
+from .locks import locked
 
-FIELDS = {"run", "description", "scope", "when", "required", "container", "env", "cwd", "commit", "check", "secrets"}
+FIELDS = {"run", "description", "scope", "required", "env", "cwd", "commit", "check", "secrets", "lock"}
 SCOPES = ("task", "profile")
-WHEN = ("owner", "before_delivery")
 PROFILE_PLACES = {"profile_dir", "repository", "base_branch", "stories_repository"}
 TASK_PLACES = PROFILE_PLACES | {"key", "worktree", "branch", "base", "head", "showcase"}
 PLACEHOLDER = re.compile(r"\{([a-z_]+(?:\.[A-Za-z0-9_-]+)?)\}")
 NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+STATES = {"done": "выполнен", "stale": "устарел", "pending": "не выполнен", "failed": "последний запуск упал"}
 
 
 def argv_list(value):
@@ -40,14 +42,10 @@ def validate(value):
             raise FridayError("invalid_profile", "%s.run is required: an argument array." % where)
         if step.get("scope") not in SCOPES:
             raise FridayError("invalid_profile", "%s.scope is required: task or profile." % where)
-        if step.get("when") not in WHEN:
-            raise FridayError("invalid_profile", "%s.when is required: owner or before_delivery." % where)
         if not isinstance(step.get("required", False), bool):
             raise FridayError("invalid_profile", "%s.required is a boolean." % where)
         if step.get("required") and step["scope"] != "task":
             raise FridayError("invalid_profile", "%s.required applies to task steps; a profile step reports through check." % where)
-        if "container" in step and (not isinstance(step["container"], str) or not step["container"] or step["container"].startswith("-")):
-            raise FridayError("invalid_profile", "%s.container must be a container name." % where)
         env = step.get("env", {})
         if not isinstance(env, dict) or any(not isinstance(k, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k)
                                             or not isinstance(v, str) for k, v in env.items()):
@@ -55,6 +53,8 @@ def validate(value):
         secrets = step.get("secrets", {})
         if not isinstance(secrets, dict) or any(not NAME.fullmatch(k) or not isinstance(v, str) or not v for k, v in secrets.items()):
             raise FridayError("invalid_profile", "%s.secrets maps names to file paths." % where)
+        if "lock" in step and (not isinstance(step["lock"], str) or not step["lock"]):
+            raise FridayError("invalid_profile", "%s.lock names a shared resource (a path or a name)." % where)
         commit = step.get("commit")
         if commit is not None:
             if step["scope"] != "task":
@@ -69,7 +69,8 @@ def validate(value):
             if not argv_list(step["check"]):
                 raise FridayError("invalid_profile", "%s.check must be an argument array." % where)
         allowed = TASK_PLACES if step["scope"] == "task" else PROFILE_PLACES
-        texts = step["run"] + step.get("check", []) + list(env.values()) + [step.get("cwd", "")] + [(commit or {}).get("message", "")]
+        texts = (step["run"] + step.get("check", []) + list(env.values()) + [step.get("cwd", ""), step.get("lock", "")] +
+                 [(commit or {}).get("message", "")])
         for text in texts:
             for found in PLACEHOLDER.findall(text):
                 if found.startswith("secret."):
@@ -119,15 +120,6 @@ def fill(text, values):
     return PLACEHOLDER.sub(lambda match: values.get(match.group(1), match.group(0)), text)
 
 
-def command(step, values, argv=None):
-    """The argv to run: placeholders filled in, wrapped in docker exec when the step runs in a container."""
-    argv = [fill(part, values) for part in (argv or step["run"])]
-    env = {name: fill(text, values) for name, text in (step.get("env") or {}).items()}
-    if step.get("container"):
-        return ["docker", "exec"] + [part for name in sorted(env) for part in ("-e", "%s=%s" % (name, env[name]))] + [step["container"]] + argv, {}
-    return argv, env
-
-
 def hint(profile, name, key=None):
     step = get(profile, name)
     return "friday step %s %s" % (name, key or "KEY") if step["scope"] == "task" else "friday step %s --profile %s" % (name, profile["path"])
@@ -140,19 +132,112 @@ def secrets_present(step):
             raise FridayError("missing", "Secret %s is not a file: %s" % (name, path))
 
 
-def run(root, profile, name, key=None, dry_run=False, echo=print):
-    """Run one step; for a task step, commit the files it names and mark it done on the card. Returns a short report."""
+def lock_name(step, values):
+    """A step's shared resource: a path shares the repository lock Friday itself takes there; anything else is a name."""
+    value = fill(step["lock"], values)
+    return "repo:" + str(Path(value).resolve()) if os.path.isabs(value) else "step:" + value
+
+
+def recorded(card, name):
+    """The card's record of a step; a dist built before steps existed counts as the step of that name."""
+    value = (card.get("steps") or {}).get(name)
+    old = card.get("dist") or {}
+    if value is None and name == "dist" and old.get("state") == "built":  # cards from before steps (ADR 0011)
+        value = {"state": "done", "commit": old.get("commit"), "head": old.get("source")}
+    return value
+
+
+def state(profile, card, name):
+    """done, stale (the branch changed outside the step's committed paths since it ran), pending or failed."""
     step = get(profile, name)
-    card = cards.read(root, key) if step["scope"] == "task" else None
+    value = recorded(card, name)
+    if not value:
+        return "pending"
+    if value.get("state") == "failed":
+        return "failed"
+    since = value.get("commit") or value.get("head")
+    if step.get("commit") and since and card.get("worktree"):
+        excluded = [":(exclude)" + path for path in step["commit"]["paths"]]
+        changed = subprocess.run(["git", "-C", card["worktree"], "diff", "--quiet", since, "HEAD", "--", ".", *excluded],
+                                 capture_output=True)
+        if changed.returncode == 1:
+            return "stale"
+    return "done"
+
+
+def overview(profile, card):
+    """Every task step with its state, for status, the journal and the MR text."""
+    return [{"name": name, "state": state(profile, card, name), "required": bool(step.get("required")),
+             "command": hint(profile, name, card["key"])}
+            for name, step in sorted((profile.get("steps") or {}).items()) if step["scope"] == "task"]
+
+
+def attention(profile, card):
+    """Required steps that are not done and fresh, and any step whose last run failed."""
+    return [item for item in overview(profile, card) if item["state"] != "done" and (item["required"] or item["state"] == "failed")]
+
+
+def attention_of(card):
+    """attention() for a card, with the profile it was started with; nothing when that profile cannot be read."""
+    from . import profile as profiles
+    try:
+        return attention(profiles.load(card["profile"]), card)
+    except (FridayError, OSError, KeyError):
+        return []
+
+
+def sections(card):
+    """MR text sections: steps that need the owner, and steps whose result is on the branch."""
+    from . import profile as profiles
+    try:
+        selected = profiles.load(card["profile"])
+    except (FridayError, OSError, KeyError):
+        return []
+    items = overview(selected, card)
+    result = []
+    waiting = [item for item in items if item["state"] != "done" and (item["required"] or item["state"] == "failed")]
+    if waiting:
+        result.append(("## Шаги профиля не выполнены", ["- %s — %s: `%s`" % (item["name"], STATES[item["state"]], item["command"])
+                                                        for item in waiting]))
+    done = [(item["name"], recorded(card, item["name"])) for item in items if item["state"] == "done"]
+    done = [(name, value) for name, value in done if value and value.get("commit")]
+    if done:
+        result.append(("## Шаги профиля", ["- %s: коммит `%s`" % (name, value["commit"][:10]) for name, value in done]))
+    return result
+
+
+def pending(profile, card):
+    return [item["name"] for item in attention(profile, card)]
+
+
+def run(root, profile, name, key=None, dry_run=False, echo=print):
+    """Run one step; for a task step, commit the files it names and record it on the card. Returns a short report."""
+    step = get(profile, name)
     if step["scope"] == "task" and key is None:
         raise FridayError("invalid_state", "Step %s belongs to a task: friday step %s KEY." % (name, name))
+    card = cards.read(root, key) if step["scope"] == "task" else None
     values = places(profile, step, card)
-    argv, env = command(step, values)
+    argv = [fill(part, values) for part in step["run"]]
+    env = {variable: fill(text, values) for variable, text in (step.get("env") or {}).items()}
     cwd = fill(step.get("cwd") or (card["worktree"] if card else values["profile_dir"]), values)
     if dry_run:
-        return {"name": name, "dry_run": True, "argv": argv, "env": env, "cwd": cwd}
+        return {"name": name, "dry_run": True, "argv": argv, "env": env, "cwd": cwd,
+                "lock": lock_name(step, values) if step.get("lock") else None}
     secrets_present(step)
+    if card and card["state"] == "running" and isinstance(card.get("runner_pid"), int) and cards.alive(card["runner_pid"]):
+        raise FridayError("invalid_state", "Task %s is running; run the step when it stops." % key)
+    import contextlib
+    with contextlib.ExitStack() as stack:
+        if card:
+            stack.enter_context(locked(root, "step-task:" + key, timeout=5))
+        if step.get("lock"):
+            stack.enter_context(locked(root, lock_name(step, values), timeout=5))
+        return execute(root, profile, name, step, card, values, argv, env, cwd, echo)
+
+
+def execute(root, profile, name, step, card, values, argv, env, cwd, echo):
     from . import workspace
+    key = card["key"] if card else None
     commit = step.get("commit")
     if commit and workspace.git(card["worktree"], "status", "--porcelain"):
         raise FridayError("invalid_state", "The task worktree has uncommitted changes; step %s commits its result there." % name)
@@ -163,6 +248,7 @@ def run(root, profile, name, key=None, dry_run=False, echo=print):
         raise FridayError("step_failed", "Step %s cannot start: %s" % (name, exc))
     if result.returncode:
         if card:
+            cards.update(root, key, lambda value: value.setdefault("steps", {}).update({name: {"state": "failed", "code": result.returncode}}))
             cards.record(root, key, "step_failed", name=name, code=result.returncode)
         raise FridayError("step_failed", "Step %s exited with %d." % (name, result.returncode))
     report = {"name": name, "commit": None}
@@ -176,27 +262,29 @@ def run(root, profile, name, key=None, dry_run=False, echo=print):
                           "commit", "-qm", fill(commit["message"], values))
             report["commit"] = workspace.git(card["worktree"], "rev-parse", "HEAD").strip()
             report["stat"] = workspace.git(card["worktree"], "show", "--stat", "--format=", "HEAD").strip()
+        left = workspace.git(card["worktree"], "status", "--porcelain")
+        if left:
+            report["left"] = left.strip()
     if card:
-        def done(value):
-            value.setdefault("steps", {})[name] = {"state": "done", "commit": report["commit"], "head": values["head"]}
-            value["pending_steps"] = [item for item in value.get("pending_steps", []) if item["name"] != name]
-        cards.update(root, key, done)
+        cards.update(root, key, lambda value: value.setdefault("steps", {}).update(
+            {name: {"state": "done", "commit": report["commit"], "head": values["head"]}}))
         cards.record(root, key, "step_done", name=name, commit=report["commit"])
+        report.update(after_task_step(root, key, report))
     return report
 
 
-def pending(profile, card):
-    """Required owner task steps not run yet on this task."""
-    done = card.get("steps") or {}
-    return [name for name, step in sorted((profile.get("steps") or {}).items())
-            if step["scope"] == "task" and step.get("required") and step["when"] == "owner" and name not in done]
-
-
-def before_delivery(root, key, profile, echo=print):
-    """The steps the pipeline itself runs right before delivery."""
-    for name, step in sorted((profile.get("steps") or {}).items()):
-        if step["when"] == "before_delivery":
-            run(root, profile, name, key if step["scope"] == "task" else None, echo=echo)
+def after_task_step(root, key, report):
+    """Keep the saved MR text current, and say when the step's commit still has to reach a delivered branch."""
+    from . import final
+    notes = {}
+    text = cards.directory(root, key) / "merge-request.md"
+    if text.exists():
+        text.write_text(final.description(root, key) + "\n", encoding="utf-8")
+        notes["mr_text"] = str(text)
+    delivery = cards.read(root, key).get("delivery") or {}
+    if report.get("commit") and delivery.get("head") and delivery["head"] != report["commit"]:
+        notes["push"] = "Ветка %s уже доставлена; коммит шага ещё не запушен, а текст MR на сервере не обновлён." % delivery.get("branch", "")
+    return notes
 
 
 def check(profile, name):
@@ -204,7 +292,8 @@ def check(profile, name):
     step = get(profile, name)
     secrets_present(step)
     values = places(profile, step)
-    argv, env = command(step, values, step["check"])
+    argv = [fill(part, values) for part in step["check"]]
+    env = {variable: fill(text, values) for variable, text in (step.get("env") or {}).items()}
     try:
         result = subprocess.run(argv, cwd=values["profile_dir"], env=dict(os.environ, **env), capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -213,16 +302,37 @@ def check(profile, name):
     reason = lines[-1] if lines else ""
     if result.returncode == 0:
         return "ok", reason
-    state = "stale" if result.returncode == 2 else "missing"
-    return state, "%s. Run: %s" % (reason or "not ready", hint(profile, name))
+    return ("stale" if result.returncode == 2 else "missing"), "%s. Run: %s" % (reason or "not ready", hint(profile, name))
+
+
+def listing(profile, card=None):
+    """`friday step` without a name: the profile's steps, their description and, for a task, their state."""
+    lines = []
+    for name, step in sorted((profile.get("steps") or {}).items()):
+        shown = ""
+        if step["scope"] == "task" and card:
+            shown = " — " + STATES[state(profile, card, name)]
+        lines.append("%s (%s%s)%s" % (name, "задача" if step["scope"] == "task" else "профиль",
+                                      ", обязательный" if step.get("required") else "", shown))
+        if step.get("description"):
+            lines.append("  " + step["description"])
+    return "\n".join(lines) or "В профиле нет шагов (steps)."
 
 
 def text(report):
     if report.get("dry_run"):
         lines = ["Шаг %s (пробный прогон, ничего не запускается):" % report["name"], "  cwd: " + report["cwd"]]
         lines += ["  env: %s=%s" % item for item in sorted(report["env"].items())]
+        if report.get("lock"):
+            lines.append("  блокировка: " + report["lock"])
         return "\n".join(lines + ["  $ " + " ".join(report["argv"])])
     lines = ["Шаг %s выполнен%s." % (report["name"], ", коммит " + report["commit"][:12] if report.get("commit") else "")]
     if report.get("stat"):
         lines += ["", report["stat"]]
+    if report.get("left"):
+        lines += ["", "Шаг оставил в рабочей копии изменения вне своих путей — разберитесь до следующего шага:", report["left"]]
+    if report.get("mr_text"):
+        lines.append("Текст MR обновлён: " + report["mr_text"])
+    if report.get("push"):
+        lines.append(report["push"])
     return "\n".join(lines)

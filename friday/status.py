@@ -143,8 +143,9 @@ def render_task(root, key, recent=10):
             lines.append("Заблокирована %s: %s" % (item["id"], item["blocked_reason"]))
         for reason in item.get("unverified") or []:
             lines.append("Не проверено %s: %s" % (item["id"], reason))
-    for item in card.get("pending_steps") or []:
-        lines.append("Шаг не выполнен: %s — %s" % (item["name"], item["command"]))
+    from . import steps
+    for item in steps.attention_of(card):
+        lines.append("Шаг %s: %s — %s" % (steps.STATES[item["state"]], item["name"], item["command"]))
     if card.get("branch"):
         lines.append("Ветка: %s  Рабочая копия: %s" % (card["branch"], card.get("worktree") or "—"))
     if card["cast"]:
