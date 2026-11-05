@@ -96,7 +96,7 @@ def labels(image):
     """The image's Friday labels, or None when the image is not present locally."""
     try:
         result = subprocess.run(["docker", "image", "inspect", "--format",
-                                 '{{index .Config.Labels "%s"}}' % LABEL], capture_output=True, text=True, timeout=60)
+                                 '{{index .Config.Labels "%s"}}' % LABEL, image], capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
         raise FridayError("environment_unavailable", "Docker is not available.")
     if result.returncode:

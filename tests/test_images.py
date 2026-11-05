@@ -34,6 +34,7 @@ class FakeDocker:
             return REAL_RUN(argv, *args, **kwargs)
         self.calls.append((list(argv), kwargs))
         if argv[1:3] == ["image", "inspect"]:
+            self.inspected = argv[-1]
             if self.label is None:
                 return subprocess.CompletedProcess(argv, 1, "", "No such image")
             return subprocess.CompletedProcess(argv, 0, self.label + "\n", "")
@@ -135,9 +136,11 @@ class ImageTests(unittest.TestCase):
         item = self.item()
         cases = ((None, "missing"), ("", "stale"), ("<no value>", "stale"), ("0" * 64, "stale"), (self.master_digest, "ok"))
         for label, expected in cases:
-            with patch("friday.images.subprocess.run", FakeDocker(label)):
+            fake = FakeDocker(label)
+            with patch("friday.images.subprocess.run", fake):
                 result = images.status(item)
             self.assertEqual(result["state"], expected, label)
+            self.assertEqual(fake.inspected, "showcase:friday")
             if expected != "ok":
                 self.assertIn(images.hint(item), result["reason"])
 
