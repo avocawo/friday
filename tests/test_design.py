@@ -1,3 +1,5 @@
+import base64
+import contextlib
 import copy
 import json
 import tempfile
@@ -10,10 +12,12 @@ from unittest.mock import patch
 from friday import card, design, milestone, plan
 from friday.errors import FridayError
 
+import test_final
 import test_milestone
 import test_plan
 
 LINK = "https://www.figma.com/design/AbC123/DocumentMaster?node-id=12-34&t=x"
+PNG = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
 TICKET = "Сделать FileDropzone по макету: " + LINK + " и состояния (" + LINK + ")."
 
 
@@ -36,7 +40,10 @@ def figma_server(nodes):
                 result = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}}
             else:
                 node = body["params"]["arguments"]["nodeId"]
-                result = ({"content": [{"type": "text", "text": '<frame id="%s" name="Dropzone" width="320" />' % node}]}
+                found = {"get_metadata": [{"type": "text", "text": '<frame id="%s" name="Dropzone" width="320" />' % node}],
+                         "get_screenshot": [{"type": "image", "mimeType": "image/png", "data": PNG},
+                                            {"type": "text", "text": "Figma recommends..."}]}
+                result = ({"content": found[body["params"]["name"]]}
                           if node in nodes else
                           {"content": [{"type": "text", "text": "No node could be found for the provided nodeId: %s." % node}],
                            "isError": True})
@@ -95,10 +102,13 @@ class DesignTests(unittest.TestCase):
         self.addCleanup(stop)
         key = self.task()
         frames = design.prepare(self.root, key, {"design": {"figma": {"url": url}}}, TICKET)
-        self.assertEqual([(frame["file"], frame["node"], frame["name"]) for frame in frames], [("AbC123", "12:34", "Dropzone")])
+        self.assertEqual([(frame["file"], frame["node"], frame["name"], frame["screenshot"]) for frame in frames],
+                         [("AbC123", "12:34", "Dropzone", "figma-12-34.png")])
         self.assertEqual(design.frames(card.read(self.root, key)), frames)
-        self.assertEqual([call[0] for call in calls], ["initialize", "notifications/initialized", "tools/call"])
+        self.assertEqual((design.folder(self.root, key) / "figma-12-34.png").read_bytes(), b"\x89PNG\r\n\x1a\nfake")
+        self.assertEqual([call[0] for call in calls], ["initialize", "notifications/initialized", "tools/call", "tools/call"])
         self.assertEqual(calls[2][1], {"name": "get_metadata", "arguments": {"nodeId": "12:34"}})
+        self.assertEqual(calls[3][1], {"name": "get_screenshot", "arguments": {"nodeId": "12:34"}})
         self.assertEqual(calls[2][2], "session-1")
         self.assertIn("design_frames", [event["type"] for event in card.events(self.root, key)])
 
@@ -226,6 +236,51 @@ class MilestoneWithDesignTests(unittest.TestCase):
         self.assertIn(design.REVIEW_SPEC, reviewer)
         self.assertNotIn("CRAFT FLOOR", reviewer)
         self.assertNotIn("--mcp-config", self.call(0)["argv"])
+
+
+class BrowserWithDesignTests(unittest.TestCase):
+    """The browser check compares the preview with the Figma renderings; minor differences go to the owner."""
+    setUp, answers, log = test_final.FinalTests.setUp, test_final.FinalTests.answers, test_final.FinalTests.log
+
+    def test_browser_reads_the_figma_screenshots_and_minor_findings_reach_the_merge_request(self):
+        key = "T-1"
+        design.folder(self.root, key).mkdir(parents=True)
+        (design.folder(self.root, key) / "figma-12-34.png").write_bytes(b"png")
+        card.update(self.root, key, lambda value: value.update(design={"frames": [
+            {"file": "AbC123", "node": "12:34", "url": LINK, "name": "DocumentMaster", "screenshot": "figma-12-34.png"}]}))
+        source = card.directory(self.root, key) / "plan.json"
+        document = json.loads(source.read_text())
+        document["design"] = ["Высота 120px, скругление 8px (12:34)"]
+        source.write_text(json.dumps(document, ensure_ascii=False))
+        seen = {}
+        @contextlib.contextmanager
+        def preview(profile, worktree):
+            yield "http://t1.localhost:5201/"
+        original = test_final.final.design.copy_screenshots
+        def copy(root, key, value, destination):
+            found = original(root, key, value, destination)
+            seen["files"] = sorted(path.name for path in Path(destination).iterdir())
+            return found
+        minor = {"severity": "minor", "file": "design", "problem": "Иконка правее, чем в макете.", "evidence": "скриншоты"}
+        verdict = {"verdict": "pass", "criteria_results": [{"criterion": "по клику видно «Привет»", "status": "pass",
+                                                            "evidence": "снимок"}], "findings": [minor]}
+        self.answers(develop=[{"answer": test_final.DONE, "write": {"page.html": "<button>hi</button>\n"},
+                               "commit": ["T-1 M1.1: button"]}],
+                     review=[{"answer": test_final.PASS}], browser=[{"answer": verdict}])
+        with patch("friday.isolated_preview.open_preview", side_effect=preview), \
+                patch("friday.final.design.copy_screenshots", side_effect=copy):
+            milestone.run(self.root, key, self.profile, "M1")
+        self.assertEqual(seen["files"], ["figma-12-34.png"])
+        browser = self.log("browser")[0]
+        self.assertIn('"design_spec"', browser["prompt"])
+        self.assertIn('"file": "figma-12-34.png"', browser["prompt"])
+        self.assertIn("call computed_style", browser["prompt"])
+        allowed = browser["argv"][browser["argv"].index("--allowedTools") + 1].split(",")
+        self.assertIn("mcp__friday__computed_style", allowed)
+        self.assertIn("mcp__friday__hover", allowed)
+        self.assertEqual(card.read(self.root, key)["milestones"][0]["browser_minor"], [minor])
+        self.assertEqual(len(self.log("develop")), 1)  # a minor finding does not go back to the executor
+        self.assertIn("Иконка правее, чем в макете.", test_final.final.description(self.root, key))
 
 
 if __name__ == "__main__":

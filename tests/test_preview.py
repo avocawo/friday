@@ -8,6 +8,36 @@ from friday.errors import FridayError
 
 
 class PreviewTests(unittest.TestCase):
+    def test_ui_kit_preview_uses_its_vite_config_and_no_staging_api(self):
+        import io
+        import tarfile
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode='w') as tar:
+            data = b'<html></html>'
+            item = tarfile.TarInfo('playground/index.html')
+            item.size = len(data)
+            tar.addfile(item, io.BytesIO(data))
+        profile = {'browser': {'mode': 'local'}, 'gate_image': 'img',
+                   'preview': {'backend': 'docker-vite', 'vite_config': 'vite.playground.config.ts'}}
+        with patch('friday.isolated_preview.gate.image_id', return_value='sha'), \
+             patch('friday.isolated_preview.gate.snapshot', return_value=('h', 'd', buffer.getvalue())), \
+             patch('friday.isolated_preview.wait_for_vite'), \
+             patch('friday.isolated_preview.docker', return_value=b'') as docker:
+            with isolated_preview.open_preview(profile, '/worktree') as url:
+                self.assertRegex(url, r'^http://preview-[0-9a-f]+\.localhost:\d+/$')
+        run = docker.call_args_list[0].args
+        self.assertEqual(run[run.index('--network') + 1], 'none')
+        self.assertEqual(run[-6:], ('--config', 'vite.playground.config.ts', '--host', '127.0.0.1', '--port', '5173'))
+        self.assertFalse(any(str(arg).startswith('VITE_API_APOLLO_URI') for arg in run))
+        for config in ('../outside.ts', '/abs.ts', ''):
+            with self.subTest(config=config), patch('friday.isolated_preview.gate.image_id'), self.assertRaises(FridayError):
+                with isolated_preview.open_preview(dict(profile, preview=dict(profile['preview'], vite_config=config)), '/w'):
+                    pass
+        with self.assertRaises(FridayError):  # a staging browser still needs its API path
+            with isolated_preview.open_preview({'browser': {'stage_origin': 'https://gql.stage.example.ru'},
+                                                'preview': {'backend': 'docker-vite'}}, '/w'):
+                pass
+
     def test_readiness_retries_until_successful_html_response(self):
         def response(status, content_type, body):
             return json.dumps({'status': status, 'type': content_type, 'data': base64.b64encode(body).decode()}).encode()

@@ -256,6 +256,8 @@ def accept_in_browser(root, key, profile, layout, author, worktree, item):
     statuses = [c["status"] for c in value["criteria_results"]]
     cards.record(root, key, "browser_checked", milestone=item["id"], verdict=value["verdict"], model=entry["model"],
                  unverifiable=statuses.count("unverifiable"))
+    # Minor browser findings (a design difference seen only by eye) go to the owner with the draft, not to the executor.
+    set_state(root, key, item["id"], browser_minor=[f for f in value["findings"] if f["severity"] == "minor"])
     if not statuses or all(status == "unverifiable" for status in statuses):
         cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason="no criterion could be observed")
     return [finding for finding in value["findings"] if finding["severity"] == "blocking"]

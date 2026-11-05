@@ -65,11 +65,14 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
         if spec.get("mode") != "local":
             browser_auth.capture(spec)
         with isolated_preview.open_preview(profile, worktree) as url, tempfile.TemporaryDirectory(prefix="friday-browser-") as empty:
+            document = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
+            shots = design.copy_screenshots(root, key, cards.read(root, key), empty)
             prompt = (BROWSER_RULES + "\n\nPreview: " + url + "\n\n" + json.dumps(
                 {"milestone": {k: item[k] for k in ("id", "title", "goal")}, "criteria": checks,
-                 "test_policy": profile.get("behavior_test_policy", "")}, ensure_ascii=False, indent=2))
+                 "test_policy": profile.get("behavior_test_policy", "")}, ensure_ascii=False, indent=2) +
+                design.browser_text(document, shots))
             mcp = {"name": "friday", "command": [sys.executable, str(ADAPTERS / "browser_mcp.py"), json.dumps(spec), url],
-                   "tools": sorted(browser_session.TOOLS)}
+                   "tools": sorted(list(browser_session.TOOLS) + [browser_session.STYLE["name"]])}
             result = run_role(root, key, profile, "browser", entry, empty, prompt, schema, item["id"], mcp=mcp)
     return result
 
@@ -131,7 +134,8 @@ def description(root, key):
         for dispute in card["disputes"]:
             lines.append("- %s `%s`: %s" % (dispute.get("milestone", ""), dispute.get("file", ""), dispute["problem"]))
             lines.append("  Исполнитель: %s" % dispute.get("executor_reason", ""))
-    minor = [f for item in card["milestones"] for f in item.get("minor_findings", [])] + card.get("final_minor", [])
+    minor = ([f for item in card["milestones"] for f in item.get("minor_findings", []) + item.get("browser_minor", [])] +
+             card.get("final_minor", []))
     if minor:
         lines += ["", "## Мелкие замечания"] + ["- `%s`: %s" % (f.get("file", ""), f["problem"]) for f in minor]
     outside = sorted({path for item in card["milestones"] for path in item.get("outside_files", [])})

@@ -1,4 +1,6 @@
 """Design tools for UI tasks: the Figma frame of the ticket for planning, /impeccable references as prompt text."""
+import base64
+import binascii
 import json
 import re
 import urllib.error
@@ -33,6 +35,15 @@ FOLLOW_SPEC = (
 REVIEW_SPEC = (
     "design_spec is the owner-approved specification taken from the Figma frame. A deviation from it in the changed "
     "component is blocking; cite the spec item and the code line.")
+BROWSER_DESIGN = (
+    "Also check the rendered component against the design. design_spec is the owner-approved specification; "
+    "figma_screenshots are the Figma frames it comes from, saved in your working folder: Read each one. For every state "
+    "the spec or the frames show, bring the component into that state (hover for Hover, Tab for focus), take_screenshot "
+    "and call computed_style on the element and its parts for the properties the spec names. A measured value that "
+    "differs from a design_spec item is a blocking finding: name the spec item, the state and the measured value. A "
+    "difference you only see by eye between the screenshots (spacing, alignment, icon, a composition that reads as "
+    "separate elements in a box rather than one whole) is a minor finding. Use file \"design\" when the source file is "
+    "not known.")
 IMPECCABLE = (
     "Design guidance from the /impeccable skill follows. Apply it to the interface this milestone changes, within the "
     "project's own UI kit and design_spec; its commands, scripts and browser steps are not available here, skip them.")
@@ -131,8 +142,20 @@ class Figma:
         return self.request("tools/call", {"name": tool, "arguments": arguments})
 
 
-def check_frames(url, frames):
-    """Every linked node must be found in the active Figma tab; returns the frames with their layer names."""
+def screenshot(client, frame, folder):
+    """Save the frame's Figma rendering for the browser check; returns the file name."""
+    result = client.call("get_screenshot", nodeId=frame["node"])
+    image = next((part for part in result.get("content", []) if isinstance(part, dict) and part.get("type") == "image"), None)
+    if result.get("isError") or image is None or image.get("mimeType") != "image/png":
+        raise FridayError("design_unavailable", "Figma did not render node %s." % frame["node"])
+    name = "figma-%s.png" % frame["node"].replace(":", "-")
+    (folder / name).write_bytes(base64.b64decode(image["data"], validate=True))
+    return name
+
+
+def check_frames(url, frames, folder=None):
+    """Every linked node must be found in the active Figma tab; returns the frames with their layer names and, given a
+    folder, saves each frame's rendering there."""
     try:
         client = Figma(url).open()
         checked = []
@@ -145,8 +168,12 @@ def check_frames(url, frames):
                                                                                               frame["file"], frame["url"]))
             name = re.search(r'name="([^"]*)"', text)
             checked.append(dict(frame, name=name.group(1) if name else ""))
+        if folder is not None:
+            Path(folder).mkdir(parents=True, exist_ok=True)
+            for frame in checked:
+                frame["screenshot"] = screenshot(client, frame, Path(folder))
         return checked
-    except (OSError, ValueError, urllib.error.URLError) as exc:
+    except (OSError, ValueError, binascii.Error, urllib.error.URLError) as exc:
         raise FridayError("design_unavailable", "The Figma desktop MCP server at %s does not answer (%s). Start Figma, sign "
                           "in, enable the Dev Mode MCP server and open the ticket's file, then run start again; "
                           "start --no-design plans without the mockup." % (url, exc))
@@ -167,13 +194,17 @@ def prepare(root, key, profile, ticket_text, enabled=True):
         cards.record(root, key, "design_skipped", reason=reason)
         return None
     try:
-        frames = check_frames(figma.get("url", FIGMA_URL), frames)
+        frames = check_frames(figma.get("url", FIGMA_URL), frames, folder(root, key))
     except FridayError as exc:
         cards.record(root, key, "design_unavailable", error=str(exc))
         raise
     cards.update(root, key, lambda value: value.update(design={"frames": frames}))
     cards.record(root, key, "design_frames", frames=[frame["node"] for frame in frames])
     return frames
+
+
+def folder(root, key):
+    return cards.directory(root, key) / "design"
 
 
 def frames(card):
@@ -212,6 +243,27 @@ def guidance(profile, role, document, ui):
     if block:
         parts.append(block)
     return "\n\n" + "\n\n".join(parts) if parts else ""
+
+
+def browser_text(document, frames_with_screenshots):
+    """The browser check's design part: the approved spec and the Figma renderings placed in its working folder."""
+    if not document.get("design") and not frames_with_screenshots:
+        return ""
+    value = {"design_spec": document.get("design", []),
+             "figma_screenshots": [{"file": frame["screenshot"], "node": frame["node"], "name": frame.get("name", "")}
+                                   for frame in frames_with_screenshots]}
+    return "\n\n" + BROWSER_DESIGN + "\n\n" + json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def copy_screenshots(root, key, card, destination):
+    """Put the task's Figma renderings into the browser check's working folder; returns the frames that have one."""
+    found = []
+    for frame in frames(card):
+        source = folder(root, key) / frame.get("screenshot", "")
+        if frame.get("screenshot") and source.is_file():
+            (Path(destination) / frame["screenshot"]).write_bytes(source.read_bytes())
+            found.append(frame)
+    return found
 
 
 def doctor_checks(profile):

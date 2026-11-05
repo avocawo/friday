@@ -67,11 +67,17 @@ def open_preview(selected, worktree):
         return
     if not isinstance(spec, dict) or spec.get('backend') != 'docker-vite':
         raise FridayError('isolation_unavailable', 'An isolated docker-vite preview is required.')
-    stage = selected.get('browser', {}).get('stage_origin')
-    api_path = spec.get('api_path')
-    if not isinstance(api_path, str) or not api_path.startswith('/') or '?' in api_path or '#' in api_path:
-        raise FridayError('invalid_profile', 'The staging API path must be an absolute path without a query.')
-    browser_session.configuration(selected.get('browser'), 'http://probe.localhost:12345/')
+    _, stage = browser_session.configuration(selected.get('browser'), 'http://probe.localhost:12345/')
+    environment = ['-e', 'VITE_APP_ENV=development']
+    if stage:  # a UI kit has no API: local browser mode runs the preview without one
+        api_path = spec.get('api_path')
+        if not isinstance(api_path, str) or not api_path.startswith('/') or '?' in api_path or '#' in api_path:
+            raise FridayError('invalid_profile', 'The staging API path must be an absolute path without a query.')
+        environment += ['-e', 'VITE_API_APOLLO_URI=' + stage + api_path]
+    config = spec.get('vite_config')
+    if config is not None and (not isinstance(config, str) or not config or config.startswith('/') or '\\' in config
+                               or '..' in PurePosixPath(config).parts):
+        raise FridayError('invalid_profile', 'preview.vite_config must be a path inside the repository.')
     image = gate.image_id(selected.get('gate_image'))
     snapshot_profile = dict(selected, repository=worktree)
     _, _, archive = gate.snapshot(snapshot_profile)
@@ -99,9 +105,9 @@ def open_preview(selected, worktree):
                    '--tmpfs', '/app/node_modules/.vite-temp:rw,exec,nosuid,nodev,size=64m',
                    '--tmpfs', '/app/node_modules/.vite:rw,exec,nosuid,nodev,size=512m',
                    '--mount', 'type=bind,src=' + str(source) + ',dst=/src,readonly', '--name', name,
-                   '-w', '/src', '-e', 'VITE_API_APOLLO_URI=' + stage + api_path,
-                   '-e', 'VITE_APP_ENV=development', '--entrypoint', 'node', image,
-                   '/app/node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5173')
+                   '-w', '/src', *environment, '--entrypoint', 'node', image,
+                   '/app/node_modules/vite/bin/vite.js', *(['--config', config] if config else []),
+                   '--host', '127.0.0.1', '--port', '5173')
             wait_for_vite(name)
             slots = threading.BoundedSemaphore(8)
             class Handler(http.server.BaseHTTPRequestHandler):
