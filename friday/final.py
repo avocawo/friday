@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import gate, models, resources
+from . import design, gate, models, resources
 from .errors import FridayError
 
 ADAPTERS = Path(__file__).resolve().parent.parent / "adapters"
@@ -88,12 +88,14 @@ def final_review(root, key, profile, run_role, schema, roles=("final-review", "b
     diff = gate.git(worktree, "diff", card["base"] + "..HEAD").decode("utf-8", "replace")
     full = json.dumps({"summary": document["summary"], "project_rules": document["rules"],
                        "milestones": [{k: m[k] for k in ("id", "title", "goal")} for m in document["milestones"]],
-                       "criteria": criteria(document), "owner_decisions": card["decisions"]}, ensure_ascii=False, indent=2)
+                       "criteria": criteria(document), "owner_decisions": card["decisions"],
+                       **({"design_spec": document["design"]} if document.get("design") else {})}, ensure_ascii=False, indent=2)
+    ui = any(item["ui"] for item in document["milestones"])
     with tempfile.TemporaryDirectory(prefix="friday-blind-") as empty, ThreadPoolExecutor(max_workers=2) as pool:
         jobs = {}
         if "final-review" in roles:
             jobs["final-review"] = pool.submit(run_role, root, key, profile, "final-review", final_entry, worktree,
-                                               FINAL_RULES + "\n\n" + full + "\n\nDiff of the whole task:\n" + diff, schema, "final-review")
+                                               FINAL_RULES + design.guidance(profile, "final-review", document, ui) + "\n\n" + full + "\n\nDiff of the whole task:\n" + diff, schema, "final-review")
         if "blind-code" in roles:
             jobs["blind-code"] = pool.submit(run_role, root, key, profile, "blind-code", blind_entry, empty,
                                              BLIND_RULES + "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),

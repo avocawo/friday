@@ -3,7 +3,7 @@ import shutil
 import subprocess
 import sys
 
-from . import codex_policy, models, profile as profiles, resources, state
+from . import codex_policy, design, models, profile as profiles, resources, state
 from .errors import FridayError
 
 
@@ -75,6 +75,8 @@ def inspect(path):
             resources.release_port(state.home(), "doctor-probe")
             return "free ports from %d" % value
         check("preview_port", port)
+    for name, operation, warning in design.doctor_checks(selected):
+        check(name, operation, warning)
     delivery = (selected.get("delivery") or {}).get("transport", "none")
     if delivery == "github":
         check("delivery_github", lambda: tool_version("gh"))

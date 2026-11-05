@@ -24,6 +24,7 @@ def main(argv=None):
     start.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
     start.add_argument("--brief", help="файл с постановкой, если задачи нет в трекере")
     start.add_argument("--no-run", action="store_true", help="при approval: auto только утвердить, без запуска")
+    start.add_argument("--no-design", action="store_true", help="планировать без макета Figma из профиля")
     for name, text in (("plan", "показать план задачи"), ("run", "исполнить утверждённый план в этом терминале"),
                        ("resume", "продолжить остановленную или упавшую задачу"), ("stop", "остановить идущую задачу")):
         commands.add_parser(name, help=text).add_argument("key")
@@ -131,7 +132,7 @@ def start_task(root, args):
             ticket = tracker.ticket(selected, args.key)
             if ticket is None:
                 raise FridayError("ticket_missing", "The profile has no tracker; pass --brief with the task statement.")
-        plan.make(root, args.key, selected, ticket)
+        plan.make(root, args.key, selected, ticket, use_design=not args.no_design)
     except (FridayError, OSError) as exc:
         card.update(root, args.key, lambda value: value.update(state="failed"))
         card.record(root, args.key, "start_failed", error=str(exc))

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import card as cards
-from . import models, repomap, runner
+from . import design, models, repomap, runner
 from . import profile as profiles
 from .errors import FridayError
 
@@ -34,6 +34,9 @@ PLAN_SCHEMA = {"type": "object", "additionalProperties": False,
                "properties": {"summary": {"type": "string"}, "rules": STRINGS, "assumptions": STRINGS, "questions": STRINGS,
                               "milestones": {"type": "array", "items": MILESTONE},
                               "responses": {"type": "array", "items": RESPONSE}}}
+# With Figma frames the plan also carries the design specification taken from them.
+DESIGN_PLAN_SCHEMA = dict(PLAN_SCHEMA, required=PLAN_SCHEMA["required"] + ["design"],
+                          properties=dict(PLAN_SCHEMA["properties"], design=STRINGS))
 FINDING = {"type": "object", "additionalProperties": False, "required": ["milestone", "stage", "severity", "problem", "suggestion"],
            "properties": {"milestone": {"type": "string"}, "stage": {"type": "string"},
                           "severity": {"type": "string", "enum": ["blocking", "minor"]},
@@ -190,6 +193,8 @@ def ticket_text(ticket):
 
 def context(card, profile, ticket):
     value = {"task": card["key"], "ticket": ticket_text(ticket)}
+    if design.frames(card):
+        value["design_frames"] = design.frames(card)
     if card["decisions"]:
         value["owner_decisions"] = card["decisions"]
     if profile.get("engineering_policy"):
@@ -243,7 +248,12 @@ def rules_digest(root, key, profile, worktree):
 def agent(root, key, profile, role, prompt, schema, cast_role=None):
     card = cards.read(root, key)
     entry = card["cast"][cast_role or role]
-    mcp = repomap.server(root, profile, card["worktree"]) if role in ("plan", "plan-review") else None
+    mcp = None
+    if role in ("plan", "plan-review"):
+        servers = [repomap.server(root, profile, card["worktree"])]
+        if design.frames(card):
+            servers.append(design.figma_server(profile))
+        mcp = [server for server in servers if server] or None
     spec = runner.Spec(driver=entry["driver"], model=entry["model"], effort=entry.get("effort"), prompt=prompt,
                        cwd=card["worktree"], log_dir="", schema=schema, env=models.environment(entry, profile), mcp=mcp)
     result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
@@ -257,13 +267,19 @@ def revise(root, key, profile, prompt, document, instruction):
     text = (prompt + "\n\nYour plan:\n" + json.dumps(document, ensure_ascii=False, indent=2) + "\n\n"
             "This is a revision of the plan above, not a new plan: change what the points below require and keep the rest; "
             "read only the files you need to decide on each point.\n\n" + instruction)
-    return agent(root, key, profile, "plan", text, PLAN_SCHEMA)
+    return agent(root, key, profile, "plan", text, plan_schema(root, key))
+
+
+def plan_schema(root, key):
+    return DESIGN_PLAN_SCHEMA if design.frames(cards.read(root, key)) else PLAN_SCHEMA
 
 
 def checked(root, key, profile, worktree, result, limits, prompt, retries=1):
     """Return a plan that passes the feasibility checks, giving the planner its errors in a revision."""
     for attempt in range(retries + 1):
         errors = validate(result.structured, worktree, limits)
+        if design.frames(cards.read(root, key)) and not result.structured.get("design"):
+            errors.append("The ticket links Figma frames but the plan has no design specification.")
         if not errors:
             return result
         cards.record(root, key, "plan_invalid", errors=errors)
@@ -328,12 +344,15 @@ def plan_review(root, key, profile, prompt):
         cards.record(root, key, "cast_note", note=note or "plan-review: замена после исчерпания квоты")
 
 
-def make(root, key, profile, ticket):
+def make(root, key, profile, ticket, use_design=True):
     """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval."""
+    design.prepare(root, key, profile, ticket_text(ticket), enabled=use_design)
     card = cards.read(root, key)
+    figma = bool(design.frames(card))
     limits = profile.get("limits")
     def rules(docs, reading=""):
-        return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading))
+        return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading)) + (
+            "\n" + design.PLAN_FIGMA if figma else "")
     task = "\n\nTask:\n" + context(card, profile, ticket)
     identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest or map caches
     saved = saved_draft(root, key, identity)
@@ -351,8 +370,9 @@ def make(root, key, profile, ticket):
         cards.record(root, key, "plan_reused", reason="the checked plan of the failed start")
     else:
         planned = save_draft(root, key, identity, layout["plan"]["name"],
-                             checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA), limits, prompt))
-    review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + task + project +
+                             checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, plan_schema(root, key)),
+                                     limits, prompt))
+    review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + ("\n" + design.REVIEW_FIGMA if figma else "") + task + project +
                      "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2) +
                      "\n\nFiles the plan changes:\n" + plan_sources(worktree, planned.structured))
     review = plan_review(root, key, profile, review_prompt)
@@ -431,6 +451,8 @@ def render(root, key):
             for criterion in stage["criteria"]:
                 lines.append("  - [%s] %s" % ("браузер" if criterion["check"] == "behavior" else "код", criterion["text"]))
         lines.append("")
+    if document.get("design"):
+        lines += ["## Макет"] + ["- " + item for item in document["design"]] + [""]
     if document["assumptions"]:
         lines += ["## Допущения"] + ["- " + item for item in document["assumptions"]] + [""]
     if document["rules"]:

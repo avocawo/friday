@@ -167,6 +167,29 @@ class RunnerTests(unittest.TestCase):
         self.assertNotIn("--permission-mode", argv)
         self.assertNotIn("allow", json.loads(argv[argv.index("--settings") + 1])["permissions"])
 
+    def test_several_mcp_servers_stdio_and_http_are_scoped_to_their_tools(self):
+        self.scenario([{"emit": RESULT}])
+        servers = [{"name": "graphify", "command": ["graphify-mcp", "graph.json"], "tools": ["query_graph"]},
+                   {"name": "figma", "url": "http://127.0.0.1:3845/mcp", "tools": ["get_metadata", "get_screenshot"]}]
+        runner.run(self.spec(mcp=servers))
+        argv = self.invocation()["argv"]
+        config = json.loads(argv[argv.index("--mcp-config") + 1])["mcpServers"]
+        self.assertEqual(config["graphify"], {"command": "graphify-mcp", "args": ["graph.json"]})
+        self.assertEqual(config["figma"], {"type": "http", "url": "http://127.0.0.1:3845/mcp"})
+        allowed = ["mcp__graphify__query_graph", "mcp__figma__get_metadata", "mcp__figma__get_screenshot"]
+        self.assertEqual(argv[argv.index("--allowedTools") + 1], ",".join(allowed))
+        self.assertEqual(argv[argv.index("--tools") + 1], ",".join(["Read", "Glob", "Grep"] + allowed))
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertIn("--restricted", argv)
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["permissions"]["allow"], allowed)
+        self.scenario([{"emit": {"type": "turn.completed", "usage": {}}}])
+        runner.run(self.spec(driver="codex", mcp=servers))
+        argv = self.invocation()["argv"]
+        self.assertIn('mcp_servers.figma.url="http://127.0.0.1:3845/mcp"', argv)
+        self.assertIn('mcp_servers.graphify.command="graphify-mcp"', argv)
+        self.assertIn('mcp_servers.figma.tools.get_screenshot.approval_mode="approve"', argv)
+        self.assertNotIn("mcp_servers.figma.command", " ".join(argv))
+
     def test_session_id_is_known_before_the_agent_reports_it(self):
         self.scenario([{"sleep": 300}])
         result = runner.run(self.spec(idle_timeout=STARTUP_SLACK))

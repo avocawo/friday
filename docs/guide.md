@@ -50,6 +50,7 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 | `gate`, `gate_image`, `gate_mode`, `gate_*` | Команда проверки в Docker; `git-diff` сравнивает с базой задачи |
 | `environment_errors` | Шаблоны строк лога, означающих сбой среды, а не кода |
 | `browser`, `preview`, `behavior_test_policy` | Стенд, preview и правила браузерной приёмки |
+| `design` | Дизайн-инструменты для UI-задач ([ADR 0007](adr/0007-design-tools.md)). `figma: {"url": "http://127.0.0.1:3845/mcp"}` — локальный Dev Mode MCP-сервер Figma desktop; `tools` сужает список инструментов чтения (`get_metadata`, `get_design_context`, `get_screenshot`, `get_variable_defs`), пишущие инструменты не принимаются. Если в тикете есть ссылка `figma.com/design/…?node-id=…`, `start` проверяет, что узел открыт в активной вкладке Figma, а планировщик и проверяющий план читают фрейм и записывают в план измеримую спецификацию (раздел «Макет»). Исполнитель и ревью получают её в промпте, без доступа к Figma. Если Figma не отвечает или узла нет, `start` останавливается и говорит, что открыть; `start --no-design` планирует без макета. `impeccable: {"skill_dir": ".../skills/impeccable", "references": {...}}` — файлы `reference/` скилла /impeccable, которые Friday вкладывает в промпт UI-вех: по умолчанию `develop` получает `craft-floor.md` и `polish.md`, `review` и `final-review` — `component-review.md` |
 | `tracker` | Yandex Tracker (API или MCP) для чтения постановки |
 | `journal` | Куда писать журнал задачи: `[{"kind": "markdown", "dir": "..."}, {"kind": "jsonl", "dir": "..."}]`; `journal_dir` — короткая запись одного markdown-журнала |
 | `delivery` | `{"transport": "github" \| "gitlab" \| "none", "target_branch": "..."}` и ключ `github.repository` или `gitlab.base_url` + `gitlab.project` |
@@ -101,5 +102,6 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 - **Ревьюеры** только читают. Слепая проверка запускается в пустой папке.
 - **Гейт** работает в контейнере без сети на снимке коммита, смонтированном только для чтения.
 - **Браузер** получает только инструменты Friday для одного preview; обход авторизации и чтение заголовков авторизованных запросов запрещены.
+- **Figma** читают только планировщик и проверяющий план, и только инструментами чтения локального сервера Figma desktop. Скилл /impeccable внутри ролей не запускается: его тексты Friday кладёт в промпт.
 - **Публикация.** Friday пушит только ветку своей задачи и открывает только черновой MR/PR, не перезаписывает чужую ветку, не сливает и не развёртывает.
 - **Что ещё не проверено вживую:** роли на Codex, браузерная приёмка и публикация в GitLab проверены тестами с фейками.

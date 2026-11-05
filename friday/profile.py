@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from . import design
 from .errors import FridayError
 
 
@@ -84,5 +85,6 @@ def load(path):
         raise FridayError("invalid_profile", "repo_map_mcp is a boolean and needs repo_map graphify.")
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
+    design.validate(profile.get("design"))
     profile["path"] = str(path)
     return profile

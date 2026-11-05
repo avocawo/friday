@@ -73,5 +73,22 @@ class ProfileTests(unittest.TestCase):
             self.assertTrue(profile.load(path)["repo_map_mcp"])
 
 
+    def test_design_settings_allow_only_local_figma_read_tools_and_skill_references(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            for design in ({"figma": {"url": "https://mcp.figma.com/mcp"}}, {"figma": {"tools": ["send_code_connect_mappings"]}},
+                           {"figma": {"tools": []}}, {"figma": {"url": 5}}, {"impeccable": {}},
+                           {"impeccable": {"skill_dir": "s", "references": 3}}, {"impeccable": {"skill_dir": "s", "references": {"plan": []}}},
+                           {"impeccable": {"skill_dir": "s", "references": {"develop": ["../secret.md"]}}}, {"browser": {}}):
+                path.write_text(json.dumps({"name": "test", "repository": ".", "design": design}))
+                with self.assertRaises(FridayError) as error:
+                    profile.load(path)
+                self.assertEqual(error.exception.code, "invalid_profile")
+            design = {"figma": {"url": "http://127.0.0.1:3845/mcp", "tools": ["get_metadata"]},
+                      "impeccable": {"skill_dir": "~/skill", "references": {"review": ["degraded/finish-reviewer.md"]}}}
+            path.write_text(json.dumps({"name": "test", "repository": ".", "design": design}))
+            self.assertEqual(profile.load(path)["design"], design)
+
+
 if __name__ == "__main__":
     unittest.main()

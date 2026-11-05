@@ -45,7 +45,7 @@ cp examples/models.json examples/project-profile.json profiles/
 
 | Команда | Что делает |
 | --- | --- |
-| `start KEY --profile P [--brief F]` | Рабочая копия, план, проверка плана другой моделью |
+| `start KEY --profile P [--brief F] [--no-design]` | Рабочая копия, план, проверка плана другой моделью; с `design` в профиле план сверяется с фреймом Figma из тикета |
 | `plan KEY` | Показать план с несогласованными замечаниями |
 | `approve KEY [--no-run]` | Утвердить план и запустить конвейер в фоне |
 | `status [KEY] [--json]` | Что делают задачи и сколько потрачено |

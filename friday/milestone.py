@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import final, gate, models, runner, workspace
+from . import design, final, gate, models, runner, workspace
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -94,6 +94,8 @@ def set_state(root, key, milestone_id, **changes):
 def milestone_text(key, document, item, decisions):
     value = {"task": key, "summary": document["summary"], "milestone": {k: item[k] for k in ("id", "title", "goal", "files")},
              "stages": item["stages"], "project_rules": document["rules"], "assumptions": document["assumptions"]}
+    if item.get("ui") and document.get("design"):
+        value["design_spec"] = document["design"]
     if decisions:
         value["owner_decisions"] = decisions
     return json.dumps(value, ensure_ascii=False, indent=2)
@@ -130,7 +132,8 @@ def run(root, key, profile, milestone_id, worktree=None):
     if note:
         cards.record(root, key, "cast_note", milestone=milestone_id, note=note)
     allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS
-    base_prompt = (EXECUTOR_RULES.format(key=key) + "\n\nShell commands you may run, each starting exactly like one of "
+    base_prompt = (EXECUTOR_RULES.format(key=key) + design.guidance(profile, "develop", document, item["ui"]) +
+                   "\n\nShell commands you may run, each starting exactly like one of "
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
                    "\n".join("- " + command for command in allowed) + "\n\n" +
                    milestone_text(key, document, item, card["decisions"]))
@@ -262,7 +265,7 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
     diff = git(worktree, "diff", start + "..HEAD")
     gate_text = ("not configured" if gate_record is None else "%s on %s (command: %s)" % (
         gate_record["status"], gate_record["head"], " ".join(profile.get("gate", []))))
-    prompt = (REVIEW_RULES + "\n\n" + milestone_text(key, document, item, cards.read(root, key)["decisions"]) +
+    prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + "\n\n" + milestone_text(key, document, item, cards.read(root, key)["decisions"]) +
               "\n\nGate: " + gate_text + "\n\nDiff of this milestone:\n" + diff)
     if previous:
         prompt += "\n\nYour previous blocking findings, which the executor has now addressed:\n" + numbered(previous)
