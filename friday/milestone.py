@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import design, final, gate, models, runner, stories, workspace
+from . import design, dist, final, gate, models, runner, stories, workspace
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -423,8 +423,11 @@ def run_task(root, key, profile):
         except FridayError:
             cards.update(root, key, lambda value: value.update(state="failed"))
             raise
-    cards.update(root, key, lambda value: value.update(state="done" if not left else "stopped",
-                                                       unverified=task_unverified(value)))
+    def finished(value):
+        value.update(state="done" if not left else "stopped", unverified=task_unverified(value))
+        if not left and dist.required(profile) and (value.get("dist") or {}).get("state") != "built":
+            value["dist"] = dist.required(profile)
+    cards.update(root, key, finished)
     cards.record(root, key, "run_task_finished", completed=[item["milestone"] for item in completed], left=left)
     return {"completed": completed, "left": left, "delivery": delivery}
 

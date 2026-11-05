@@ -144,6 +144,10 @@ def description(root, key):
              card.get("final_minor", []))
     if minor:
         lines += ["", "## Мелкие замечания"] + ["- `%s`: %s" % (f.get("file", ""), f["problem"]) for f in minor]
+    if (card.get("dist") or {}).get("state") == "pending":
+        lines += ["", "## dist", "Не собран. Соберите перед слиянием: `friday dist %s`." % key]
+    elif (card.get("dist") or {}).get("commit"):
+        lines += ["", "## dist", "Собран отдельным коммитом `%s`." % card["dist"]["commit"][:10]]
     outside = sorted({path for item in card["milestones"] for path in item.get("outside_files", [])})
     if outside:
         lines += ["", "## Файлы вне плана", ", ".join("`%s`" % path for path in outside)]

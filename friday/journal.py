@@ -101,6 +101,8 @@ def describe(event):
         "browser_unverifiable": lambda: "%s: в браузере проверить не удалось (%s)." % (milestone, event.get("reason", "")),
         "browser_skipped": lambda: "%s: браузерной приёмки нет (%s)." % (milestone, event.get("reason", "")),
         "milestone_done": lambda: "%s: готова за %s круг(а), коммитов %s, спорных %s." % (milestone, event.get("rounds"), event.get("commits"), event.get("disputes")),
+        "dist_built": lambda: "dist собран%s из `%s`." % (
+            " коммитом `%s`" % (event.get("commit") or "")[:10] if event.get("commit") else " (без изменений)", (event.get("source") or "")[:10]),
         "milestone_blocked": lambda: "%s: заблокирована, среда не даёт проверить (%s)." % (milestone, event.get("reason", "")),
         "milestone_unverified": lambda: "%s: готова, но не проверена: %s." % (milestone, "; ".join(event.get("reasons") or [])),
         "milestone_failed": lambda: "%s: сбой (%s)." % (milestone, event.get("reason") or "гейт так и не прошёл"),

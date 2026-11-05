@@ -143,6 +143,8 @@ def render_task(root, key, recent=10):
             lines.append("Заблокирована %s: %s" % (item["id"], item["blocked_reason"]))
         for reason in item.get("unverified") or []:
             lines.append("Не проверено %s: %s" % (item["id"], reason))
+    if (card.get("dist") or {}).get("state") == "pending":
+        lines.append("dist не собран: friday dist " + key)
     if card.get("branch"):
         lines.append("Ветка: %s  Рабочая копия: %s" % (card["branch"], card.get("worktree") or "—"))
     if card["cast"]:
