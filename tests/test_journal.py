@@ -27,7 +27,8 @@ class JournalTests(unittest.TestCase):
             value.update(state="running", branch="friday/T-1",
                          milestones=[{"id": "M1", "state": "done", "summary": "Добавил кнопку и тест.", "executor": "glm-5.3",
                                       "stages": [{"id": "M1.1", "commit": "abcdef1234567"}],
-                                      "minor_findings": [{"file": "page.html", "problem": "Отступы."}], "outside_files": ["notes.md"]},
+                                      "minor_findings": [{"file": "page.html", "problem": "Отступы."}], "outside_files": ["notes.md"],
+                                      "browser_minor": [{"file": "design", "problem": "Иконка правее макета."}]},
                                      {"id": "M2", "state": "pending", "stages": []}],
                          disputes=[{"milestone": "M1", "file": "page.html", "problem": "Нужен компонент.", "reviewer": "claude-opus-5-5",
                                     "executor_reason": "В проекте так не делают."}],
@@ -48,7 +49,7 @@ class JournalTests(unittest.TestCase):
         text = self.page()
         self.assertTrue(text.startswith("---\nfriday_generated: T-1\nkey: T-1\nstate: running"))  # front matter stays first
         for expected in ("# T-1 — Кнопка приветствия", "В работе · ветка `friday/T-1`", "### M1. Кнопка — готова",
-                         "> Исполнитель (glm-5.3): Добавил кнопку и тест.", "- M1.1 `abcdef1234`", "Мелкое: `page.html` Отступы.",
+                         "> Исполнитель (glm-5.3): Добавил кнопку и тест.", "- M1.1 `abcdef1234`", "Мелкое: `page.html` Отступы.", "Мелкое в браузере: `design` Иконка правее макета.",
                          "Вне плана: `notes.md`", "### M2. Имя — впереди", "Нужен компонент.", "В проекте так не делают.",
                          "**names**: Пустое имя — ошибка. (переоткрыты: M2)", "Несогласованное замечание (M1/M1.1): Шаблон.",
                          "| исполнение | 1 | 1k | $0.12 |", "review (claude-opus-5-5): quota usage limit", "Допущение: Язык — русский."):

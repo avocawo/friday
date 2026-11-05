@@ -149,6 +149,8 @@ def render_task(root, key, profile, sink, previous=""):
                 milestones.append("- %s `%s`" % (stage["id"], stage["commit"][:10]))
         for finding in item.get("minor_findings", []):
             milestones.append("- Мелкое: `%s` %s" % (finding.get("file", ""), finding["problem"]))
+        for finding in item.get("browser_minor", []):
+            milestones.append("- Мелкое в браузере: `%s` %s" % (finding.get("file", ""), finding["problem"]))
         if item.get("outside_files"):
             milestones.append("- Вне плана: " + ", ".join("`%s`" % path for path in item["outside_files"]))
         milestones.append("")
