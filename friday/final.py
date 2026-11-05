@@ -70,7 +70,7 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
             prompt = (BROWSER_RULES + "\n\nPreview: " + url + "\n\n" + json.dumps(
                 {"milestone": {k: item[k] for k in ("id", "title", "goal")}, "criteria": checks,
                  "test_policy": profile.get("behavior_test_policy", "")}, ensure_ascii=False, indent=2) +
-                design.browser_text(document, shots))
+                design.browser_text(document, shots) + stories.browser_text(profile))
             mcp = {"name": "friday", "command": [sys.executable, str(ADAPTERS / "browser_mcp.py"), json.dumps(spec), url],
                    "tools": sorted(list(browser_session.TOOLS) + [browser_session.STYLE["name"]])}
             result = run_role(root, key, profile, "browser", entry, empty, prompt, schema, item["id"], mcp=mcp)

@@ -283,15 +283,20 @@ def accept_in_browser(root, key, profile, layout, author, worktree, item):
         return []
     value = result.structured
     statuses = [c["status"] for c in value["criteria_results"]]
+    themes = stories.theme_results(value["criteria_results"], profile)
     cards.record(root, key, "browser_checked", milestone=item["id"], verdict=value["verdict"], model=entry["model"],
-                 unverifiable=statuses.count("unverifiable"))
+                 unverifiable=statuses.count("unverifiable"), **({"themes": themes} if themes else {}))
     # Minor browser findings (a design difference seen only by eye) go to the owner with the draft, not to the executor.
     set_state(root, key, item["id"], browser_minor=[f for f in value["findings"] if f["severity"] == "minor"])
     if not statuses or all(status == "unverifiable" for status in statuses):
         cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason="no criterion could be observed")
         set_state(root, key, item["id"], browser={"status": "unverifiable", "reason": "ни один критерий не удалось наблюдать"})
+    elif themes and any(result == "unverifiable" for result in themes.values()):
+        missing = [name for name, result in themes.items() if result == "unverifiable"]
+        set_state(root, key, item["id"], themes=themes, browser={"status": "unverifiable",
+                                                                 "reason": "не проверены темы: " + ", ".join(missing)})
     else:
-        set_state(root, key, item["id"], browser={"status": "checked", "reason": ""})
+        set_state(root, key, item["id"], browser={"status": "checked", "reason": ""}, **({"themes": themes} if themes else {}))
     return [finding for finding in value["findings"] if finding["severity"] == "blocking"]
 
 

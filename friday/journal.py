@@ -16,6 +16,7 @@ from . import state, status
 from .errors import FridayError
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
+PAGE = "{key}.md"
 MARKER = "<!-- friday:generated %s -->"
 FIELD = "friday_generated: %s"
 NOTES = re.compile(r"<!-- friday:notes -->\n(.*?)<!-- /friday:notes -->", re.S)
@@ -31,12 +32,18 @@ MILESTONE_STATES = {"pending": "впереди", "running": "в работе", "
 def sinks(profile):
     value = profile.get("journal")
     if value is None and profile.get("journal_dir"):
-        value = [{"kind": "markdown", "dir": profile["journal_dir"]}]
+        value = [dict({"kind": "markdown", "dir": profile["journal_dir"]},
+                      **({"page": profile["journal_page"]} if profile.get("journal_page") else {}))]
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(item, dict) or item.get("kind") not in ("markdown", "jsonl")
                                           or not isinstance(item.get("dir"), str) for item in value):
         raise FridayError("invalid_profile", "journal must list sinks with kind markdown or jsonl and a dir.")
+    for item in value:
+        page = item.get("page", PAGE)
+        if (not isinstance(page, str) or "{key}" not in page or not page.endswith(".md") or page.startswith("/")
+                or ".." in page.split("/")):
+            raise FridayError("invalid_profile", "journal page must be a .md path inside the folder with {key}, like {key}/Friday.md.")
     base = Path(profile.get("path", ".")).parent
     return [dict(item, dir=str((base / Path(item["dir"]).expanduser()).resolve())) for item in value]
 
@@ -97,7 +104,8 @@ def describe(event):
         "milestone_started": lambda: "%s: начата." % milestone,
         "gate": lambda: "%s: гейт %s." % (milestone, {"passed": "прошёл", "failed": "не прошёл"}.get(event.get("status"), event.get("status"))),
         "milestone_reviewed": lambda: "%s: ревью %s — %s, блокирующих %s." % (milestone, event.get("model"), event.get("verdict"), event.get("blocking")),
-        "browser_checked": lambda: "%s: браузерная приёмка %s — %s." % (milestone, event.get("model"), event.get("verdict")),
+        "browser_checked": lambda: "%s: браузерная приёмка %s — %s%s." % (milestone, event.get("model"), event.get("verdict"), (
+            " (" + ", ".join("%s: %s" % item for item in event["themes"].items()) + ")") if event.get("themes") else ""),
         "browser_unverifiable": lambda: "%s: в браузере проверить не удалось (%s)." % (milestone, event.get("reason", "")),
         "browser_skipped": lambda: "%s: браузерной приёмки нет (%s)." % (milestone, event.get("reason", "")),
         "milestone_done": lambda: "%s: готова за %s круг(а), коммитов %s, спорных %s." % (milestone, event.get("rounds"), event.get("commits"), event.get("disputes")),
@@ -191,12 +199,17 @@ def render_task(root, key, profile, sink, previous=""):
     return owned(key, fill(template(sink, profile, "task.md"), values))
 
 
+def link(sink, key):
+    return sink.get("page", PAGE).replace("{key}", key)[:-3]
+
+
 def render_now(root, sink, profile):
     rows = ["| Задача | Состояние | Сейчас | Расход |", "|---|---|---|---|"]
     for row in status.overview(root):
         doing = "; ".join(status.describe(now) for now in row["now"]) or "; ".join(status.describe_wait(w) for w in row["waiting"]) or "—"
         shown = "Готова, не проверена" if row["state"] == "done" and row.get("unverified") else STATES.get(row["state"], row["state"])
-        rows.append("| [[%s]] | %s | %s | %s |" % (row["key"], shown, doing.replace("|", "/"),
+        target = link(sink, row["key"])
+        rows.append("| [[%s]] | %s | %s | %s |" % (target if target == row["key"] else "%s\\|%s" % (target, row["key"]), shown, doing.replace("|", "/"),
                                                   status.money(row["spent"])))
     return owned("now", fill(template(sink, profile, "now.md"), {"updated": state.now(), "tasks": "\n".join(rows)}))
 
@@ -212,17 +225,25 @@ def write_page(path, key, text):
 
 
 def sync(root, key, profile=None):
-    """Render the task into every journal its profile names; returns the written paths."""
+    """Render the task into every journal its profile names; returns the written paths. A page somebody else wrote
+    under the same name is left untouched and reported as skipped."""
     profile = profile or profiles.load(cards.read(root, key)["profile"])
     written = []
     for sink in sinks(profile):
         directory = Path(sink["dir"])
         if sink["kind"] == "markdown":
-            page = directory / (key + ".md")
-            previous = page.read_text(encoding="utf-8") if page.exists() else ""
-            write_page(page, key, render_task(root, key, profile, sink, previous))
-            write_page(directory / "Friday — сейчас.md", "now", render_now(root, sink, profile))
-            written.append(str(page))
+            page = directory / sink.get("page", PAGE).replace("{key}", key)
+            for target, owner, render in ((page, key, lambda: render_task(root, key, profile, sink, page.read_text(encoding="utf-8")
+                                                                         if page.exists() else "")),
+                                          (directory / "Friday — сейчас.md", "now", lambda: render_now(root, sink, profile))):
+                try:
+                    write_page(target, owner, render())
+                    if target == page:
+                        written.append(str(page))
+                except FridayError as exc:
+                    if exc.code != "journal_conflict":
+                        raise
+                    print("Пропущено: " + str(exc), file=sys.stderr)
         else:
             directory.mkdir(parents=True, exist_ok=True)
             target = directory / (key + ".jsonl")

@@ -3,6 +3,7 @@
 The kit stays the task's repository: its worktree, gate, base and reviews work as for any task. The showcase gets its own
 worktree and branch, the kit's worktree is created at <showcase>/<mount> (Storybook's own layout for linked sources),
 and plan paths that start with "stories:" name files of the showcase."""
+import re
 import subprocess
 from pathlib import Path, PurePosixPath
 
@@ -13,6 +14,7 @@ from .locks import locked
 
 PREFIX = "stories:"
 MOUNT = "deps/vue-uikit"
+THEME_QUERY = "globals=theme:{theme}"
 GIT = ("add", "commit", "status", "diff", "log", "restore")
 
 
@@ -29,7 +31,8 @@ def safe_relative(value):
 def validate(value):
     if value is None:
         return
-    allowed = {"repository", "base_branch", "worktree_root", "mount", "setup", "commands", "image", "build"}
+    allowed = {"repository", "base_branch", "worktree_root", "mount", "setup", "commands", "image", "build", "themes",
+               "theme_query"}
     if not isinstance(value, dict) or set(value) - allowed:
         raise FridayError("invalid_profile", "stories takes " + ", ".join(sorted(allowed)) + ".")
     for name in ("repository", "base_branch", "worktree_root"):
@@ -47,6 +50,12 @@ def validate(value):
         raise FridayError("invalid_profile", "stories.commands must be an array of commands.")
     if value.get("image") is not None and (not isinstance(value["image"], str) or not value["image"]):
         raise FridayError("invalid_profile", "stories.image must be a local image name.")
+    themes = value.get("themes", [])
+    if not isinstance(themes, list) or any(not isinstance(item, str) or not re.fullmatch(r"[a-z0-9-]+", item) for item in themes):
+        raise FridayError("invalid_profile", "stories.themes must be an array of theme names (a-z, 0-9, -).")
+    query = value.get("theme_query", THEME_QUERY)
+    if not isinstance(query, str) or "{theme}" not in query or not re.fullmatch(r"[A-Za-z0-9_.:={}-]+", query):
+        raise FridayError("invalid_profile", "stories.theme_query must be a URL parameter with {theme}, like globals=theme:{theme}.")
     from . import images
     images.validate(value.get("build"), "stories.build")
 
@@ -158,6 +167,41 @@ def executor_text(profile, card):
             "directory. Plan paths that start with %s are files of the showcase: edit them there. Commit the "
             "showcase's changes there with git -C %s add <files> and git -C %s commit -m \"<same message format>\"; "
             "commit the kit's changes here as usual." % (up(profile), PREFIX, up(profile), up(profile)))
+
+
+def themes(profile):
+    config = settings(profile) or {}
+    return list(config.get("themes", [])), config.get("theme_query", THEME_QUERY)
+
+
+def browser_text(profile):
+    """The browser check in every theme of the showcase, comparing the component's states with each other in each one."""
+    names, query = themes(profile)
+    if not names:
+        return ""
+    urls = ", ".join("%s: append &%s" % (name, query.replace("{theme}", name)) for name in names)
+    return ("\n\nThemes. The showcase has the themes %s. Check every story once in each theme by opening "
+            "iframe.html?id=<story-id>&viewMode=story with the theme parameter (%s). Before judging a theme, confirm it "
+            "took effect: computed_style of the page or the component's surface (background-color, color) must differ "
+            "from the other theme. In each theme compare the component's states with each other, not only that styles "
+            "exist: measure rest, then hover (hover the element), focus, active or drag-over and disabled with "
+            "computed_style. Every interactive state must differ visibly from rest in that theme and must make the element "
+            "more prominent, never less: a hover background that comes out darker or lower in contrast than rest against "
+            "the page (the area dims instead of reacting) is a blocking defect, even when the same state is right in the "
+            "other theme. Report each criterion once per theme, starting its criterion text with [<theme>], for example "
+            "[%s] %s; name the theme in every finding it concerns."
+            % (", ".join(names), urls, names[-1], "hover отличается от покоя"))
+
+
+def theme_results(criteria_results, profile):
+    """pass, fail or unverifiable per theme, from criteria the browser check prefixed with [<theme>]."""
+    names, _ = themes(profile)
+    result = {}
+    for name in names:
+        statuses = [item["status"] for item in criteria_results if item.get("criterion", "").startswith("[%s]" % name)]
+        result[name] = ("unverifiable" if not statuses or all(s == "unverifiable" for s in statuses)
+                        else "fail" if "fail" in statuses else "pass")
+    return result
 
 
 def commit_leftovers(card, key, milestone_id, names):

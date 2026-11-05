@@ -201,5 +201,29 @@ class StoriesTests(unittest.TestCase):
         stories.validate({"repository": "r", "base_branch": "m", "worktree_root": "w", "image": "sb:local"})
 
 
+
+class ThemeTests(unittest.TestCase):
+    PROFILE = {"stories": {"repository": "r", "base_branch": "m", "worktree_root": "w", "themes": ["light", "dark"]}}
+
+    def test_browser_text_names_each_theme_and_state_comparison(self):
+        text = stories.browser_text(self.PROFILE)
+        self.assertIn("&globals=theme:dark", text)
+        self.assertIn("&globals=theme:light", text)
+        self.assertIn("darker or lower in contrast than rest", text)
+        self.assertIn("[dark]", text)
+        self.assertEqual(stories.browser_text({"stories": dict(self.PROFILE["stories"], themes=[])}), "")
+        custom = {"stories": dict(self.PROFILE["stories"], theme_query="theme={theme}")}
+        self.assertIn("&theme=dark", stories.browser_text(custom))
+
+    def test_results_per_theme_and_validation(self):
+        results = [{"criterion": "[light] hover", "status": "pass"}, {"criterion": "[dark] hover", "status": "fail"},
+                   {"criterion": "[dark] focus", "status": "pass"}]
+        self.assertEqual(stories.theme_results(results, self.PROFILE), {"light": "pass", "dark": "fail"})
+        self.assertEqual(stories.theme_results(results[:1], self.PROFILE), {"light": "pass", "dark": "unverifiable"})
+        for bad in ({"themes": "dark"}, {"themes": ["Dark Mode"]}, {"theme_query": "theme=dark"}, {"theme_query": "a&b={theme}"}):
+            with self.assertRaises(FridayError):
+                stories.validate(dict(self.PROFILE["stories"], **bad))
+
+
 if __name__ == "__main__":
     unittest.main()

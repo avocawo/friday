@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -60,6 +62,23 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(json.loads(lines[0])["task"], "T-1")
         self.assertEqual(len(lines), len(card.events(self.root, "T-1")))
 
+    def test_a_folder_per_task_keeps_the_owners_notes_and_writes_beside_them(self):
+        self.profile_path.write_text(json.dumps({"name": "demo", "repository": str(self.repo), "journal_dir": "vault",
+                                                 "journal_page": "{key}/Friday.md"}))
+        folder = self.vault / "T-1"
+        folder.mkdir(parents=True)
+        (folder / "Журнал.md").write_text("# Ручной журнал\n")
+        written = journal.sync(self.root, "T-1")
+        self.assertEqual(written, [str((folder / "Friday.md").resolve())])
+        self.assertEqual((folder / "Журнал.md").read_text(), "# Ручной журнал\n")
+        self.assertIn("friday_generated: T-1", (folder / "Friday.md").read_text())
+        self.assertIn("[[T-1/Friday\\|T-1]]", (self.vault / "Friday — сейчас.md").read_text())
+        for bad in ("Friday.md", "../{key}.md", "{key}/x.txt"):
+            self.profile_path.write_text(json.dumps({"name": "demo", "repository": str(self.repo), "journal_dir": "vault",
+                                                     "journal_page": bad}))
+            with self.assertRaises(FridayError):
+                journal.sync(self.root, "T-1")
+
     def test_owner_notes_survive_and_foreign_pages_are_left_alone(self):
         journal.sync(self.root, "T-1")
         page = self.root.parent / "vault" / "T-1.md"
@@ -67,9 +86,10 @@ class JournalTests(unittest.TestCase):
         journal.sync(self.root, "T-1")
         self.assertIn("<!-- friday:notes -->\nПроверить на iPhone.\n<!-- /friday:notes -->", self.page())
         page.write_text("# Мои заметки о задаче\n")
-        with self.assertRaises(FridayError) as error:
-            journal.sync(self.root, "T-1")
-        self.assertEqual(error.exception.code, "journal_conflict")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual([path for path in journal.sync(self.root, "T-1") if path.endswith(".md")], [])
+        self.assertIn("Пропущено", errors.getvalue())
         card.record(self.root, "T-1", "milestone_done", milestone="M1")  # the pipeline goes on regardless
         self.assertEqual(page.read_text(), "# Мои заметки о задаче\n")
 
