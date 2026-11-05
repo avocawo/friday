@@ -91,7 +91,9 @@ def volatile_diff(checkout, output, volatile):
     """Lines of the rebuilt output that differ from the commit, without lines that only differ by the volatile marker."""
     text = git(checkout, "diff", "-U0", "--no-color", "--", output)
     changed = [line for line in text.splitlines() if line[:1] in "+-" and not line.startswith(("+++", "---"))]
-    return [line for line in changed if volatile not in line] if volatile else changed
+    changed = [line for line in changed if volatile not in line] if volatile else changed
+    extra = [line for line in git(checkout, "status", "--porcelain", "--", output).splitlines() if line.startswith("??")]
+    return changed + extra
 
 
 def build(root, key, profile, dry_run=False, check_base=False, echo=print):
@@ -122,7 +124,7 @@ def build(root, key, profile, dry_run=False, check_base=False, echo=print):
     report = {"target": target}
     with locked(root, "repo:" + str(Path(checkout).resolve()), timeout=300):
         try:
-            git(checkout, "checkout", "-q", "--detach", target)
+            git(checkout, "checkout", "-q", "--detach", target)  # the task branch itself is checked out in its worktree
             for step in steps:
                 run(step, echo)
             if check_base:
@@ -157,6 +159,7 @@ def restore(checkout, output, branch, saved, echo):
     """Put the borrowed checkout back: the rebuilt output first (it blocks switching), then the original ref."""
     try:
         git(checkout, "checkout", "-q", "--", output)
+        git(checkout, "clean", "-fdq", "--", output)  # new build files; the checkout had none before (checked)
         git(checkout, "checkout", "-q", *((branch,) if branch else ("--detach", saved)))
     except FridayError as exc:
         echo("Не удалось вернуть %s на прежнее место (%s). Верните вручную:\n  git -C %s checkout -- %s\n  git -C %s checkout %s"

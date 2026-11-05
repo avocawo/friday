@@ -9,6 +9,8 @@ from unittest.mock import patch
 from friday import card, milestone, plan, workspace
 from friday.errors import FridayError
 
+REAL_FINISH = milestone.finish  # setUp replaces it; the dist test needs the real one
+
 # Each call takes the next entry of calls.json: files to write, commits to make, the structured answer and its session.
 FAKE = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys
@@ -149,6 +151,15 @@ class MilestoneTests(unittest.TestCase):
         milestone.run_task(self.root, "T-1", self.profile)
         self.assertIn("eslint: no-shadow в greet.py:1", self.call(1)["prompt"])
         self.assertEqual(self.call(2)["argv"][self.call(2)["argv"].index("--model") + 1], "big-1")
+
+    def test_the_merge_request_text_asks_for_the_dist(self):
+        from friday import final
+        texts = []
+        selected = dict(self.profile, dist={"checkout": "/x", "container": "c"})
+        with patch("friday.final.final_review", return_value=({}, {"model": "big-1"})), \
+                patch("friday.final.deliver", side_effect=lambda root, key, profile: texts.append(final.description(root, key))):
+            REAL_FINISH(self.root, "T-1", selected)
+        self.assertIn("friday dist T-1", texts[0])
 
     def test_unverified_reasons(self):
         ui = {"ui": True}

@@ -23,7 +23,7 @@ class FakeContainer:
 
     def __init__(self, checkout, running=True, fail_build=False, output=None):
         self.checkout, self.running, self.fail_build = Path(checkout), running, fail_build
-        self.output = output or {"vue-uikit.es.js": "export const built = '{head}';\n"}
+        self.output = output or {"vue-uikit.es.js": "export const built = '{head}';\n", "FileDropzone.d.ts": "export {};\n"}
         self.calls = []
 
     def host(self, path):
@@ -115,6 +115,7 @@ class DistTests(unittest.TestCase):
                                     "/app/deps/vue-uikit/node_modules/@vue"])
         self.assertEqual(git("log", "-1", "--format=%s", cwd=self.worktree).strip(), "T-1: Собран dist")
         self.assertEqual((self.worktree / "dist" / "vue-uikit.es.js").read_text(), "export const built = '%s';\n" % task_head)
+        self.assertTrue((self.worktree / "dist" / "FileDropzone.d.ts").is_file())
         self.assert_restored()
         self.assertFalse((self.checkout / "node_modules" / "vue").exists())
         self.assertIn("HMR", self.output[0])
@@ -162,6 +163,8 @@ class DistTests(unittest.TestCase):
         other = FakeContainer(self.checkout, output={"vue-uikit.es.js": "y\nconst __file = '/app/a.vue';\n"})
         report = self.build(other, check_base=True)
         self.assertEqual((report["reproduced"], report["differing_lines"]), (False, ["-x", "+y"]))
+        extra = FakeContainer(self.checkout, output={"vue-uikit.es.js": "x\nconst __file = '/app/a.vue';\n", "New.d.ts": "n\n"})
+        self.assertEqual(self.build(extra, check_base=True)["differing_lines"], ["?? dist/New.d.ts"])
         self.assert_restored()
         self.assertNotIn("dist", card.read(self.root, "T-1"))
 

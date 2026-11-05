@@ -253,7 +253,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                 continue
         prompt = feedback_text
     if review_value is None:
-        reason = "no commits" if mark() == start_mark else "the gate never passed"
+        reason = "no commits" if mark() == start_mark else ("the gate never passed" if profile.get("gate") else "no check ever passed")
         set_state(root, key, milestone_id, state="failed")
         cards.record(root, key, "milestone_failed", milestone=milestone_id, reason=reason)
         raise FridayError("milestone_failed", "Milestone %s was never reviewed: %s." % (milestone_id, reason))
@@ -423,11 +423,7 @@ def run_task(root, key, profile):
         except FridayError:
             cards.update(root, key, lambda value: value.update(state="failed"))
             raise
-    def finished(value):
-        value.update(state="done" if not left else "stopped", unverified=task_unverified(value))
-        if not left and dist.required(profile) and (value.get("dist") or {}).get("state") != "built":
-            value["dist"] = dist.required(profile)
-    cards.update(root, key, finished)
+    cards.update(root, key, lambda value: value.update(state="done" if not left else "stopped", unverified=task_unverified(value)))
     cards.record(root, key, "run_task_finished", completed=[item["milestone"] for item in completed], left=left)
     return {"completed": completed, "left": left, "delivery": delivery}
 
@@ -440,6 +436,11 @@ FIX_RULES = (
 
 def finish(root, key, profile):
     """Final review and blind check, one fix round for blocking findings, then the draft merge request."""
+    def pending(value):  # before the MR text is written: it tells the owner the dist is still to be built
+        value["unverified"] = task_unverified(value)
+        if dist.required(profile) and (value.get("dist") or {}).get("state") != "built":
+            value["dist"] = dist.required(profile)
+    cards.update(root, key, pending)
     card = cards.read(root, key)
     worktree, layout = card["worktree"], card["cast"]
     cards.record(root, key, "final_started")
