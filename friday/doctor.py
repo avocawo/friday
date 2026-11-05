@@ -79,7 +79,7 @@ def inspect(path):
     if stories.settings(selected):
         config = stories.settings(selected)
         def showcase():
-            repository = str(Path(config["repository"]).expanduser())
+            repository = config["repository"]
             result = subprocess.run(["git", "-C", repository, "check-ignore", "-q", stories.mount(selected) + "/package.json"],
                                     capture_output=True)
             if result.returncode:

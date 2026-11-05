@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from . import card as cards
 from . import gate, state
 from .errors import FridayError
+from .locks import locked
 
 PREFIX = "stories:"
 MOUNT = "deps/vue-uikit"
@@ -72,25 +73,26 @@ def create(root, key, profile):
     """The showcase worktree on the task branch, once; returns its path. The kit's worktree goes inside it."""
     from . import workspace
     config = settings(profile)
-    repo = str(Path(config["repository"]).expanduser())
+    repo = config["repository"]
     base = config["base_branch"]
     branch = state.task_branch(profile.get("branch_template", "friday/{key}"), key)
-    target = Path(config["worktree_root"]).expanduser().resolve() / key
+    target = Path(config["worktree_root"]).resolve() / key
     card = cards.read(root, key)
     if worktree(card):
         if worktree(card) != str(target) or not workspace.registered(repo, target, branch):
             raise FridayError("worktree_conflict", "The recorded showcase worktree is unavailable or conflicts with the profile.")
         return str(target)
-    if target.exists():
-        if not workspace.registered(repo, target, branch):
-            raise FridayError("worktree_conflict", "Showcase worktree path already exists: " + str(target))
-        base_commit = workspace.git(target, "merge-base", "HEAD", "origin/" + base)
-    else:
-        workspace.git(repo, "check-ref-format", "--branch", branch)
-        workspace.git(repo, "fetch", "--no-tags", "origin", base)
-        base_commit = workspace.git(repo, "rev-parse", "FETCH_HEAD^{commit}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        workspace.git(repo, "worktree", "add", "-b", branch, str(target), base_commit)
+    with locked(root, "repo:" + str(Path(repo).resolve()), timeout=300):
+        if target.exists():
+            if not workspace.registered(repo, target, branch):
+                raise FridayError("worktree_conflict", "Showcase worktree path already exists: " + str(target))
+            base_commit = workspace.git(target, "merge-base", "HEAD", "origin/" + base)
+        else:
+            workspace.git(repo, "check-ref-format", "--branch", branch)
+            workspace.git(repo, "fetch", "--no-tags", "origin", base)
+            base_commit = workspace.git(repo, "rev-parse", "FETCH_HEAD^{commit}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            workspace.git(repo, "worktree", "add", "-b", branch, str(target), base_commit)
     # The kit's worktree lives inside the showcase: the showcase must ignore it, or its commits would swallow the kit.
     ignored = subprocess.run(["git", "-C", str(target), "check-ignore", "-q", mount(profile) + "/package.json"],
                              capture_output=True)
@@ -106,7 +108,7 @@ def prepare(profile, card):
     """The showcase's setup commands (dependencies, the link to the kit), after the kit's worktree exists."""
     config = settings(profile)
     for command in config.get("setup", []):
-        argv = [part.replace("{repository}", str(Path(config["repository"]).expanduser()))
+        argv = [part.replace("{repository}", config["repository"])
                 .replace("{worktree}", worktree(card)).replace("{kit}", card["worktree"]) for part in command]
         try:
             result = subprocess.run(argv, cwd=worktree(card), capture_output=True, text=True, timeout=900)

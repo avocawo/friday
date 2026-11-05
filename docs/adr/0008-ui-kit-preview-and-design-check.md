@@ -31,4 +31,11 @@ status: accepted
 
 - Перед первой UI-задачей кита нужен образ Storybook: `DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src=<.npmrc> --add-host git.dvizh.io:host-gateway -t vue-uikit-storybook:friday ~/Projects/vue-uikit-storybook`. Пересобирать его нужно при смене lockfile Storybook.
 - Рабочие копии кита теперь лежат внутри рабочих копий Storybook. Задача, начатая до этого изменения (например, DVIZHDEV-7738), при повторном `start` получит `worktree_conflict`.
-- Проверено тестами с фейками. Вживую проверены только части, общие с прежним бэкендом: мост и `computed_style` в Chrome 9333. Запуск Storybook в контейнере ждёт образа. На Codex `--add-dir` вживую не проверен.
+- Кит лежит внутри Storybook, поэтому Claude Code и Codex находят `CLAUDE.md` и `AGENTS.md` Storybook при поиске вверх от рабочей копии кита. Их видят все роли, работающие в ките, а не только планировщик; `--restricted` этого не отключает. Это лишние токены и чужие правила в каждой роли.
+- Проверено вживую: исполнитель Claude Code в песочнице пишет и коммитит в обоих репозиториях (кит — в cwd, Storybook — через `--add-dir` и `git -C ../..`), без отказов. Кроме того, вживую работают мост и `computed_style` в Chrome 9333. Остальное покрыто тестами с фейками.
+- Ждёт образа и не проверено:
+  - запуск Storybook 10 из снимка без `.git` (Dockerfile Storybook упоминает, что тот читает git-дерево);
+  - `python3` в образе для моста (в `node:20` он есть, в `-slim` его нет);
+  - резолв зависимостей кита через `node_modules` Storybook в контейнере;
+  - HMR-запросы через мост, который умеет только GET.
+- На Codex `--add-dir` вживую не проверен.

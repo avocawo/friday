@@ -38,6 +38,11 @@ def read_layers(path, seen):
     if not isinstance(layer, dict):
         raise FridayError("invalid_profile", "Profile must contain a JSON object.")
     parent = layer.pop("extends", None)
+    showcase = layer.get("stories")
+    if isinstance(showcase, dict):
+        for field in ("repository", "worktree_root"):
+            if isinstance(showcase.get(field), str) and showcase[field]:
+                showcase[field] = str((path.parent / Path(showcase[field]).expanduser()).resolve())
     if parent is not None and (not isinstance(parent, str) or not parent):
         raise FridayError("invalid_profile", "extends must be a non-empty profile path.")
     for field in ("repository", "journal_dir", "worktree_root", "dor_file"):

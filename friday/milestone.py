@@ -307,7 +307,7 @@ def close(root, key, milestone_id, item, start, worktree, review_value, gate_rec
     showcase_commits, showcase_changed = [], set()
     if stories.worktree(card) and showcase_start:
         showcase_commits = [line.split(" ", 1) for line in stories.git(card, "log", "--format=%H %s", showcase_start + "..HEAD").splitlines()]
-        showcase_changed = {stories.PREFIX + name for name in stories.git(card, "diff", "--name-only", showcase_start + "..HEAD").split()}
+        showcase_changed = {stories.PREFIX + name for name in stories.git(card, "diff", "--name-only", showcase_start + "..HEAD").splitlines() if name}
     stages = []
     for stage in item["stages"]:
         matching = [sha for sha, subject in commits if (" " + stage["id"] + ":") in (" " + subject)]

@@ -184,6 +184,13 @@ class StoriesTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--add-dir") + 1], str(Path("/tmp/a").resolve()))
         self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["sandbox"]["filesystem"]["allowWrite"],
                          [str(Path("/tmp/a").resolve())])
+        fake = self.fake / "bin" / "codex"
+        fake.write_text("")
+        runtime = Path(self.directory.name) / "runtime"
+        runtime.mkdir()
+        with patch("friday.runner.shutil.which", return_value=str(fake)), patch("friday.runner.codex_policy.verify_environment"):
+            argv = runner.Codex(runner.Spec(**dict(spec.__dict__, driver="codex"))).command(str(runtime))
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(Path("/tmp/a").resolve()))
 
     def test_stories_settings_are_checked(self):
         for value in ({"repository": "r"}, {"repository": "r", "base_branch": "m", "worktree_root": "w", "mount": "../x"},
