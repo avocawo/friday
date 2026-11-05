@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import design, gate, models, resources
+from . import design, gate, models, resources, stories
 from .errors import FridayError
 
 ADAPTERS = Path(__file__).resolve().parent.parent / "adapters"
@@ -89,6 +89,9 @@ def final_review(root, key, profile, run_role, schema, roles=("final-review", "b
     for note in filter(None, (note_final, note_blind)):
         cards.record(root, key, "cast_note", note=note)
     diff = gate.git(worktree, "diff", card["base"] + "..HEAD").decode("utf-8", "replace")
+    showcase = stories.diff(card, (card.get("stories") or {}).get("base"))
+    if showcase:
+        diff += "\n\nDiff of the showcase repository (paths are %s…):\n%s" % (stories.PREFIX, showcase)
     full = json.dumps({"summary": document["summary"], "project_rules": document["rules"],
                        "milestones": [{k: m[k] for k in ("id", "title", "goal")} for m in document["milestones"]],
                        "criteria": criteria(document), "owner_decisions": card["decisions"],
@@ -124,6 +127,8 @@ def description(root, key):
     card = cards.read(root, key)
     document = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
     lines = [document["summary"], "", "## Вехи"]
+    if stories.worktree(card):
+        lines[1:1] = ["", "Вторая ветка: `%s` в репозитории историй (`%s`)." % (card["stories"]["branch"], card["stories"]["repository"])]
     for item in card["milestones"]:
         title = next(m["title"] for m in document["milestones"] if m["id"] == item["id"])
         lines.append("- **%s. %s** — %s" % (item["id"], title, {"done": "готово"}.get(item["state"], item["state"])))

@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from . import card as cards
-from . import state
+from . import state, stories
 from .errors import FridayError
 from .locks import locked
 
@@ -49,10 +49,14 @@ def create(root, key, profile):
         raise FridayError("invalid_profile", "worktree_root and base_branch are required to prepare a worktree.")
     branch = state.task_branch(profile.get("branch_template", "friday/{key}"), key)
     target = Path(profile["worktree_root"]).resolve() / (branch if profile.get("worktree_layout", "key") == "branch" else key)
+    if stories.settings(profile):
+        target = Path(stories.create(root, key, profile)) / stories.mount(profile)  # the kit inside its showcase
     card = cards.read(root, key)
     if card.get("worktree"):
         if card["worktree"] != str(target) or not registered(repo, target, branch):
             raise FridayError("worktree_conflict", "The recorded worktree is unavailable or conflicts with the profile.")
+        if stories.settings(profile):
+            stories.prepare(profile, card)
         return card["worktree"]
     with locked(root, "repo:" + str(Path(repo).resolve()), timeout=300):
         if os.path.lexists(target):
@@ -69,4 +73,6 @@ def create(root, key, profile):
     prepare(profile, str(target))  # also on a rerun after a failed setup, so commands must be repeatable
     cards.update(root, key, lambda value: value.update(branch=branch, worktree=str(target), base=base_commit))
     cards.record(root, key, "worktree_created", branch=branch, worktree=str(target), base=base_commit)
+    if stories.settings(profile):
+        stories.prepare(profile, cards.read(root, key))
     return str(target)

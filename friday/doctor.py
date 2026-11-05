@@ -2,8 +2,9 @@
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
-from . import codex_policy, design, models, profile as profiles, resources, state
+from . import codex_policy, design, models, profile as profiles, resources, state, stories
 from .errors import FridayError
 
 
@@ -75,15 +76,20 @@ def inspect(path):
             resources.release_port(state.home(), "doctor-probe")
             return "free ports from %d" % value
         check("preview_port", port)
-        config = (selected.get("preview") or {}).get("vite_config")
-        if config:
-            def vite_config():
-                result = subprocess.run(["git", "-C", selected["repository"], "cat-file", "-e",
-                                         "origin/%s:%s" % (selected.get("base_branch", "HEAD"), config)], capture_output=True)
-                if result.returncode:
-                    raise FridayError("missing", "%s is not on %s yet: UI milestones cannot be shown in the preview." % (
-                        config, selected.get("base_branch")))
-            check("preview_vite_config", vite_config, warning=True)
+    if stories.settings(selected):
+        config = stories.settings(selected)
+        def showcase():
+            repository = str(Path(config["repository"]).expanduser())
+            result = subprocess.run(["git", "-C", repository, "check-ignore", "-q", stories.mount(selected) + "/package.json"],
+                                    capture_output=True)
+            if result.returncode:
+                raise FridayError("missing", "%s is not a git repository that ignores %s." % (repository, stories.mount(selected)))
+        check("stories_repository", showcase)
+        if config.get("image"):
+            def showcase_image():
+                from . import gate
+                gate.image_id(config["image"])
+            check("stories_image", showcase_image)
     for name, operation, warning in design.doctor_checks(selected):
         check(name, operation, warning)
     delivery = (selected.get("delivery") or {}).get("transport", "none")

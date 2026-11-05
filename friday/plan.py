@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import card as cards
-from . import design, models, repomap, runner
+from . import design, models, repomap, runner, stories
 from . import profile as profiles
 from .errors import FridayError
 
@@ -98,7 +98,14 @@ REVIEW_RULES = (
     "suggestion in the task's language. Do not edit any file. verdict is ok only when there are no blocking findings.")
 
 
-def validate(plan, worktree, limits=None):
+def locate(worktree, name, showcase=None):
+    """A plan path as a file: stories:… names a file of the showcase repository, anything else one of the task's."""
+    if name.startswith(stories.PREFIX):
+        return Path(showcase) / name[len(stories.PREFIX):] if showcase else None
+    return Path(worktree) / name
+
+
+def validate(plan, worktree, limits=None, showcase=None):
     """Feasibility checks that need no model; returns a list of problems in plain words."""
     limits = dict(LIMITS, **(limits or {}))
     errors = []
@@ -132,12 +139,15 @@ def validate(plan, worktree, limits=None):
             if stage["estimate_lines"] > limits["stage_lines"]:
                 errors.append("%s estimates %d lines; the limit is %d." % (where, stage["estimate_lines"], limits["stage_lines"]))
             for path in touched:
-                if path.startswith("/") or ".." in Path(path).parts:
+                bare = path[len(stories.PREFIX):] if path.startswith(stories.PREFIX) else path
+                if bare.startswith("/") or ".." in Path(bare).parts:
                     errors.append("%s has an unsafe path %s." % (where, path))
-            missing = [path for path in stage["files"] if not (Path(worktree) / path).is_file()]
+                elif locate(worktree, path, showcase) is None:
+                    errors.append("%s names %s, but the task has no showcase repository." % (where, path))
+            missing = [path for path in stage["files"] if not (locate(worktree, path, showcase) or Path("/nonexistent")).is_file()]
             if missing:
                 errors.append("%s changes files that do not exist: %s." % (where, ", ".join(missing)))
-            present = [path for path in stage["new_files"] if (Path(worktree) / path).exists()]
+            present = [path for path in stage["new_files"] if (locate(worktree, path, showcase) or Path("/nonexistent")).exists()]
             if present:
                 errors.append("%s creates files that already exist: %s." % (where, ", ".join(present)))
             if not stage["criteria"]:
@@ -255,7 +265,8 @@ def agent(root, key, profile, role, prompt, schema, cast_role=None):
             servers.append(design.figma_server(profile))
         mcp = [server for server in servers if server] or None
     spec = runner.Spec(driver=entry["driver"], model=entry["model"], effort=entry.get("effort"), prompt=prompt,
-                       cwd=card["worktree"], log_dir="", schema=schema, env=models.environment(entry, profile), mcp=mcp)
+                       cwd=card["worktree"], log_dir="", schema=schema, env=models.environment(entry, profile), mcp=mcp,
+                       add_dirs=[stories.worktree(card)] if stories.worktree(card) else [])
     result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
     if result.status != "ok" or not isinstance(result.structured, dict):
         raise FridayError("agent_failed", "%s did not return a result (%s): %s" % (role, result.status, result.error or "no structured answer"))
@@ -277,7 +288,7 @@ def plan_schema(root, key):
 def checked(root, key, profile, worktree, result, limits, prompt, retries=1):
     """Return a plan that passes the feasibility checks, giving the planner its errors in a revision."""
     for attempt in range(retries + 1):
-        errors = validate(result.structured, worktree, limits)
+        errors = validate(result.structured, worktree, limits, stories.worktree(cards.read(root, key)))
         if design.frames(cards.read(root, key)) and not result.structured.get("design"):
             errors.append("The ticket links Figma frames but the plan has no design specification.")
         if not errors:
@@ -290,12 +301,12 @@ def checked(root, key, profile, worktree, result, limits, prompt, retries=1):
                         "with the same schema; keep responses as they were.\n- " + "\n- ".join(errors))
 
 
-def plan_sources(worktree, plan, limit=SOURCES_LIMIT):
+def plan_sources(worktree, plan, limit=SOURCES_LIMIT, showcase=None):
     """The current text of the files the plan changes, for the reviewer; what does not fit is named, to be read."""
     parts, left, cut = [], limit, []
     for name in sorted(plan_files(plan)):
-        path = Path(worktree) / name
-        if not path.is_file():
+        path = locate(worktree, name, showcase)
+        if path is None or not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         if len(text) > left:
@@ -349,10 +360,11 @@ def make(root, key, profile, ticket, use_design=True):
     design.prepare(root, key, profile, ticket_text(ticket), enabled=use_design)
     card = cards.read(root, key)
     figma = bool(design.frames(card))
+    showcase = stories.worktree(card)
     limits = profile.get("limits")
     def rules(docs, reading=""):
         return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading)) + (
-            "\n" + design.PLAN_FIGMA if figma else "")
+            "\n" + design.PLAN_FIGMA if figma else "") + (stories.plan_text(profile) if showcase else "")
     task = "\n\nTask:\n" + context(card, profile, ticket)
     identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest or map caches
     saved = saved_draft(root, key, identity)
@@ -374,7 +386,8 @@ def make(root, key, profile, ticket, use_design=True):
                                      limits, prompt))
     review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + ("\n" + design.REVIEW_FIGMA if figma else "") + task + project +
                      "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2) +
-                     "\n\nFiles the plan changes:\n" + plan_sources(worktree, planned.structured))
+                     "\n\nFiles the plan changes:\n" + plan_sources(worktree, planned.structured,
+                                                                     showcase=stories.worktree(card)))
     review = plan_review(root, key, profile, review_prompt)
     findings = review["findings"]
     cards.record(root, key, "plan_reviewed", verdict=review["verdict"], findings=len(findings),

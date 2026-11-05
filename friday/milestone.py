@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import card as cards
-from . import design, final, gate, models, runner, workspace
+from . import design, final, gate, models, runner, stories, workspace
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -107,13 +107,16 @@ def numbered(findings):
 
 
 def run_role(root, key, profile, role, entry, worktree, prompt, schema, milestone_id, *, write=False, resume=None, mcp=None):
-    commands = list(profile.get("executor_commands", [])) + GIT_COMMANDS if write else []
+    commands = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile) if write else []
+    card = cards.read(root, key)
+    showcase = stories.worktree(card) if worktree == card.get("worktree") else None
     env = dict(models.environment(entry, profile), **(identity(worktree) if write else {}))
     if mcp:
         env["MCP_TIMEOUT"] = "180000"  # the preview browser takes a while to start
     spec = runner.Spec(driver=entry["driver"], model=entry["model"], effort=entry.get("effort"), prompt=prompt, cwd=worktree,
                        log_dir="", write=write, commands=commands, schema=schema, resume=resume,
-                       env=env, deny_read=profile.get("executor_deny_read", []), mcp=mcp)
+                       env=env, deny_read=profile.get("executor_deny_read", []), mcp=mcp,
+                       add_dirs=[showcase] if showcase else [])
     return cards.run_agent(root, key, spec, role=role, milestone=milestone_id, phase=role, entry=entry, profile=profile)
 
 
@@ -124,15 +127,20 @@ def run(root, key, profile, milestone_id, worktree=None):
     document = load_plan(root, key)
     item = define(document, milestone_id)
     start = git(worktree, "rev-parse", "HEAD").strip()
+    showcase_start = stories.head(card)
+    def mark():  # progress is a commit in the kit or in the showcase
+        return git(worktree, "rev-parse", "HEAD").strip() + ("+" + stories.head(card) if showcase_start else "")
+    start_mark = mark()
     reopened = any(entry["id"] == milestone_id and entry["state"] == "reopened" for entry in card["milestones"])
-    set_state(root, key, milestone_id, state="running", start=start)
+    set_state(root, key, milestone_id, state="running", start=start, **({"showcase_start": showcase_start} if showcase_start else {}))
     cards.record(root, key, "milestone_started", milestone=milestone_id, start=start)
     available = models.availability(root)
     entry, note = models.executor(profile, layout, item["complexity"], available=available)
     if note:
         cards.record(root, key, "cast_note", milestone=milestone_id, note=note)
-    allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS
+    allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile)
     base_prompt = (EXECUTOR_RULES.format(key=key) + design.guidance(profile, "develop", document, item["ui"]) +
+                   stories.executor_text(profile, card) +
                    "\n\nShell commands you may run, each starting exactly like one of "
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
                    "\n".join("- " + command for command in allowed) + "\n\n" +
@@ -167,14 +175,16 @@ def run(root, key, profile, milestone_id, worktree=None):
             git(worktree, "-c", "user.name=" + names["GIT_AUTHOR_NAME"], "-c", "user.email=" + names["GIT_AUTHOR_EMAIL"],
                 "commit", "-qm", "%s %s: changes left uncommitted by the executor" % (key, milestone_id))
             cards.record(root, key, "uncommitted_changes_committed", milestone=milestone_id)
-        head = git(worktree, "rev-parse", "HEAD").strip()
+        if stories.commit_leftovers(card, key, milestone_id, identity(worktree)):
+            cards.record(root, key, "uncommitted_changes_committed", milestone=milestone_id, repository="stories")
+        head = mark()
         disputed = {(d["file"], d["problem"]) for d in disputes}
         if head == checked_head and findings and all((f["file"], f["problem"]) in disputed for f in findings):
             # Every remaining finding is disputed and nothing changed: the reviewed commit stands, the owner decides.
             return close(root, key, milestone_id, item, start, worktree, review_value, gate_record, disputes, extra, round_number)
-        if head == start or head == checked_head:
+        if head == start_mark or head == checked_head:
             failures += 1
-            feedback_text = ("You made no commits. Implement the stages and commit each one." if head == start else
+            feedback_text = ("You made no commits. Implement the stages and commit each one." if head == start_mark else
                              "You made no new commit, so nothing changed since the last check. Address the feedback and commit.")
         else:
             checked_head = head
@@ -226,7 +236,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                 continue
         prompt = feedback_text
     if review_value is None:
-        reason = "no commits" if git(worktree, "rev-parse", "HEAD").strip() == start else "the gate never passed"
+        reason = "no commits" if mark() == start_mark else "the gate never passed"
         set_state(root, key, milestone_id, state="failed")
         cards.record(root, key, "milestone_failed", milestone=milestone_id, reason=reason)
         raise FridayError("milestone_failed", "Milestone %s was never reviewed: %s." % (milestone_id, reason))
@@ -265,6 +275,10 @@ def accept_in_browser(root, key, profile, layout, author, worktree, item):
 
 def review(root, key, profile, entry, worktree, document, item, start, gate_record, previous, disputes):
     diff = git(worktree, "diff", start + "..HEAD")
+    card = cards.read(root, key)
+    showcase = stories.diff(card, next((m.get("showcase_start") for m in card["milestones"] if m["id"] == item["id"]), None))
+    if showcase:
+        diff += "\n\nDiff of the showcase repository (paths are %s…):\n%s" % (stories.PREFIX, showcase)
     gate_text = ("not configured" if gate_record is None else "%s on %s (command: %s)" % (
         gate_record["status"], gate_record["head"], " ".join(profile.get("gate", []))))
     prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + "\n\n" + milestone_text(key, document, item, cards.read(root, key)["decisions"]) +
@@ -288,14 +302,23 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
 
 def close(root, key, milestone_id, item, start, worktree, review_value, gate_record, disputes, extra, rounds):
     commits = [line.split(" ", 1) for line in git(worktree, "log", "--format=%H %s", start + "..HEAD").splitlines()]
+    card = cards.read(root, key)
+    showcase_start = next((m.get("showcase_start") for m in card["milestones"] if m["id"] == milestone_id), None)
+    showcase_commits, showcase_changed = [], set()
+    if stories.worktree(card) and showcase_start:
+        showcase_commits = [line.split(" ", 1) for line in stories.git(card, "log", "--format=%H %s", showcase_start + "..HEAD").splitlines()]
+        showcase_changed = {stories.PREFIX + name for name in stories.git(card, "diff", "--name-only", showcase_start + "..HEAD").split()}
     stages = []
     for stage in item["stages"]:
         matching = [sha for sha, subject in commits if (" " + stage["id"] + ":") in (" " + subject)]
-        stages.append({"id": stage["id"], "commit": matching[0] if matching else None})
-    changed = set(filter(None, git(worktree, "diff", "--name-only", start + "..HEAD").splitlines()))
+        shown = [sha for sha, subject in showcase_commits if (" " + stage["id"] + ":") in (" " + subject)]
+        stages.append(dict({"id": stage["id"], "commit": matching[0] if matching else None},
+                           **({"showcase_commit": shown[0]} if shown else {})))
+    changed = set(filter(None, git(worktree, "diff", "--name-only", start + "..HEAD").splitlines())) | showcase_changed
     outside = sorted(changed - set(item["files"]))
     minor = [f for f in (review_value or {}).get("findings", []) if f["severity"] == "minor"]
     set_state(root, key, milestone_id, state="done", stages=stages, head=git(worktree, "rev-parse", "HEAD").strip(),
+              **({"showcase_head": stories.head(card)} if stories.worktree(card) else {}),
               outside_files=outside, minor_findings=minor)
     if disputes:
         cards.update(root, key, lambda value: value["disputes"].extend(disputes))
@@ -378,8 +401,8 @@ def finish(root, key, profile):
     if blocking:
         document = load_plan(root, key)
         entry = layout["develop"]
-        allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS
-        prompt = (FIX_RULES.format(key=key) + "\n\nShell commands you may run, each starting exactly like one of these:\n" +
+        allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile)
+        prompt = (FIX_RULES.format(key=key) + stories.executor_text(profile, card) + "\n\nShell commands you may run, each starting exactly like one of these:\n" +
                   "\n".join("- " + command for command in allowed) + "\n\nProject rules:\n" + "\n".join(document["rules"]) +
                   "\n\nFindings:\n" + numbered(blocking))
         result = run_role(root, key, profile, "develop", entry, worktree, prompt, EXECUTOR_SCHEMA, "final", write=True)
@@ -393,6 +416,7 @@ def finish(root, key, profile):
             git(worktree, "add", "-A")
             git(worktree, "-c", "user.name=" + names["GIT_AUTHOR_NAME"], "-c", "user.email=" + names["GIT_AUTHOR_EMAIL"],
                 "commit", "-qm", "%s final: changes left uncommitted by the executor" % key)
+        stories.commit_leftovers(card, key, "final", identity(worktree))
         if profile.get("gate"):
             log = cards.directory(root, key) / "gates" / "final.log"
             record = gate.check(root, profile, worktree, card.get("base"), log,

@@ -38,6 +38,7 @@ class Spec:
     schema: dict = None              # structured final answer
     effort: str = None               # reasoning effort, e.g. "medium" or "max"
     deny_read: list = field(default_factory=list)  # extra paths the executor's shell may not read
+    add_dirs: list = field(default_factory=list)   # more directories the agent works in, e.g. a second repository
     mcp: object = None               # scoped MCP server(s): {"name", "command": [...] or "url", "tools": [...]}, or a list
     resume: str = None               # session id of a previous run to continue
     env: dict = field(default_factory=dict)
@@ -104,10 +105,14 @@ class Claude:
                                    "autoAllowBashIfSandboxed": False, "excludedCommands": [],
                                    "network": {"allowedDomains": [], "strictAllowlist": True},
                                    "filesystem": {"denyRead": CREDENTIALS + list(spec.deny_read)}}
+            if spec.add_dirs:
+                settings["sandbox"]["filesystem"]["allowWrite"] = [str(Path(path).resolve()) for path in spec.add_dirs]
         args = [shutil.which("claude") or "claude", "-p", "--output-format", "stream-json", "--verbose",
                 "--restricted", "--strict-mcp-config", "--no-chrome", "--model", spec.model,
                 "--tools", ",".join(tools), "--settings", json.dumps(settings)]
         args += servers
+        for path in spec.add_dirs:
+            args += ["--add-dir", str(Path(path).resolve())]
         args += ["--resume", self.session] if spec.resume else ["--session-id", self.session]
         if spec.write:
             args += ["--permission-mode", "acceptEdits"]
@@ -203,6 +208,7 @@ class Codex:
                    "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
                    "--disable", "browser_use", "--disable", "computer_use",
                    *codex_policy.options("develop" if spec.write else "review", directory),
+                   *[option for path in spec.add_dirs for option in ("--add-dir", str(Path(path).resolve()))],
                    "-c", 'web_search="disabled"', "-c", 'approval_policy="never"', "--model", spec.model]
         if spec.effort:
             options += ["-c", "model_reasoning_effort=" + json.dumps(spec.effort)]

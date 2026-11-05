@@ -1,4 +1,4 @@
-"""Serve a committed Vite snapshot from a container with no network."""
+"""Serve a committed Vite or Storybook snapshot from a container with no network."""
 import base64
 import contextlib
 import http.server
@@ -14,7 +14,7 @@ import urllib.parse
 import uuid
 from pathlib import Path, PurePosixPath
 
-from . import browser_session, gate
+from . import browser_session, gate, stories
 from .errors import FridayError
 
 BRIDGE = r'''import base64,json,sys,urllib.request,urllib.error
@@ -40,10 +40,14 @@ def docker(*args, timeout=60):
     return result.stdout
 
 
-def wait_for_vite(name):
-    for _ in range(40):
+def bridge(port):
+    return BRIDGE.replace('5173', str(int(port)))
+
+
+def wait_for_vite(name, port=5173, attempts=40):
+    for _ in range(attempts):
         try:
-            result = json.loads(docker('exec', name, 'python3', '-c', BRIDGE, '/', timeout=5))
+            result = json.loads(docker('exec', name, 'python3', '-c', bridge(port), '/', timeout=5))
             if not isinstance(result, dict) or result.get('status') != 200 or not isinstance(result.get('type'), str):
                 raise ValueError('Invalid readiness response')
             if result['type'].split(';', 1)[0].strip().lower() != 'text/html':
@@ -54,12 +58,80 @@ def wait_for_vite(name):
             return
         except (FridayError, ValueError, KeyError, TypeError):
             time.sleep(0.5)
-    raise FridayError('preview_unavailable', 'The isolated Vite server did not start.')
+    raise FridayError('preview_unavailable', 'The isolated preview server did not start.')
+
+
+def extract(archive, destination):
+    """Unpack a snapshot without links, special files or local secrets."""
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as tar:
+        members = []
+        for item in tar:
+            parts = PurePosixPath(item.name).parts
+            if item.issym() or item.islnk() or item.name.startswith('/') or '..' in parts or not (item.isfile() or item.isdir()):
+                raise FridayError('preview_unavailable', 'The preview snapshot contains an unsupported file.')
+            if any(part == '.env' or part.startswith('.env.') or part == '.npmrc' for part in parts):
+                continue
+            members.append(item)
+        tar.extractall(destination, members=members)
+
+
+@contextlib.contextmanager
+def served(name, port):
+    """Bridge the container's server to one local origin; stops the container when done."""
+    server = None
+    thread = None
+    try:
+        slots = threading.BoundedSemaphore(8)
+        script = bridge(port)
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                parsed = urllib.parse.urlsplit(self.path)
+                if parsed.scheme or parsed.netloc or not parsed.path.startswith('/') or parsed.path.startswith('//'):
+                    self.send_error(400)
+                    return
+                try:
+                    with slots:
+                        raw = docker('exec', name, 'python3', '-c', script, self.path, timeout=40)
+                    result = json.loads(raw)
+                    data = base64.b64decode(result['data'], validate=True)
+                    self.send_response(result['status'])
+                    self.send_header('Content-Type', result['type'])
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                except (FridayError, ValueError, KeyError):
+                    self.send_error(502)
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        yield 'http://preview-' + uuid.uuid4().hex + '.localhost:' + str(server.server_port) + '/'
+    finally:
+        if server:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        try:
+            docker('stop', '--time', '1', name, timeout=10)
+        except FridayError:
+            pass
+
+
+ISOLATION = ['--rm', '--pull=never', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+             '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,exec,nosuid,nodev,size=512m']
 
 
 @contextlib.contextmanager
 def open_preview(selected, worktree):
     spec = selected.get('preview', {})
+    if isinstance(spec, dict) and spec.get('backend') == 'storybook':
+        with storybook_preview(selected, worktree) as url:
+            yield url
+        return
     if isinstance(spec, dict) and spec.get('backend') == 'docker-local':
         from . import local_preview
         with local_preview.open_preview(selected, worktree) as url:
@@ -69,79 +141,90 @@ def open_preview(selected, worktree):
         raise FridayError('isolation_unavailable', 'An isolated docker-vite preview is required.')
     _, stage = browser_session.configuration(selected.get('browser'), 'http://probe.localhost:12345/')
     environment = ['-e', 'VITE_APP_ENV=development']
-    if stage:  # a UI kit has no API: local browser mode runs the preview without one
+    if stage:  # local browser mode runs the preview without a staging API
         api_path = spec.get('api_path')
         if not isinstance(api_path, str) or not api_path.startswith('/') or '?' in api_path or '#' in api_path:
             raise FridayError('invalid_profile', 'The staging API path must be an absolute path without a query.')
         environment += ['-e', 'VITE_API_APOLLO_URI=' + stage + api_path]
-    config = spec.get('vite_config')
-    if config is not None and (not isinstance(config, str) or not config or config.startswith('/') or '\\' in config
-                               or '..' in PurePosixPath(config).parts):
-        raise FridayError('invalid_profile', 'preview.vite_config must be a path inside the repository.')
     image = gate.image_id(selected.get('gate_image'))
-    snapshot_profile = dict(selected, repository=worktree)
-    _, _, archive = gate.snapshot(snapshot_profile)
+    _, _, archive = gate.snapshot(dict(selected, repository=worktree))
     with tempfile.TemporaryDirectory(prefix='friday-preview-') as directory:
         source = Path(directory) / 'src'
-        source.mkdir()
-        with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as tar:
-            members = []
-            for item in tar:
-                parts = PurePosixPath(item.name).parts
-                if item.issym() or item.islnk() or item.name.startswith('/') or '..' in parts or not (item.isfile() or item.isdir()):
-                    raise FridayError('preview_unavailable', 'The preview snapshot contains an unsupported file.')
-                if any(part == '.env' or part.startswith('.env.') or part == '.npmrc' for part in parts):
-                    continue
-                members.append(item)
-            tar.extractall(source, members=members)
+        extract(archive, source)
         (source / 'node_modules').symlink_to('/app/node_modules')
         name = 'friday-preview-' + uuid.uuid4().hex
-        server = None
-        thread = None
         try:
-            docker('run', '-d', '--rm', '--pull=never', '--network', 'none', '--read-only',
-                   '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-                   '--tmpfs', '/tmp:rw,exec,nosuid,nodev,size=512m',
+            docker('run', '-d', *ISOLATION,
                    '--tmpfs', '/app/node_modules/.vite-temp:rw,exec,nosuid,nodev,size=64m',
                    '--tmpfs', '/app/node_modules/.vite:rw,exec,nosuid,nodev,size=512m',
                    '--mount', 'type=bind,src=' + str(source) + ',dst=/src,readonly', '--name', name,
                    '-w', '/src', *environment, '--entrypoint', 'node', image,
-                   '/app/node_modules/vite/bin/vite.js', *(['--config', config] if config else []),
-                   '--host', '127.0.0.1', '--port', '5173')
+                   '/app/node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5173')
             wait_for_vite(name)
-            slots = threading.BoundedSemaphore(8)
-            class Handler(http.server.BaseHTTPRequestHandler):
-                def do_GET(self):
-                    parsed = urllib.parse.urlsplit(self.path)
-                    if parsed.scheme or parsed.netloc or not parsed.path.startswith('/') or parsed.path.startswith('//'):
-                        self.send_error(400)
-                        return
-                    try:
-                        with slots:
-                            raw = docker('exec', name, 'python3', '-c', BRIDGE, self.path, timeout=40)
-                        result = json.loads(raw)
-                        data = base64.b64decode(result['data'], validate=True)
-                        self.send_response(result['status'])
-                        self.send_header('Content-Type', result['type'])
-                        self.send_header('Content-Length', str(len(data)))
-                        self.end_headers()
-                        self.wfile.write(data)
-                    except (BrokenPipeError, ConnectionResetError):
-                        return
-                    except (FridayError, ValueError, KeyError):
-                        self.send_error(502)
-                def log_message(self, *args):
-                    pass
-            server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            yield 'http://preview-' + uuid.uuid4().hex + '.localhost:' + str(server.server_port) + '/'
-        finally:
-            if server:
-                server.shutdown()
-                server.server_close()
-                thread.join(timeout=5)
+        except BaseException:
             try:
                 docker('stop', '--time', '1', name, timeout=10)
             except FridayError:
                 pass
+            raise
+        with served(name, 5173) as url:
+            yield url
+
+
+def showcase_of(selected, worktree):
+    """The showcase worktree that holds the kit's worktree at its mount."""
+    mount = PurePosixPath(stories.mount(selected))
+    showcase = Path(worktree)
+    for _ in mount.parts:
+        showcase = showcase.parent
+    if (showcase / mount).resolve() != Path(worktree).resolve():
+        raise FridayError('preview_unavailable', 'The kit worktree is not inside a showcase worktree.')
+    return showcase
+
+
+@contextlib.contextmanager
+def storybook_preview(selected, worktree):
+    """Storybook of the showcase with the kit's sources linked in, both from their committed snapshots.
+
+    The image is the showcase's own Dockerfile build (dependencies in /app/node_modules, installed with network at build
+    time). At run time there is no network: the link that npm run link:uikit makes is a symlink to the kit snapshot."""
+    config = stories.settings(selected)
+    spec = selected.get('preview') or {}
+    if not config:
+        raise FridayError('invalid_profile', 'The storybook preview needs stories in the profile.')
+    browser_session.configuration(selected.get('browser'), 'http://probe.localhost:12345/')
+    package = spec.get('package', '@frontend/vue-uikit')
+    if not re.fullmatch(r'@[a-z0-9-]+/[a-z0-9.-]+', package):
+        raise FridayError('invalid_profile', 'preview.package must be a scoped npm package name.')
+    scope = package.split('/')[0]
+    mount = stories.mount(selected)
+    image = gate.image_id(config.get('image'))
+    showcase = showcase_of(selected, worktree)
+    _, _, showcase_archive = gate.snapshot(dict(selected, repository=str(showcase)))
+    _, _, kit_archive = gate.snapshot(dict(selected, repository=worktree))
+    with tempfile.TemporaryDirectory(prefix='friday-storybook-') as directory:
+        source = Path(directory) / 'src'
+        extract(showcase_archive, source)
+        extract(kit_archive, source / mount)
+        (source / 'node_modules').symlink_to('/app/node_modules')
+        name = 'friday-storybook-' + uuid.uuid4().hex
+        start = ('ln -s /src/%s /app/node_modules/%s && exec /app/node_modules/.bin/storybook dev --ci --no-open '
+                 '--disable-telemetry --no-version-updates --host 127.0.0.1 -p 6006' % (mount, package))
+        try:
+            docker('run', '-d', *ISOLATION,
+                   # npm run link:uikit at run time: the package's scope is a fresh directory holding only the link
+                   '--tmpfs', '/app/node_modules/%s:rw,nosuid,nodev,size=1m' % scope,
+                   '--tmpfs', '/app/node_modules/.cache:rw,exec,nosuid,nodev,size=512m',
+                   '--tmpfs', '/app/node_modules/.vite:rw,exec,nosuid,nodev,size=512m',
+                   '--mount', 'type=bind,src=' + str(source) + ',dst=/src,readonly', '--name', name, '-w', '/src',
+                   '-e', 'HOME=/tmp', '-e', 'NODE_ENV=development', '-e', 'STORYBOOK_DISABLE_TELEMETRY=1',
+                   '--entrypoint', 'sh', image, '-c', start)
+            wait_for_vite(name, 6006, attempts=240)
+        except BaseException:
+            try:
+                docker('stop', '--time', '1', name, timeout=10)
+            except FridayError:
+                pass
+            raise
+        with served(name, 6006) as url:
+            yield url

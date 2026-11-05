@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from . import design
+from . import design, stories
 from .errors import FridayError
 
 
@@ -86,5 +86,6 @@ def load(path):
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
     design.validate(profile.get("design"))
+    stories.validate(profile.get("stories"))
     profile["path"] = str(path)
     return profile

@@ -8,31 +8,72 @@ from friday.errors import FridayError
 
 
 class PreviewTests(unittest.TestCase):
-    def test_ui_kit_preview_uses_its_vite_config_and_no_staging_api(self):
+    def archive(self, files):
         import io
         import tarfile
         buffer = io.BytesIO()
         with tarfile.open(fileobj=buffer, mode='w') as tar:
-            data = b'<html></html>'
-            item = tarfile.TarInfo('playground/index.html')
-            item.size = len(data)
-            tar.addfile(item, io.BytesIO(data))
-        profile = {'browser': {'mode': 'local'}, 'gate_image': 'img',
-                   'preview': {'backend': 'docker-vite', 'vite_config': 'vite.playground.config.ts'}}
+            for name, data in files.items():
+                item = tarfile.TarInfo(name)
+                item.size = len(data)
+                tar.addfile(item, io.BytesIO(data))
+        return buffer.getvalue()
+
+    def test_storybook_links_the_kit_snapshot_and_runs_without_network(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            showcase = Path(directory) / 'storybook'
+            kit = showcase / 'deps' / 'vue-uikit'
+            kit.mkdir(parents=True)
+            profile = {'browser': {'mode': 'local'}, 'preview': {'backend': 'storybook'},
+                       'stories': {'repository': '/r', 'base_branch': 'master', 'worktree_root': '/w', 'image': 'sb'}}
+            archives = {str(showcase): self.archive({'.storybook/main.ts': b'x', 'src/stories/Button.stories.ts': b'y'}),
+                        str(kit): self.archive({'src/index.ts': b'z'})}
+            seen = {}
+            def snapshot(selected):
+                return 'h', 'd', archives[selected['repository']]
+            def docker(*args, **kwargs):
+                if args[0] == 'run':
+                    source = Path(args[args.index('--mount') + 1].split(',')[1][4:])
+                    seen['files'] = sorted(str(path.relative_to(source)) for path in source.rglob('*') if path.is_file())
+                    seen['node_modules'] = str((source / 'node_modules').readlink()) if hasattr(Path, 'readlink') else '/app/node_modules'
+                return b''
+            with patch('friday.isolated_preview.gate.image_id', return_value='sha') as image, \
+                 patch('friday.isolated_preview.gate.snapshot', side_effect=snapshot), \
+                 patch('friday.isolated_preview.wait_for_vite') as wait, \
+                 patch('friday.isolated_preview.docker', side_effect=docker) as calls:
+                with isolated_preview.open_preview(profile, str(kit)) as url:
+                    self.assertRegex(url, r'^http://preview-[0-9a-f]+\.localhost:\d+/$')
+            image.assert_called_once_with('sb')
+            self.assertEqual(wait.call_args.args[1:], (6006,))
+            self.assertEqual(seen['files'], ['.storybook/main.ts', 'deps/vue-uikit/src/index.ts', 'src/stories/Button.stories.ts'])
+            self.assertEqual(seen['node_modules'], '/app/node_modules')
+            run = calls.call_args_list[0].args
+            self.assertEqual(run[run.index('--network') + 1], 'none')
+            self.assertIn('--read-only', run)
+            self.assertIn('/app/node_modules/@frontend:rw,nosuid,nodev,size=1m', run)
+            script = run[-1]
+            self.assertTrue(script.startswith('ln -s /src/deps/vue-uikit /app/node_modules/@frontend/vue-uikit && exec '))
+            self.assertIn('storybook dev --ci --no-open --disable-telemetry', script)
+            self.assertIn('--host 127.0.0.1 -p 6006', script)
+            outside = Path(directory) / 'elsewhere'
+            outside.mkdir()
+            with self.assertRaises(FridayError):
+                with isolated_preview.open_preview(profile, str(outside)):
+                    pass
+
+    def test_vite_preview_in_local_mode_has_no_staging_api(self):
+        profile = {'browser': {'mode': 'local'}, 'gate_image': 'img', 'preview': {'backend': 'docker-vite'}}
         with patch('friday.isolated_preview.gate.image_id', return_value='sha'), \
-             patch('friday.isolated_preview.gate.snapshot', return_value=('h', 'd', buffer.getvalue())), \
+             patch('friday.isolated_preview.gate.snapshot', return_value=('h', 'd', self.archive({'index.html': b'<html>'}))), \
              patch('friday.isolated_preview.wait_for_vite'), \
              patch('friday.isolated_preview.docker', return_value=b'') as docker:
-            with isolated_preview.open_preview(profile, '/worktree') as url:
-                self.assertRegex(url, r'^http://preview-[0-9a-f]+\.localhost:\d+/$')
+            with isolated_preview.open_preview(profile, '/worktree'):
+                pass
         run = docker.call_args_list[0].args
-        self.assertEqual(run[run.index('--network') + 1], 'none')
-        self.assertEqual(run[-6:], ('--config', 'vite.playground.config.ts', '--host', '127.0.0.1', '--port', '5173'))
         self.assertFalse(any(str(arg).startswith('VITE_API_APOLLO_URI') for arg in run))
-        for config in ('../outside.ts', '/abs.ts', ''):
-            with self.subTest(config=config), patch('friday.isolated_preview.gate.image_id'), self.assertRaises(FridayError):
-                with isolated_preview.open_preview(dict(profile, preview=dict(profile['preview'], vite_config=config)), '/w'):
-                    pass
+        self.assertEqual(run[-4:], ('--host', '127.0.0.1', '--port', '5173'))
         with self.assertRaises(FridayError):  # a staging browser still needs its API path
             with isolated_preview.open_preview({'browser': {'stage_origin': 'https://gql.stage.example.ru'},
                                                 'preview': {'backend': 'docker-vite'}}, '/w'):
