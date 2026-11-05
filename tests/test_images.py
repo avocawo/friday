@@ -176,6 +176,16 @@ class ImageTests(unittest.TestCase):
             with self.assertRaises(FridayError):
                 profile.load(self.profile_path)
 
+    def test_doctor_requires_a_gate_for_a_preview_profile(self):
+        data = json.loads(self.profile_path.read_text())
+        for extra, expected in (({}, "missing"), ({"stories": None, "preview": None}, "warning"),
+                                ({"stories": None, "preview": {"backend": "storybook"}}, "missing")):
+            self.profile_path.write_text(json.dumps(dict(data, **extra)))
+            with patch("friday.images.subprocess.run", FakeDocker("x")), patch("friday.doctor.models.cast", return_value=({}, [])):
+                report = doctor.inspect(self.profile_path)
+            gate = next(item for item in report["checks"] if item["name"] == "gate")
+            self.assertEqual(gate["status"], expected, extra)
+
     def test_only_selects_and_empty_profile_fails(self):
         with self.assertRaises(FridayError):
             images.select(profile.load(self.profile_path), "gate")

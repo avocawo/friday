@@ -16,9 +16,11 @@ ROUNDS = 4
 
 STRINGS = {"type": "array", "items": {"type": "string"}}
 EXECUTOR_SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["summary", "stages_done", "extra_files", "disputes"],
+    "type": "object", "additionalProperties": False, "required": ["summary", "stages_done", "extra_files", "disputes", "checks",
+                                                                 "checks_note"],
     "properties": {
         "summary": {"type": "string"}, "stages_done": STRINGS,
+        "checks": {"type": "string", "enum": ["passed", "failed", "not_run"]}, "checks_note": {"type": "string"},
         "extra_files": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["path", "reason"],
                                                    "properties": {"path": {"type": "string"}, "reason": {"type": "string"}}}},
         "disputes": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["finding", "reason", "evidence"],
@@ -45,7 +47,10 @@ EXECUTOR_RULES = (
     "git add <files> and git commit -m \"{key} <stage id>: <short summary>\". Follow the project rules below; they are "
     "a digest made for you, read the source only when a rule is unclear. Stay within the milestone's files; if you must "
     "change another file, do it and list it in extra_files with the reason. You have no network. Do not push, do not "
-    "change git configuration, do not delete or rewrite earlier commits. Write summary in the task's language.")
+    "change git configuration, do not delete or rewrite earlier commits. Report your checks honestly: checks is passed "
+    "when every available check ran on your last commit and passed, failed when a check ran and reported errors, not_run "
+    "when a check could not run at all (missing dependencies, a crashing tool, no commands available); say which and why "
+    "in checks_note. Write summary and checks_note in the task's language.")
 REVIEW_RULES = (
     "You review one milestone of an approved plan. You get the milestone's goal, criteria and the project rules digest, "
     "the diff of this milestone only, and the result of the isolated gate (lint, typecheck, tests) on the same commit. "
@@ -164,6 +169,8 @@ def run(root, key, profile, milestone_id, worktree=None):
         answer = result.structured or {}
         if answer.get("summary"):
             set_state(root, key, milestone_id, summary=answer["summary"], executor=entry["model"])
+        checks, checks_note = answer.get("checks", "passed"), answer.get("checks_note", "")
+        set_state(root, key, milestone_id, checks=checks, checks_note=checks_note)
         extra = answer.get("extra_files", extra)
         for dispute in answer.get("disputes", []):
             if 0 <= dispute["finding"] < len(findings):
@@ -198,7 +205,17 @@ def run(root, key, profile, milestone_id, worktree=None):
                 if gate_record["status"] == "environment_unavailable":
                     set_state(root, key, milestone_id, state="blocked")
                     raise FridayError("environment_unavailable", "The gate environment is unavailable; see " + gate_record["log"])
-            if gate_record and gate_record["status"] != "passed":
+            elif checks == "not_run" and profile.get("executor_commands"):
+                # Nothing else checks this commit: a broken environment blocks the milestone instead of passing it unchecked.
+                set_state(root, key, milestone_id, state="blocked", blocked_reason=checks_note)
+                cards.record(root, key, "milestone_blocked", milestone=milestone_id, reason=checks_note)
+                raise FridayError("environment_unavailable", "The executor's checks could not run on %s and there is no gate: %s"
+                                  % (milestone_id, checks_note))
+            if gate_record is None and checks == "failed":
+                failures += 1
+                feedback_text = ("Your own checks fail on your last commit and no gate checks it instead. Fix the errors "
+                                 "they report and commit:\n\n" + checks_note)
+            elif gate_record and gate_record["status"] != "passed":
                 failures += 1
                 feedback_text = "The isolated gate failed on your last commit. Fix these errors:\n\n" + gate.failures(
                     Path(gate_record["log"]).read_text(encoding="utf-8", errors="replace"))
@@ -258,9 +275,11 @@ def accept_in_browser(root, key, profile, layout, author, worktree, item):
         cards.record(root, key, "cast_note", milestone=item["id"], note=note)
     result = final.browser(root, key, profile, entry, worktree, item, run_role, REVIEW_SCHEMA)
     if result is None:
+        set_state(root, key, item["id"], browser={"status": "skipped", "reason": "в профиле нет браузера или preview"})
         return []
     if result.status != "ok" or not isinstance(result.structured, dict):
         cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason=result.error or result.status)
+        set_state(root, key, item["id"], browser={"status": "unverifiable", "reason": (result.error or result.status)[:300]})
         return []
     value = result.structured
     statuses = [c["status"] for c in value["criteria_results"]]
@@ -270,6 +289,9 @@ def accept_in_browser(root, key, profile, layout, author, worktree, item):
     set_state(root, key, item["id"], browser_minor=[f for f in value["findings"] if f["severity"] == "minor"])
     if not statuses or all(status == "unverifiable" for status in statuses):
         cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason="no criterion could be observed")
+        set_state(root, key, item["id"], browser={"status": "unverifiable", "reason": "ни один критерий не удалось наблюдать"})
+    else:
+        set_state(root, key, item["id"], browser={"status": "checked", "reason": ""})
     return [finding for finding in value["findings"] if finding["severity"] == "blocking"]
 
 
@@ -317,14 +339,37 @@ def close(root, key, milestone_id, item, start, worktree, review_value, gate_rec
     changed = set(filter(None, git(worktree, "diff", "--name-only", start + "..HEAD").splitlines())) | showcase_changed
     outside = sorted(changed - set(item["files"]))
     minor = [f for f in (review_value or {}).get("findings", []) if f["severity"] == "minor"]
+    reasons = unverified(item, next(m for m in card["milestones"] if m["id"] == milestone_id), gate_record)
     set_state(root, key, milestone_id, state="done", stages=stages, head=git(worktree, "rev-parse", "HEAD").strip(),
               **({"showcase_head": stories.head(card)} if stories.worktree(card) else {}),
-              outside_files=outside, minor_findings=minor)
+              outside_files=outside, minor_findings=minor, verified=not reasons, unverified=reasons)
+    if reasons:
+        cards.record(root, key, "milestone_unverified", milestone=milestone_id, reasons=reasons)
     if disputes:
         cards.update(root, key, lambda value: value["disputes"].extend(disputes))
     cards.record(root, key, "milestone_done", milestone=milestone_id, rounds=rounds, commits=len(commits),
                  disputes=len(disputes), outside_files=outside, extra_files=[e["path"] for e in extra])
     return {"milestone": milestone_id, "commits": len(commits), "disputes": len(disputes), "outside_files": outside}
+
+
+def unverified(item, entry, gate_record):
+    """Why a finished milestone was not actually checked: no gate, the executor's own checks, the browser."""
+    reasons = []
+    gate_passed = bool(gate_record) and gate_record.get("status") == "passed"
+    if gate_record is None:
+        reasons.append("гейт не настроен: изолированной проверки не было")
+    if not gate_passed and entry.get("checks", "passed") != "passed":
+        reasons.append("проверки исполнителя %s: %s" % ({"failed": "не прошли", "not_run": "не запускались"}.get(
+            entry["checks"], entry["checks"]), entry.get("checks_note") or "без пояснения"))
+    browser = entry.get("browser") or {}
+    if item.get("ui") and browser.get("status") != "checked":
+        reasons.append("браузерная приёмка %s: %s" % ({"skipped": "не проводилась", "unverifiable": "не смогла проверить"}.get(
+            browser.get("status"), "не проводилась"), browser.get("reason") or "нет данных"))
+    return reasons
+
+
+def task_unverified(card):
+    return [{"milestone": item["id"], "reasons": item["unverified"]} for item in card["milestones"] if item.get("unverified")]
 
 
 def ready(card):
@@ -378,7 +423,8 @@ def run_task(root, key, profile):
         except FridayError:
             cards.update(root, key, lambda value: value.update(state="failed"))
             raise
-    cards.update(root, key, lambda value: value.update(state="done" if not left else "stopped"))
+    cards.update(root, key, lambda value: value.update(state="done" if not left else "stopped",
+                                                       unverified=task_unverified(value)))
     cards.record(root, key, "run_task_finished", completed=[item["milestone"] for item in completed], left=left)
     return {"completed": completed, "left": left, "delivery": delivery}
 
@@ -509,6 +555,8 @@ def decide(root, key, name, text, reopen=()):
         for item in value["milestones"]:
             if item["id"] in affected and item["state"] == "done":
                 item["state"] = "reopened"
+                for field in ("verified", "unverified", "browser", "checks", "checks_note"):
+                    item.pop(field, None)
         if affected and value["state"] == "done":
             value["state"] = "stopped"  # reopened work makes the task runnable again
         return sorted(affected)

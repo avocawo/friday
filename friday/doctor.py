@@ -67,8 +67,13 @@ def inspect(path):
                 from . import gate
                 gate.image_id(selected.get("gate_image"))
             check("gate_image", gate_image)
+    elif isinstance(selected.get("preview"), dict) or stories.settings(selected):
+        # A UI kit has nothing else that checks a milestone's build: without a gate every milestone ends unverified.
+        checks.append({"name": "gate", "status": "missing", "reason": "No gate: a profile with a preview must set gate and "
+                       "gate_image, or every milestone ends unverified (lint, types and build never run in isolation)."})
     else:
-        checks.append({"name": "gate", "status": "warning", "reason": "No gate: milestones are reviewed without an isolated check."})
+        checks.append({"name": "gate", "status": "warning", "reason": "No gate: milestones are reviewed without an isolated check "
+                       "and end unverified."})
     if isinstance(selected.get("browser"), dict):
         def browser():
             from . import browser_probe, browser_session

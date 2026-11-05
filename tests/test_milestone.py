@@ -53,7 +53,7 @@ PLAN = {"summary": "Приветствие.", "rules": ["Тесты рядом (
              "depends_on": ["M1"], "files": ["app.py"],
              "stages": [{"id": "M2.1", "brief": "print", "steps": [], "files": ["app.py"], "new_files": [], "estimate_lines": 5,
                          "criteria": [{"text": "app печатает", "check": "code"}]}]}]}
-DONE = {"summary": "Сделано.", "stages_done": [], "extra_files": [], "disputes": []}
+DONE = {"summary": "Сделано.", "stages_done": [], "extra_files": [], "disputes": [], "checks": "passed", "checks_note": ""}
 PASS = {"verdict": "pass", "criteria_results": [{"criterion": "c", "status": "pass", "evidence": "f:1"}], "findings": []}
 BLOCK = {"verdict": "fail", "criteria_results": [], "findings": [
     {"severity": "blocking", "file": "greet.py", "problem": "Нет обработки пустого имени.", "evidence": "greet.py:1"},
@@ -108,6 +108,55 @@ class MilestoneTests(unittest.TestCase):
 
     def call(self, index):
         return json.loads((self.fake / ("call-%d.json" % index)).read_text())
+
+    def test_without_a_gate_a_finished_task_is_unverified_everywhere(self):
+        from friday import final, journal, status
+        self.calls(("e1", {"write": {"greet.py": "def greet(n):\n    return n\n"}, "commit": ["T-1 M1.1: greet"]}, DONE),
+                   ("rev", None, PASS),
+                   ("e2", {"write": {"app.py": "print(1)\n"}, "commit": ["T-1 M2.1: print"]}, DONE),
+                   ("rev", None, PASS))
+        milestone.run_task(self.root, "T-1", self.profile)
+        value = card.read(self.root, "T-1")
+        self.assertEqual(value["state"], "done")
+        self.assertEqual([item["verified"] for item in value["milestones"]], [False, False])
+        self.assertEqual([entry["milestone"] for entry in value["unverified"]], ["M1", "M2"])
+        self.assertIn("гейт не настроен", value["unverified"][0]["reasons"][0])
+        self.assertEqual(status.state_name(value), "готова, не проверена")
+        self.assertIn("Не проверено M1: гейт не настроен", status.render_task(self.root, "T-1"))
+        text = final.description(self.root, "T-1")
+        self.assertIn("**M1. Функция** — готово, не проверено", text)
+        self.assertIn("## Не проверено", text)
+        self.assertIn("M1: готова, но не проверена", journal.describe({"type": "milestone_unverified", "milestone": "M1",
+                                                                       "reasons": ["гейт не настроен"]}))
+
+    def test_checks_that_cannot_run_without_a_gate_block_the_milestone(self):
+        broken = dict(DONE, checks="not_run", checks_note="vue-tsc падает: createGlobalTypesWriter is not a function")
+        self.calls(("e1", {"write": {"greet.py": "x = 1\n"}, "commit": ["T-1 M1.1: greet"]}, broken))
+        with self.assertRaises(FridayError) as error:
+            milestone.run_task(self.root, "T-1", self.profile)
+        self.assertEqual(error.exception.code, "environment_unavailable")
+        first = card.read(self.root, "T-1")["milestones"][0]
+        self.assertEqual((first["state"], first["blocked_reason"]), ("blocked", broken["checks_note"]))
+        self.assertIn("milestone_blocked", [event["type"] for event in card.events(self.root, "T-1")])
+
+    def test_failing_own_checks_without_a_gate_go_back_to_the_executor(self):
+        failing = dict(DONE, checks="failed", checks_note="eslint: no-shadow в greet.py:1")
+        self.calls(("e1", {"write": {"greet.py": "x = 1\n"}, "commit": ["T-1 M1.1: greet"]}, failing),
+                   ("e1", {"write": {"greet.py": "x = 2\n"}, "commit": ["T-1 M1.1: fix"]}, DONE),
+                   ("rev", None, PASS),
+                   ("e2", {"write": {"app.py": "print(1)\n"}, "commit": ["T-1 M2.1: print"]}, DONE),
+                   ("rev", None, PASS))
+        milestone.run_task(self.root, "T-1", self.profile)
+        self.assertIn("eslint: no-shadow в greet.py:1", self.call(1)["prompt"])
+        self.assertEqual(self.call(2)["argv"][self.call(2)["argv"].index("--model") + 1], "big-1")
+
+    def test_unverified_reasons(self):
+        ui = {"ui": True}
+        self.assertEqual(milestone.unverified(ui, {"checks": "not_run", "checks_note": "n", "browser": {"status": "checked"}},
+                                              {"status": "passed"}), [])
+        reasons = milestone.unverified(ui, {"checks": "failed", "checks_note": "tsc", "browser": {"status": "skipped", "reason": "нет preview"}},
+                                       {"status": "failed"})
+        self.assertEqual(reasons, ["проверки исполнителя не прошли: tsc", "браузерная приёмка не проводилась: нет preview"])
 
     def test_milestones_run_in_order_with_review_fix_and_dispute(self):
         self.calls(("e1", {"write": {"greet.py": "def greet(n):\n    return n\n"}, "commit": ["T-1 M1.1: greet"]}, DONE),

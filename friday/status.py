@@ -9,6 +9,13 @@ STATE_NAMES = {"planning": "план", "awaiting_approval": "ждёт утвер
                "stopped": "остановлена", "done": "готова", "failed": "сбой"}
 
 
+def state_name(card):
+    """A finished task that nothing actually checked is not shown as simply done."""
+    if card.get("state") == "done" and card.get("unverified"):
+        return "готова, не проверена"
+    return STATE_NAMES.get(card.get("state"), card.get("state"))
+
+
 def totals(events):
     spent = {"runs": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_runs": 0, "seconds": 0.0, "by_role": {}}
     for event in events:
@@ -33,7 +40,7 @@ def totals(events):
 def task(root, key, now=None):
     now = now or time.time()
     card = cards.read(root, key)
-    row = {"key": key, "state": card["state"], "now": [], "waiting": [], "spent": totals(cards.events(root, key))}
+    row = {"key": key, "state": card["state"], "state_name": state_name(card), "unverified": card.get("unverified", []), "now": [], "waiting": [], "spent": totals(cards.events(root, key))}
     for current in cards.running(card).values():
         status = cards.run_status(root, key, current["run"])
         if status.get("state") == "waiting":
@@ -109,7 +116,7 @@ def render(rows, width=110):
     table = [header]
     for row in rows:
         live = sum(now["tokens"] for now in row["now"])
-        first = (row["key"], STATE_NAMES.get(row["state"], row["state"]))
+        first = (row["key"], row.get("state_name") or STATE_NAMES.get(row["state"], row["state"]))
         totals_cells = (tokens(row["spent"]["tokens"] + live), money(row["spent"]))
         activity = [(duration(now["elapsed"]), duration(now["quiet"]), describe(now)) for now in row["now"]]
         activity += [(duration(wait["elapsed"]), "—", describe_wait(wait)) for wait in row["waiting"]]
@@ -130,7 +137,12 @@ def render(rows, width=110):
 def render_task(root, key, recent=10):
     row = task(root, key)
     card = cards.read(root, key)
-    lines = ["%s — %s" % (key, STATE_NAMES.get(card["state"], card["state"]))]
+    lines = ["%s — %s" % (key, state_name(card))]
+    for item in card["milestones"]:
+        if item.get("state") == "blocked" and item.get("blocked_reason"):
+            lines.append("Заблокирована %s: %s" % (item["id"], item["blocked_reason"]))
+        for reason in item.get("unverified") or []:
+            lines.append("Не проверено %s: %s" % (item["id"], reason))
     if card.get("branch"):
         lines.append("Ветка: %s  Рабочая копия: %s" % (card["branch"], card.get("worktree") or "—"))
     if card["cast"]:

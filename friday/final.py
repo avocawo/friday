@@ -131,7 +131,8 @@ def description(root, key):
         lines[1:1] = ["", "Вторая ветка: `%s` в репозитории историй (`%s`)." % (card["stories"]["branch"], card["stories"]["repository"])]
     for item in card["milestones"]:
         title = next(m["title"] for m in document["milestones"] if m["id"] == item["id"])
-        lines.append("- **%s. %s** — %s" % (item["id"], title, {"done": "готово"}.get(item["state"], item["state"])))
+        shown = {"done": "готово"}.get(item["state"], item["state"]) + (", не проверено" if item.get("unverified") else "")
+        lines.append("- **%s. %s** — %s" % (item["id"], title, shown))
         for stage in item.get("stages", []):
             lines.append("  - %s %s" % (stage["id"], (stage.get("commit") or "")[:10]))
     if card["disputes"]:
@@ -146,9 +147,15 @@ def description(root, key):
     outside = sorted({path for item in card["milestones"] for path in item.get("outside_files", [])})
     if outside:
         lines += ["", "## Файлы вне плана", ", ".join("`%s`" % path for path in outside)]
-    unverified = [event["milestone"] for event in cards.events(root, key) if event.get("type") in ("browser_unverifiable", "browser_skipped")]
+    unverified = [item for item in card["milestones"] if item.get("unverified")]
     if unverified:
-        lines += ["", "## Не проверено в браузере", ", ".join(sorted(set(unverified)))]
+        lines += ["", "## Не проверено", "Эти вехи закрыты без проверки; сделайте её до слияния."]
+        lines += ["- **%s**: %s" % (item["id"], reason) for item in unverified for reason in item["unverified"]]
+    elif not any("verified" in item for item in card["milestones"]):
+        # Cards written before milestones recorded their own verification: fall back to the browser events.
+        older = [event["milestone"] for event in cards.events(root, key) if event.get("type") in ("browser_unverifiable", "browser_skipped")]
+        if older:
+            lines += ["", "## Не проверено в браузере", ", ".join(sorted(set(older)))]
     spent = status.totals(cards.events(root, key))
     lines += ["", "---", "Friday: %s, %s токенов, %d запусков моделей. Раскладка: %s." % (
         status.money(spent), status.tokens(spent["tokens"]), spent["runs"],

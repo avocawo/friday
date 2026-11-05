@@ -101,6 +101,8 @@ def describe(event):
         "browser_unverifiable": lambda: "%s: в браузере проверить не удалось (%s)." % (milestone, event.get("reason", "")),
         "browser_skipped": lambda: "%s: браузерной приёмки нет (%s)." % (milestone, event.get("reason", "")),
         "milestone_done": lambda: "%s: готова за %s круг(а), коммитов %s, спорных %s." % (milestone, event.get("rounds"), event.get("commits"), event.get("disputes")),
+        "milestone_blocked": lambda: "%s: заблокирована, среда не даёт проверить (%s)." % (milestone, event.get("reason", "")),
+        "milestone_unverified": lambda: "%s: готова, но не проверена: %s." % (milestone, "; ".join(event.get("reasons") or [])),
         "milestone_failed": lambda: "%s: сбой (%s)." % (milestone, event.get("reason") or "гейт так и не прошёл"),
         "parallel_started": lambda: "Параллельно: %s." % ", ".join(map(str, event.get("milestones") or [])),
         "decision": lambda: "Решение владельца «%s», переоткрыты: %s." % (event.get("name"), ", ".join(event.get("reopened", [])) or "ничего"),
@@ -138,8 +140,14 @@ def render_task(root, key, profile, sink, previous=""):
     milestones = []
     for item in card["milestones"]:
         planned = titles.get(item["id"], {})
-        milestones.append("### %s. %s — %s" % (item["id"], planned.get("title", item.get("title", "")),
-                                               MILESTONE_STATES.get(item["state"], item["state"])))
+        shown = MILESTONE_STATES.get(item["state"], item["state"])
+        if item["state"] == "done" and item.get("unverified"):
+            shown += ", не проверена"
+        milestones.append("### %s. %s — %s" % (item["id"], planned.get("title", item.get("title", "")), shown))
+        for reason in item.get("unverified") or []:
+            milestones.append("- Не проверено: " + reason)
+        if item["state"] == "blocked" and item.get("blocked_reason"):
+            milestones.append("- Заблокирована: " + item["blocked_reason"])
         if planned.get("goal"):
             milestones.append(planned["goal"])
         if item.get("summary"):
@@ -168,7 +176,7 @@ def render_task(root, key, profile, sink, previous=""):
     found = NOTES.search(previous)
     notes = "<!-- friday:notes -->\n%s<!-- /friday:notes -->" % (found.group(1) if found else "")
     delivery = card.get("delivery") or {}
-    status_line = STATES.get(card["state"], card["state"])
+    status_line = "Готова, не проверена" if card["state"] == "done" and card.get("unverified") else STATES.get(card["state"], card["state"])
     if delivery.get("url"):
         status_line += " · [черновой MR](%s)" % delivery["url"]
     if card.get("branch"):
@@ -185,7 +193,8 @@ def render_now(root, sink, profile):
     rows = ["| Задача | Состояние | Сейчас | Расход |", "|---|---|---|---|"]
     for row in status.overview(root):
         doing = "; ".join(status.describe(now) for now in row["now"]) or "; ".join(status.describe_wait(w) for w in row["waiting"]) or "—"
-        rows.append("| [[%s]] | %s | %s | %s |" % (row["key"], STATES.get(row["state"], row["state"]), doing.replace("|", "/"),
+        shown = "Готова, не проверена" if row["state"] == "done" and row.get("unverified") else STATES.get(row["state"], row["state"])
+        rows.append("| [[%s]] | %s | %s | %s |" % (row["key"], shown, doing.replace("|", "/"),
                                                   status.money(row["spent"])))
     return owned("now", fill(template(sink, profile, "now.md"), {"updated": state.now(), "tasks": "\n".join(rows)}))
 

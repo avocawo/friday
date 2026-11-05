@@ -47,7 +47,7 @@ PLAN = {"summary": "Компонент и история.", "rules": [], "assump
                         "stages": [{"id": "M1.1", "brief": "Кнопка", "steps": [], "files": ["src/Button.vue"],
                                     "new_files": ["stories:src/stories/Button.stories.ts"], "estimate_lines": 20,
                                     "criteria": [{"text": "История controls-button--default показывает кнопку", "check": "behavior"}]}]}]}
-DONE = {"summary": "Сделано.", "stages_done": ["M1.1"], "extra_files": [], "disputes": []}
+DONE = {"summary": "Сделано.", "stages_done": ["M1.1"], "extra_files": [], "disputes": [], "checks": "passed", "checks_note": ""}
 PASS = {"verdict": "pass", "criteria_results": [{"criterion": "c", "status": "pass", "evidence": "f:1"}], "findings": []}
 
 
