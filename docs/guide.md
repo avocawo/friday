@@ -1,60 +1,62 @@
-# Руководство Friday
+# Friday guide
 
-## Установка
+**English** · [Русский](ru/guide.md) · [简体中文](zh-cn/guide.md) · [日本語](ja/guide.md) · [한국어](ko/guide.md) · [Português (Brasil)](pt-br/guide.md) · [Español](es/guide.md) · [Deutsch](de/guide.md) · [Français](fr/guide.md) · [Bahasa Indonesia](id/guide.md)
 
-1. Клонируйте Friday и добавьте `bin` в `PATH` или задайте `FRIDAY_BIN`.
-2. Установите нужные агентам CLI: Claude Code (`claude`) для моделей Anthropic и Z.ai, Codex CLI (`codex`) для моделей OpenAI. Войдите в них как обычно.
-3. Для гейта и браузерной приёмки установите Docker. Для браузерной приёмки нужен Chrome с отладочным портом 9333 и вход в стенд.
-4. Состояние хранится в `~/.local/share/friday` (переопределяется через `FRIDAY_HOME`). Профили и секреты в репозиторий не попадают: папка `profiles/` в `.gitignore`.
+## Installation
 
-### Плагин для Codex и Claude Code
+1. Clone Friday and add `bin` to `PATH`, or set `FRIDAY_BIN`.
+2. Install the CLIs that the agents need: Claude Code (`claude`) for Anthropic and Z.ai models, Codex CLI (`codex`) for OpenAI models. Sign in to them as usual.
+3. For the gate and browser acceptance, install Docker. Browser acceptance also needs Chrome with the debugging port 9333 and a signed-in session in the test environment.
+4. State is stored in `~/.local/share/friday` (override it with `FRIDAY_HOME`). Profiles and secrets do not enter the repository: the `profiles/` folder is in `.gitignore`.
+
+### Plugin for Codex and Claude Code
 
 ```sh
 codex plugin marketplace add "$PWD" && codex plugin add friday@friday
 claude plugin marketplace add "$PWD" && claude plugin install friday@friday --scope user
 ```
 
-Плагин учит агента читать `status` и `plan`, а запуск, утверждение и решения оставляет вам.
+The plugin teaches the agent to read `status` and `plan`. Starting a task, approving it and making decisions are left to you.
 
-## Как идёт задача
+## How a task runs
 
-1. **`start`** создаёт ветку `friday/KEY` от свежего `origin/<base_branch>` и рабочую копию, фиксирует раскладку моделей и пишет план: вехи из 2–5 этапов, файлы, оценку объёма, кодовые и браузерные критерии, выжимку правил проекта для исполнителя. План проверяется без модели (объём, файлы, порядок, критерии), потом его проверяет модель другого вендора, и планировщик один раз отвечает на замечания: принимает или отклоняет с обоснованием.
-2. **`plan`** показывает план, вопросы, отклонённые замечания и пересечения файлов с другими активными задачами.
-3. **`approve`** утверждает план и запускает конвейер в фоне (`--no-run` — только утвердить, потом `run`).
-4. **Веха.** Исполнитель работает в одной сессии на веху и коммитит каждый этап. Гейт запускается на коммите; при провале исполнитель получает только упавшие секции лога. Ревью смотрит дифф этой вехи вместе с результатом гейта. Блокирующие находки исполнитель исправляет или оспаривает; оспоренные уходят вам. Вехи с интерфейсом проходят браузерную приёмку в изолированном preview. После двух провалов подряд веху берёт модель уровнем выше в новой сессии.
-5. **Финал.** Финальное ревью и слепая проверка всего диффа идут параллельно, блокирующие находки получают один раунд исправлений.
-6. **Черновой MR** открывается, если в профиле задан `delivery`; иначе его текст сохраняется в `merge-request.md` в папке задачи.
+1. **`start`** creates the branch `friday/KEY` from a fresh `origin/<base_branch>` and a worktree, locks in the role assignment, and writes the plan: milestones of 2–5 stages, files, a size estimate, code and browser criteria, and a digest of the project rules for the executor. The plan is first checked without a model (size, files, order, criteria). Then a model from a different vendor reviews it, and the planner answers the findings once: it accepts each one or rejects it with a reason.
+2. **`plan`** shows the plan, the questions, the rejected findings, and the file overlaps with other active tasks.
+3. **`approve`** approves the plan and starts the pipeline in the background (`--no-run` only approves; run it later with `run`).
+4. **Milestone.** The executor works in one session per milestone and commits each stage. The gate runs on the commit. If it fails, the executor receives only the failed sections of the log. The milestone review looks at the diff of this milestone together with the gate result. The executor fixes or disputes the blocking findings; disputed findings are sent to you. Milestones with an interface go through browser acceptance in an isolated preview. After two failures in a row, a model of a higher tier takes the milestone in a new session.
+5. **Final.** The final review and the blind check of the whole diff run in parallel. Blocking findings get one round of fixes.
+6. **Draft MR** is opened if the profile sets `delivery`. Otherwise its text is saved in `merge-request.md` in the task folder.
 
-Конвейер останавливается только когда гейт так и не прошёл, исполнитель ничего не сделал, среда недоступна или кончились модели по правилам. Разногласия ревью его не останавливают.
+The pipeline stops only when the gate never passed, the executor did nothing, the environment is unavailable, or the models allowed by the rules are used up. Disagreements in review do not stop it.
 
-`decide KEY name "текст" --reopen M2` записывает ваше решение. Переоткрываются только названные вехи и зависящие от них; без `--reopen` решение учитывают следующие вехи. `resume` продолжает остановленную или упавшую задачу, `stop` останавливает идущую: агенты завершаются вместе с дочерними процессами.
+`decide KEY name "text" --reopen M2` records your decision. Only the named milestones and the milestones that depend on them are reopened. Without `--reopen`, the following milestones take the decision into account. `resume` continues a stopped or failed task. `stop` stops a running task: the agents end together with their child processes.
 
-## Профиль
+## Profile
 
-Профиль — JSON-файл. Ключ `extends` подключает другой профиль (например, общий каталог моделей); пути считаются от файла профиля.
+A profile is a JSON file. The `extends` key includes another profile (for example, a shared model catalog); paths are relative to the profile file.
 
-| Ключ | Назначение |
+| Key | Purpose |
 | --- | --- |
-| `name`, `repository` | Имя и путь к репозиторию проекта |
-| `base_branch`, `worktree_root`, `branch_template`, `worktree_layout` | Откуда и где создавать ветку задачи; шаблон по умолчанию `friday/{key}`, раскладка `key` или `branch` |
-| `models`, `roles` | Каталог моделей и предпочтения по ролям (ниже) |
-| `engineering_policy` | Правила для планировщика и ревью |
-| `rules_docs` | Документы с правилами проекта, по которым Friday один раз делает дайджест для планировщика и проверяющего план (по умолчанию `AGENTS.md`, `CLAUDE.md`, `docs/*.md`). Дайджест хранится по хешу содержимого и переиспользуется задачами, пока документы не меняются; планировщик не читает их целиком |
-| `repo_map`, `repo_map_budget`, `repo_map_mcp` | Карта репозитория в промпте планировщика и проверяющего план, чтобы они не разведывали структуру вызовами: `none` (по умолчанию) — без карты; `builtin` — отслеживаемые файлы с числом строк; `graphify` — плюс символы каждого файла и сколько файлов его импортируют, по графу [graphify](https://github.com/Graphify-Labs/graphify) (`uv tool install 'graphifyy[mcp]==0.9.100'`, только разбор кода, без модели; граф лежит в `FRIDAY_HOME/maps`, не в репозитории). На замере CS-2 карта не удешевила планирование (без карты $6.19, `builtin` $7.08, `graphify` $7.97 — по одному прогону), поэтому выключена по умолчанию. Карта кэшируется по коммиту; длиннее `repo_map_budget` символов (60000) — сначала без символов, потом со свёрнутыми папками. `repo_map_mcp: true` (только с `graphify`) даёт обеим ролям запросы к графу: `query_graph`, `get_node`, `get_neighbors`, `shortest_path`; на Codex не проверено вживую. Проверяющий план получает текущий текст файлов плана (до 40000 символов) |
-| `approval` | `owner` (по умолчанию) — план ждёт `approve`; `auto` — план утверждается сам после проверки и конвейер сразу запускается, в журнал уходит «План утверждён автоматически» |
-| `limits` | `stage_files` и `stage_lines` — лимиты этапа (10 и 500) |
-| `worktree_setup` | Команды, которые Friday запускает в новой рабочей копии до планирования (зависимости и подобное): массивы аргументов с подстановкой `{repository}` и `{worktree}`; должны быть повторяемыми. Пример для npm на macOS: `["sh", "-c", "[ -e node_modules ] \|\| cp -cR {repository}/node_modules node_modules"]` |
-| `executor_commands` | Команды, которые исполнитель может запускать сам, точной формой: `"python3 -m pytest"`, а не `python` |
-| `executor_deny_read` | Дополнительные пути, которые shell исполнителя не может читать |
-| `milestone_rounds` | Сколько раундов исполнителя на веху (4) |
-| `gate`, `gate_image`, `gate_mode`, `gate_*` | Команда проверки в Docker; `git-diff` сравнивает с базой задачи |
-| `environment_errors` | Шаблоны строк лога, означающих сбой среды, а не кода |
-| `browser`, `preview`, `behavior_test_policy` | Стенд, preview и правила браузерной приёмки |
-| `tracker` | Yandex Tracker (API или MCP) для чтения постановки |
-| `journal` | Куда писать журнал задачи: `[{"kind": "markdown", "dir": "..."}, {"kind": "jsonl", "dir": "..."}]`; `journal_dir` — короткая запись одного markdown-журнала |
-| `delivery` | `{"transport": "github" \| "gitlab" \| "none", "target_branch": "..."}` и ключ `github.repository` или `gitlab.base_url` + `gitlab.project` |
+| `name`, `repository` | The name of the project and the path to its repository |
+| `base_branch`, `worktree_root`, `branch_template`, `worktree_layout` | Where to create the task branch from and where to put it; the default template is `friday/{key}`, the layout is `key` or `branch` |
+| `models`, `roles` | The model catalog and the role preferences (see below) |
+| `engineering_policy` | Rules for the planner and the reviews |
+| `rules_docs` | Documents with the project rules. Friday makes one digest of them for the planner and the plan reviewer (default `AGENTS.md`, `CLAUDE.md`, `docs/*.md`). The digest is stored by content hash and reused by tasks while the documents do not change; the planner does not read the documents in full |
+| `repo_map`, `repo_map_budget`, `repo_map_mcp` | A repository map in the prompt of the planner and the plan reviewer, so that they do not explore the structure with tool calls. `none` (default): no map. `builtin`: the tracked files with their line counts. `graphify`: also the symbols of each file and how many files import it, taken from a [graphify](https://github.com/Graphify-Labs/graphify) graph (`uv tool install 'graphifyy[mcp]==0.9.100'`; it only parses code, no model is used; the graph is stored in `FRIDAY_HOME/maps`, not in the repository). In a measurement on CS-2 the map did not make planning cheaper (no map $6.19, `builtin` $7.08, `graphify` $7.97, one run each), so it is off by default. The map is cached by commit. If it is longer than `repo_map_budget` characters (60000), it is first shortened by dropping the symbols, then by collapsing folders. `repo_map_mcp: true` (only with `graphify`) gives both roles graph queries: `query_graph`, `get_node`, `get_neighbors`, `shortest_path`; not verified live on Codex. The plan reviewer receives the current text of the files named in the plan (up to 40000 characters) |
+| `approval` | `owner` (default): the plan waits for `approve`. `auto`: the plan is approved automatically after review and the pipeline starts at once; the journal records that the plan was approved automatically |
+| `limits` | `stage_files` and `stage_lines`: the limits of a stage (10 and 500) |
+| `worktree_setup` | Commands that Friday runs in a new worktree before planning (dependencies and similar): argument arrays with the substitutions `{repository}` and `{worktree}`; they must be repeatable. Example for npm on macOS: `["sh", "-c", "[ -e node_modules ] \|\| cp -cR {repository}/node_modules node_modules"]` |
+| `executor_commands` | Commands that the executor may run itself, in the exact form: `"python3 -m pytest"`, not `python` |
+| `executor_deny_read` | Additional paths that the executor's shell cannot read |
+| `milestone_rounds` | How many executor rounds a milestone gets (4) |
+| `gate`, `gate_image`, `gate_mode`, `gate_*` | The check command in Docker; `git-diff` compares with the task base |
+| `environment_errors` | Patterns of log lines that mean an environment failure, not a code failure |
+| `browser`, `preview`, `behavior_test_policy` | The test environment, the preview and the rules of browser acceptance |
+| `tracker` | Yandex Tracker (API or MCP), used to read the task description |
+| `journal` | Where to write the task journal: `[{"kind": "markdown", "dir": "..."}, {"kind": "jsonl", "dir": "..."}]`; `journal_dir` is a short form for a single markdown journal |
+| `delivery` | `{"transport": "github" \| "gitlab" \| "none", "target_branch": "..."}` and the key `github.repository` or `gitlab.base_url` + `gitlab.project` |
 
-### Модели и роли
+### Models and roles
 
 ```json
 "models": {
@@ -66,40 +68,40 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 "roles": {"plan": ["fable"], "develop": ["glm-high"], "review": ["opus-high"]}
 ```
 
-- `driver` — чем запускать: `claude` или `codex`. Z.ai идёт через Claude Code; токен читается из файла только с правами владельца.
-- `tier` — `frontier`, `strong` или `efficient`; `strength` упорядочивает модели внутри уровня.
-- `effort` — глубина рассуждения (`low` … `max`); одну модель можно описать несколько раз с разным effort.
-- `scarce` — дорогая модель: используется один раз на задачу, если правила позволяют обойтись без неё.
-- `price` — цена за миллион токенов по видам (`input`, `output`, `cache_read`, `cache_write`) для оценки расхода, когда вендор цену не сообщает.
+- `driver`: what runs the model, `claude` or `codex`. Z.ai goes through Claude Code; the token is read from a file that only the owner can access.
+- `tier`: `frontier`, `strong` or `efficient`; `strength` orders the models within a tier.
+- `effort`: the depth of reasoning (`low` … `max`); one model can be described several times with different effort.
+- `scarce`: an expensive model; it is used once per task if the rules allow the task to go without it.
+- `price`: the price per million tokens by kind (`input`, `output`, `cache_read`, `cache_write`), used to estimate spending when the vendor does not report a price.
 
-Роли: `plan`, `plan-review`, `develop`, `review`, `final-review`, `blind-code`, `browser`. Списки в `roles` — предпочтения: если подходящей модели в списке нет, Friday берёт другую из каталога. Жёсткие правила: код смотрят только `frontier`-модели, ревьюер не слабее автора работы, слепую проверку делает не автор кода. Мягкие правила (по порядку): не та же модель, что автор; дорогая модель один раз; другой вендор; слепая проверка не от автора плана. Нарушение мягкого правила возможно, только если иначе нельзя, и попадает в историю задачи.
+Roles: `plan`, `plan-review`, `develop`, `review`, `final-review`, `blind-code`, `browser`. The lists in `roles` are preferences: if the list has no suitable model, Friday takes another one from the catalog. Hard rules: only `frontier` models review code, the reviewer is not weaker than the author of the work, and the blind check is not done by the author of the code. Soft rules, in order: not the same model as the author; an expensive model once; a different vendor; the blind check not by the author of the plan. A soft rule can be broken only when there is no other way, and the violation is recorded in the task history.
 
-Пример раскладки — [examples/models.json](../examples/models.json).
+An example role assignment is in [examples/models.json](../examples/models.json).
 
-## Журнал
+## Journal
 
-Карточка задачи — единственный источник правды; журналы её отображают и обновляются сами после значимых событий: план готов и утверждён, веха готова или упала, решение владельца, финал, MR, остановка. Вручную — `friday journal KEY`.
+The task card is the only source of truth. The journals show it and update themselves after significant events: the plan is ready and approved, a milestone is done or failed, an owner decision, the final review, the MR, a stop. To update them by hand, run `friday journal KEY`.
 
-- `markdown` — страница `KEY.md` и общая страница «Friday — сейчас» со всеми задачами. Для Obsidian укажите папку хранилища: у страниц front matter (ключ, состояние, расход, тег `friday`), задачи связаны wiki-ссылками. На странице задачи — план с допущениями и несогласованными замечаниями, вехи со сводкой исполнителя и коммитами, спорные находки, решения, расход по ролям и хронология.
-- `jsonl` — все события задачи для анализа в таблицах или дашбордах.
+- `markdown`: a page `KEY.md` and a shared overview page that lists all tasks. For Obsidian, set the vault folder: the pages have front matter (key, state, spending, the tag `friday`), and tasks are linked with wiki links. A task page contains the plan with its assumptions and unresolved findings, the milestones with the executor summary and the commits, the disputed findings, the decisions, the spending by role, and the timeline.
+- `jsonl`: all events of the task, for analysis in spreadsheets or dashboards.
 
-Шаблоны — Markdown с подстановками `{{key}}`, `{{state}}`, `{{status}}`, `{{plan}}`, `{{milestones}}`, `{{disputes}}`, `{{decisions}}`, `{{costs}}`, `{{timeline}}`, `{{notes}}`. Friday берёт шаблон из поля `template` получателя, затем `.friday/task.md` в репозитории проекта, затем встроенный ([friday/templates](../friday/templates)). Текст между `<!-- friday:notes -->` и `<!-- /friday:notes -->` — ваш: он сохраняется при каждом обновлении. Страницу, которую писал не Friday, он не перезаписывает.
+Templates are Markdown with the substitutions `{{key}}`, `{{state}}`, `{{status}}`, `{{plan}}`, `{{milestones}}`, `{{disputes}}`, `{{decisions}}`, `{{costs}}`, `{{timeline}}`, `{{notes}}`. Friday takes the template from the `template` field of the target, then `.friday/task.md` in the project repository, then the built-in one ([friday/templates](../friday/templates)). The text between `<!-- friday:notes -->` and `<!-- /friday:notes -->` is yours: it is kept at every update. Friday does not overwrite a page that it did not write.
 
-## Настройки машины
+## Machine settings
 
-`FRIDAY_HOME/machine.json` задаёт общие ресурсы для всех задач:
+`FRIDAY_HOME/machine.json` sets the shared resources for all tasks:
 
 ```json
 {"slots": {"gate": 2, "browser": 2, "vendor:zai": 2}, "ports": [5200, 5399]}
 ```
 
-По умолчанию один гейт и два браузера одновременно, вендоры не ограничены. Квоты вендоров учитываются автоматически: запуск, упёршийся в лимит, записывает, когда квота вернётся, и до этого вендор при подборе пропускается.
+By default, one gate and two browsers run at the same time, and vendors are not limited. Vendor quotas are tracked automatically: a run that hits a limit records when the quota returns, and until then the vendor is skipped when models are chosen.
 
-## Границы
+## Boundaries
 
-- **Песочница исполнителя.** Shell исполнителя (Claude Code) работает в песочнице: без сети, без чтения `~/.ssh`, `~/.aws`, `~/.config` и подобных, запись только в рабочую копию и временную папку, без запуска вне песочницы. Команды вне `executor_commands` и git-команд отклоняются. Codex работает в своей песочнице с теми же границами.
-- **Ревьюеры** только читают. Слепая проверка запускается в пустой папке.
-- **Гейт** работает в контейнере без сети на снимке коммита, смонтированном только для чтения.
-- **Браузер** получает только инструменты Friday для одного preview; обход авторизации и чтение заголовков авторизованных запросов запрещены.
-- **Публикация.** Friday пушит только ветку своей задачи и открывает только черновой MR/PR, не перезаписывает чужую ветку, не сливает и не развёртывает.
-- **Что ещё не проверено вживую:** роли на Codex, браузерная приёмка и публикация в GitLab проверены тестами с фейками.
+- **Executor sandbox.** The executor's shell (Claude Code) runs in a sandbox: no network, no reading of `~/.ssh`, `~/.aws`, `~/.config` and similar, writing only to the worktree and a temporary folder, and no running outside the sandbox. Commands that are not in `executor_commands` and are not git commands are rejected. Codex runs in its own sandbox with the same boundaries.
+- **Reviewers** only read. The blind check runs in an empty folder.
+- **The gate** runs in a container without network access, on a snapshot of the commit mounted read-only.
+- **The browser** receives only Friday's tools for one preview; bypassing authorization and reading the headers of authorized requests are forbidden.
+- **Publishing.** Friday pushes only the branch of its own task and opens only a draft MR/PR. It does not overwrite someone else's branch, merge, or deploy.
+- **Not yet verified live:** roles on Codex, browser acceptance and publishing to GitLab have been verified only by tests with fakes.
