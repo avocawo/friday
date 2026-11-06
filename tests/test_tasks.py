@@ -13,6 +13,8 @@ from friday import card, doctor, milestone, resources, tasks, workspace
 from friday.errors import FridayError
 from test_milestone import MODELS, git
 
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
+
 
 class TaskCommandTests(unittest.TestCase):
     def setUp(self):
@@ -98,7 +100,7 @@ class TaskCommandTests(unittest.TestCase):
         self.assertFalse(report["ready"])
         text = doctor.render(report)
         self.assertIn("✗ claude_cli", text)
-        self.assertIn("Не готово", text)
+        self.assertIn("Not ready", text)
         broken = Path(self.directory.name) / "broken.json"
         broken.write_text("{")
         self.assertEqual(doctor.inspect(broken)["checks"][0]["status"], "missing")

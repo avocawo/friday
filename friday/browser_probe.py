@@ -1,11 +1,13 @@
 """Verify Chrome MCP's request allowlist using two synthetic local servers."""
 import http.server
 import json
+import os
 import re
 import shutil
 import subprocess
 import threading
 import time
+import urllib.parse
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -29,8 +31,26 @@ def server_path(selected):
     return path
 
 
-def command(path, patterns=()):
-    args = ["node", path, "--browserUrl=http://127.0.0.1:9333", "--no-usage-statistics",
+CHROME_URL = "http://127.0.0.1:9333"
+
+
+def chrome_url(spec):
+    """The Chrome DevTools endpoint the person started with a debugging port: browser.chrome_url, FRIDAY_CHROME_URL,
+    or 127.0.0.1:9333. Only a local endpoint is accepted."""
+    value = (spec or {}).get("chrome_url") or os.environ.get("FRIDAY_CHROME_URL") or CHROME_URL
+    parsed = urllib.parse.urlsplit(value) if isinstance(value, str) else None
+    try:
+        port = parsed.port if parsed else None
+    except ValueError:
+        port = None
+    if (not parsed or parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1") or not port
+            or parsed.path not in ("", "/") or parsed.query or parsed.username):
+        raise FridayError("invalid_profile", "browser.chrome_url must be a local http://127.0.0.1:<port> address.")
+    return "http://%s:%d" % ("[::1]" if parsed.hostname == "::1" else parsed.hostname, port)
+
+
+def command(path, patterns=(), browser_url=CHROME_URL):
+    args = ["node", path, "--browserUrl=" + browser_url, "--no-usage-statistics",
             "--no-performance-crux", "--redactNetworkHeaders"]
     return args + ["--allowedUrlPattern=" + pattern for pattern in patterns]
 
@@ -55,8 +75,8 @@ def same_origin(url, origin):
     return parsed.scheme + "://" + parsed.netloc == origin
 
 
-def cleanup(path, origin, marker=None):
-    client = browser_protocol.Client(command(path))
+def cleanup(path, origin, marker=None, browser_url=CHROME_URL):
+    client = browser_protocol.Client(command(path, browser_url=browser_url))
     try:
         listing = browser_protocol.text(client.tool("list_pages", {}))
         for page, url in pages(listing):
@@ -141,8 +161,7 @@ def exercise(client, fixture):
         threading.Event().wait(0.1)
     threading.Event().wait(0.5)
     if "allowed:blocked" not in snapshot or fixture.handler.allowed_hits < 1 or fixture.handler.forbidden_hits:
-        raise FridayError("isolation_unavailable", "Browser URL allowlist test failed: allowed=" + str(fixture.handler.allowed_hits) +
-                          ", forbidden=" + str(fixture.handler.forbidden_hits) + ", result_visible=" + str("allowed:blocked" in snapshot))
+        raise FridayError("isolation_unavailable", "Browser URL allowlist test failed: allowed={allowed_hits}, forbidden={forbidden_hits}, result_visible={value}", allowed_hits=str(fixture.handler.allowed_hits), forbidden_hits=str(fixture.handler.forbidden_hits), value=str("allowed:blocked" in snapshot))
     return page
 
 
@@ -151,7 +170,7 @@ def verify(selected):
     fixture = Fixture()
     client = None
     try:
-        client = browser_protocol.Client(command(path, [fixture.origin + "/*"]))
+        client = browser_protocol.Client(command(path, [fixture.origin + "/*"], chrome_url(selected.get("browser"))))
         exercise(client, fixture)
     finally:
         if client:

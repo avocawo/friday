@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo neon" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>Pipeline pengembangan pribadi yang membuat Jumat terasa lebih dekat.</strong><br>
 Dari tugas hingga draft MR: model yang kuat merencanakan dan mereview, model yang hemat biaya menulis kodenya.</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · versi awal</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · versi awal</p>
 
 [English](../../README.md) · [Русский](../ru/README.md) · [简体中文](../zh-cn/README.md) · [日本語](../ja/README.md) · [한국어](../ko/README.md) · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · **Bahasa Indonesia**
 
@@ -33,18 +33,22 @@ Anda terlibat dua kali: menyetujui rencana dan menerima draft MR. Di antara kedu
 
 ## Memulai dengan cepat
 
-Anda memerlukan Python 3.9+, Git, serta Claude Code dan/atau Codex CLI. Gate dan akseptasi di browser juga memerlukan Docker.
+Anda memerlukan Python 3.11+, Git, dan Claude Code (Codex CLI bersifat opsional). Gate dan akseptasi di browser juga memerlukan Docker.
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# di profiles/project-profile.json, isi path repositori, perintah pemeriksaan, dan gate
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# di project-profile.json, isi repository, worktree_root, dan executor_commands proyek Anda
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Friday berbicara dalam sepuluh bahasa: `friday --lang ru …`, `FRIDAY_LANG=ru`, atau `friday config language ru`. Agen selalu bekerja dalam bahasa Inggris; yang Anda baca diterjemahkan. Contoh profil untuk proyek Node dan Python ada di [examples/profiles](../../examples/profiles).
 
 ## Perintah
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Menghapus worktree dan kartu; branch tetap ada |
 | `journal KEY` | Memperbarui jurnal tugas (Obsidian, jsonl) |
 | `doctor --profile P` | Memeriksa apakah mesin dan profil sudah siap |
+| `config language L` | Mengatur bahasa yang digunakan Friday di mesin ini |
 
-Untuk detail tentang profil, model, dan batasan, lihat [panduan](guide.md). Untuk alasan pipeline dibangun seperti ini, lihat [analisis pilot](../process-redesign.md) (dalam bahasa Rusia) dan [ADR](../adr/) (dalam bahasa Rusia).
+Untuk detail tentang profil, model, dan batasan, lihat [panduan](guide.md). Untuk alasan pipeline dibangun seperti ini, lihat [analisis pilot](../process-redesign.md) (dalam bahasa Rusia) dan [ADR](../adr/) (0001–0006 dalam bahasa Rusia).
 
 ## Pengembangan
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-Tes menggunakan data sementara dan agen palsu di dalam kontainer tanpa akses jaringan.
+Tes menggunakan data sementara dan agen palsu, tanpa jaringan maupun Docker. Cara kode disusun dijelaskan di [docs/architecture.md](../architecture.md); cara mengusulkan perubahan ada di [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 [Panduan](guide.md) · [Glosarium](GLOSSARY.md) · [Berkontribusi](../../CONTRIBUTING.md) · [Lisensi](../../LICENSE)

@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — 霓虹标志" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>让周五（Friday）早点到来的个人开发流水线。</strong><br>
 从任务到草稿 MR：强模型负责规划与评审，低成本模型负责写代码。</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · 早期版本</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · 早期版本</p>
 
 [English](../../README.md) · [Русский](../ru/README.md) · **简体中文** · [日本語](../ja/README.md) · [한국어](../ko/README.md) · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Bahasa Indonesia](../id/README.md)
 
@@ -33,18 +33,22 @@
 
 ## 快速开始
 
-你需要 Python 3.9+、Git，以及 Claude Code 和/或 Codex CLI。关卡和浏览器验收还需要 Docker。
+你需要 Python 3.11+、Git 和 Claude Code（Codex CLI 为可选）。关卡和浏览器验收还需要 Docker。
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# in profiles/project-profile.json, set the repository path, the check commands and the gate
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# in project-profile.json, set your project's repository, worktree_root and executor_commands
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Friday 支持十种语言：`friday --lang ru …`、`FRIDAY_LANG=ru`，或 `friday config language ru`。代理始终使用英文工作；你读到的内容会被翻译。Node 和 Python 项目的示例配置文件见 [examples/profiles](../../examples/profiles)。
 
 ## 命令
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | 删除 worktree 和任务卡；分支保留 |
 | `journal KEY` | 更新任务日志（Obsidian、jsonl） |
 | `doctor --profile P` | 检查机器和配置文件是否就绪 |
+| `config language L` | 设置 Friday 在这台机器上使用的语言 |
 
-有关配置文件、模型和边界的详细说明，请参阅[指南](guide.md)。关于流水线为何这样设计，请参阅[试点分析](../process-redesign.md)（俄文）和 [ADR](../adr/)（俄文）。
+有关配置文件、模型和边界的详细说明，请参阅[指南](guide.md)。关于流水线为何这样设计，请参阅[试点分析](../process-redesign.md)（俄文）和 [ADR](../adr/)（0001–0006 为俄文）。
 
 ## 开发
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-测试使用临时数据和假代理，在无网络的容器中运行。
+测试使用临时数据和假代理，不需要网络，也不需要 Docker。代码的组织方式见 [docs/architecture.md](../architecture.md)；如何提出修改见 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
 
 [指南](guide.md) · [术语表](GLOSSARY.md) · [贡献指南](../../CONTRIBUTING.md) · [许可证](../../LICENSE)

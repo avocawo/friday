@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo em neon" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>Um pipeline pessoal de desenvolvimento que aproxima a sexta-feira.</strong><br>
 Da tarefa ao MR em rascunho: modelos fortes planejam e revisam, modelos econômicos escrevem o código.</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · versão inicial</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · versão inicial</p>
 
 [English](../../README.md) · [Русский](../ru/README.md) · [简体中文](../zh-cn/README.md) · [日本語](../ja/README.md) · [한국어](../ko/README.md) · **Português (Brasil)** · [Español](../es/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Bahasa Indonesia](../id/README.md)
 
@@ -33,18 +33,22 @@ Você participa duas vezes: aprova o plano e aceita o MR em rascunho. Entre esse
 
 ## Início rápido
 
-Você precisa de Python 3.9+, Git, e do Claude Code e/ou do Codex CLI. O gate e a aceitação no navegador também precisam do Docker.
+Você precisa de Python 3.11+, Git e do Claude Code (o Codex CLI é opcional). O gate e a aceitação no navegador também precisam do Docker.
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# em profiles/project-profile.json, defina o caminho do repositório, os comandos de verificação e o gate
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# em project-profile.json, defina o repository, o worktree_root e os executor_commands do seu projeto
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+O Friday fala dez idiomas: `friday --lang ru …`, `FRIDAY_LANG=ru` ou `friday config language ru`. Os agentes sempre trabalham em inglês; o que você lê é traduzido. Exemplos de perfis para projetos Node e Python estão em [examples/profiles](../../examples/profiles).
 
 ## Comandos
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Remove o worktree e o card; a branch permanece |
 | `journal KEY` | Atualiza os diários das tarefas (Obsidian, jsonl) |
 | `doctor --profile P` | Verifica se a máquina e o perfil estão prontos |
+| `config language L` | Define o idioma em que o Friday fala nesta máquina |
 
-Para detalhes sobre o perfil, os modelos e os limites, veja o [guia](guide.md). Para entender por que o pipeline foi construído assim, veja a [análise do piloto](../process-redesign.md) (em russo) e os [ADRs](../adr/) (em russo).
+Para detalhes sobre o perfil, os modelos e os limites, veja o [guia](guide.md). Para entender por que o pipeline foi construído assim, veja a [análise do piloto](../process-redesign.md) (em russo) e os [ADRs](../adr/) (0001–0006 em russo).
 
 ## Desenvolvimento
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-Os testes usam dados temporários e agentes falsos em um contêiner sem acesso à rede.
+Os testes usam dados temporários e agentes falsos, sem rede nem Docker. A organização do código está em [docs/architecture.md](../architecture.md); como propor uma mudança está em [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 [Guia](guide.md) · [Glossário](GLOSSARY.md) · [Contribuindo](../../CONTRIBUTING.md) · [Licença](../../LICENSE)

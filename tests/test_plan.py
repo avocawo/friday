@@ -16,6 +16,8 @@ CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
 # Each call of the fake agent takes the next entry of calls.json: the structured answer and the session it reports.
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys
+
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
 directory = os.environ["FAKE_DIR"]
 prompt = sys.stdin.read()
 counter = os.path.join(directory, "counter")
@@ -133,7 +135,7 @@ class PlanTests(unittest.TestCase):
         self.assertIn("Сделать приветствие", revision["prompt"])
         self.assertIn("--json-schema", planner["argv"])
         text = plan.render(self.root, "T-1")
-        for expected in ("### M2. Экран (сложная, интерфейс) после M1", "Несогласованные замечания", "[браузер]", "plan-review → rival-1"):
+        for expected in ("### M2. Экран (complex, interface) after M1", "Open review notes", "[browser]", "plan-review → rival-1"):
             self.assertIn(expected, text)
         self.assertTrue((Path(value["worktree"]) / "app.py").is_file())
         plan.approve(self.root, "T-1")
@@ -309,7 +311,7 @@ class PlanTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=environment,
                                 cwd=str(Path(__file__).resolve().parents[1]))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("# План T-9", result.stdout)
+        self.assertIn("# Plan T-9", result.stdout)
         self.assertIn("friday approve T-9", result.stdout)
         result = subprocess.run([sys.executable, str(CLI), "approve", "T-9", "--no-run"], capture_output=True, text=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -327,7 +329,7 @@ class PlanTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                                 env=dict(os.environ, FRIDAY_HOME=str(self.root)), cwd=str(Path(__file__).resolve().parents[1]))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("План утверждён автоматически", result.stdout)
+        self.assertIn("Plan approved automatically", result.stdout)
         self.assertEqual(card.read(self.root, "T-8")["state"], "approved")
         self.assertEqual(card.events(self.root, "T-8")[-1], dict(card.events(self.root, "T-8")[-1], type="plan_approved", by="auto"))
 

@@ -10,7 +10,6 @@ from . import card as cards
 from . import gate, models, resources
 from .errors import FridayError
 
-ADAPTERS = Path(__file__).resolve().parent.parent / "adapters"
 
 BROWSER_RULES = (
     "Check the behavior criteria of one milestone in a local preview of the application, using only the friday browser "
@@ -21,18 +20,18 @@ BROWSER_RULES = (
     "(navigate_page back or forward) is allowed within the preview. A login screen or 401 seen while loading is checked again after loading before it counts. "
     "Never bypass authorization and never open get_network_request on authenticated requests. Judge each criterion pass, "
     "fail or unverifiable with what you actually observed; when the preview or a tool is unavailable say unverifiable, do "
-    "not infer a defect. Report a blocking finding only for behaviour you saw fail. Write in the task's language.")
+    "not infer a defect. Report a blocking finding only for behaviour you saw fail. Write in English.")
 FINAL_RULES = (
     "You do the final review of a whole task before its draft merge request. You get the plan summary, every milestone "
     "with its criteria, the project rules digest and the diff of the whole task against its base. Look for what milestone "
     "reviews miss: inconsistencies between milestones, criteria that no longer hold after later changes, dead code left "
     "behind, missing tests across the feature, breaches of project rules. Judge every criterion. Report every actionable "
     "defect in one pass: blocking for wrong behaviour or broken criteria, minor otherwise. verdict is pass when no blocking "
-    "finding remains. Do not edit files. Write in the task's language.")
+    "finding remains. Do not edit files. Write in English.")
 BLIND_RULES = (
     "You check a change blind: you get only its acceptance criteria and its diff, nothing else, and you must not look for "
     "more. Judge each criterion from the diff alone: pass, fail, or unverifiable when the diff cannot show it (that is not a "
-    "defect). Report as blocking only defects the diff itself proves. Do not edit files. Write in the task's language.")
+    "defect). Report as blocking only defects the diff itself proves. Do not edit files. Write in English.")
 
 
 def strongest_author(root, key, layout):
@@ -55,7 +54,7 @@ def criteria(document, behavior=None):
 def browser(root, key, profile, entry, worktree, item, run_role, schema):
     """Browser acceptance of a UI milestone in an isolated preview. Returns the review-shaped result or None."""
     from . import browser_auth, browser_session, isolated_preview
-    spec = profile.get("browser")
+    spec = isolated_preview.browser_spec(profile) if isinstance(profile.get("browser"), dict) else None
     if not isinstance(spec, dict) or not isinstance(profile.get("preview"), dict):
         cards.record(root, key, "browser_skipped", milestone=item["id"], reason="no browser or preview in the profile")
         return None
@@ -68,7 +67,7 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
             prompt = (BROWSER_RULES + "\n\nPreview: " + url + "\n\n" + json.dumps(
                 {"milestone": {k: item[k] for k in ("id", "title", "goal")}, "criteria": checks,
                  "test_policy": profile.get("behavior_test_policy", "")}, ensure_ascii=False, indent=2))
-            mcp = {"name": "friday", "command": [sys.executable, str(ADAPTERS / "browser_mcp.py"), json.dumps(spec), url],
+            mcp = {"name": "friday", "command": [sys.executable, str(Path(__file__).resolve().parent / "browser_mcp.py"), json.dumps(spec), url],
                    "tools": sorted(browser_session.TOOLS)}
             result = run_role(root, key, profile, "browser", entry, empty, prompt, schema, item["id"], mcp=mcp)
     return result
@@ -88,7 +87,7 @@ def final_review(root, key, profile, run_role, schema, roles=("final-review", "b
     diff = gate.git(worktree, "diff", card["base"] + "..HEAD").decode("utf-8", "replace")
     full = json.dumps({"summary": document["summary"], "project_rules": document["rules"],
                        "milestones": [{k: m[k] for k in ("id", "title", "goal")} for m in document["milestones"]],
-                       "criteria": criteria(document), "owner_decisions": card["decisions"]}, ensure_ascii=False, indent=2)
+                       "criteria": criteria(document), "owner_decisions": cards.for_agents(card["decisions"])}, ensure_ascii=False, indent=2)
     with tempfile.TemporaryDirectory(prefix="friday-blind-") as empty, ThreadPoolExecutor(max_workers=2) as pool:
         jobs = {}
         if "final-review" in roles:
@@ -102,7 +101,7 @@ def final_review(root, key, profile, run_role, schema, roles=("final-review", "b
         results = {role: job.result() for role, job in jobs.items()}
     for role, result in results.items():
         if result.status != "ok" or not isinstance(result.structured, dict):
-            raise FridayError("agent_failed", "%s failed (%s): %s" % (role, result.status, result.error))
+            raise FridayError("agent_failed", "{role} failed ({status}): {error}", role=role, status=result.status, error=result.error)
         value = result.structured
         cards.record(root, key, "final_reviewed", role=role, verdict=value["verdict"], model=result_model(role, final_entry, blind_entry),
                      blocking=sum(f["severity"] == "blocking" for f in value["findings"]))
@@ -113,35 +112,42 @@ def result_model(role, final_entry, blind_entry):
     return (final_entry if role == "final-review" else blind_entry)["model"]
 
 
-def description(root, key):
-    """The draft merge request text: what was done, what the owner still has to decide, what it cost."""
-    from . import status
+def description(root, key, profile=None):
+    """The draft merge request text in the team's language: what was done, what the owner still has to decide, what it cost."""
+    from . import i18n, status, translate
     card = cards.read(root, key)
     document = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
-    lines = [document["summary"], "", "## Вехи"]
+    lang = i18n.output_language(profile)
+    minor = [f for item in card["milestones"] for f in item.get("minor_findings", [])] + card.get("final_minor", [])
+    t = translate.into(root, key, profile or {}, lang)
+    if profile is not None:
+        t.prefetch([document["summary"]] + [m["title"] for m in document["milestones"]] + [f["problem"] for f in minor] +
+                   [text for d in card["disputes"] for text in (d["problem"], d.get("executor_reason", ""))])
+    def say(text, /, **params):
+        return i18n.tr(lang, text, **params)
+    lines = [t(document["summary"]), "", "## " + say("Milestones")]
     for item in card["milestones"]:
         title = next(m["title"] for m in document["milestones"] if m["id"] == item["id"])
-        lines.append("- **%s. %s** — %s" % (item["id"], title, {"done": "готово"}.get(item["state"], item["state"])))
+        lines.append("- **%s. %s** — %s" % (item["id"], t(title), say("done") if item["state"] == "done" else item["state"]))
         for stage in item.get("stages", []):
             lines.append("  - %s %s" % (stage["id"], (stage.get("commit") or "")[:10]))
     if card["disputes"]:
-        lines += ["", "## На решение владельцу"]
+        lines += ["", "## " + say("For the owner to decide")]
         for dispute in card["disputes"]:
-            lines.append("- %s `%s`: %s" % (dispute.get("milestone", ""), dispute.get("file", ""), dispute["problem"]))
-            lines.append("  Исполнитель: %s" % dispute.get("executor_reason", ""))
-    minor = [f for item in card["milestones"] for f in item.get("minor_findings", [])] + card.get("final_minor", [])
+            lines.append("- %s `%s`: %s" % (dispute.get("milestone", ""), dispute.get("file", ""), t(dispute["problem"])))
+            lines.append("  " + say("Executor: {reason}", reason=t(dispute.get("executor_reason", ""))))
     if minor:
-        lines += ["", "## Мелкие замечания"] + ["- `%s`: %s" % (f.get("file", ""), f["problem"]) for f in minor]
+        lines += ["", "## " + say("Minor findings")] + ["- `%s`: %s" % (f.get("file", ""), t(f["problem"])) for f in minor]
     outside = sorted({path for item in card["milestones"] for path in item.get("outside_files", [])})
     if outside:
-        lines += ["", "## Файлы вне плана", ", ".join("`%s`" % path for path in outside)]
+        lines += ["", "## " + say("Files outside the plan"), ", ".join("`%s`" % path for path in outside)]
     unverified = [event["milestone"] for event in cards.events(root, key) if event.get("type") in ("browser_unverifiable", "browser_skipped")]
     if unverified:
-        lines += ["", "## Не проверено в браузере", ", ".join(sorted(set(unverified)))]
+        lines += ["", "## " + say("Not checked in the browser"), ", ".join(sorted(set(unverified)))]
     spent = status.totals(cards.events(root, key))
-    lines += ["", "---", "Friday: %s, %s токенов, %d запусков моделей. Раскладка: %s." % (
-        status.money(spent), status.tokens(spent["tokens"]), spent["runs"],
-        ", ".join("%s → %s" % (role, entry["model"]) for role, entry in card["cast"].items()))]
+    lines += ["", "---", say("Friday: {money}, {tokens} tokens, {runs}. Models: {cast}.", money=status.money(spent, lang),
+                             tokens=status.tokens(spent["tokens"]), runs=i18n.ntr(lang, "{n} model run", "{n} model runs", spent["runs"]),
+                             cast=", ".join("%s → %s" % (role, entry["model"]) for role, entry in card["cast"].items()))]
     return "\n".join(lines)
 
 
@@ -156,7 +162,7 @@ def deliver(root, key, profile):
     """Push the task branch and open a draft MR/PR, once; without a configured transport only the text is saved."""
     card = cards.read(root, key)
     settings = profile.get("delivery") or {"transport": "none"}
-    text = description(root, key)
+    text = description(root, key, profile)
     (cards.directory(root, key) / "merge-request.md").write_text(text + "\n", encoding="utf-8")
     summary = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))["summary"]
     first = summary.split(". ")[0].strip().rstrip(".")
@@ -173,7 +179,7 @@ def deliver(root, key, profile):
     remote = git_command(worktree, "ls-remote", "origin", "refs/heads/" + branch).split()
     observed = remote[0] if remote else ""
     if observed and observed != delivered.get("head"):
-        raise FridayError("remote_conflict", "Remote branch %s exists and was not pushed by this task." % branch)
+        raise FridayError("remote_conflict", "Remote branch {branch} exists and was not pushed by this task.", branch=branch)
     if observed != head:
         git_command(worktree, "push", "--porcelain", "--force-with-lease=refs/heads/%s:%s" % (branch, observed), "origin",
                     head + ":refs/heads/" + branch)

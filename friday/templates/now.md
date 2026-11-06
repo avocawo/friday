@@ -2,6 +2,6 @@
 updated: {{updated}}
 tags: [friday]
 ---
-# Friday — сейчас
+# {{h_now}}
 
 {{tasks}}

@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — 네온 로고" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>금요일을 한 걸음 더 가까이 당겨 주는 개인용 개발 파이프라인.</strong><br>
 작업에서 초안 MR까지, 계획과 리뷰는 강력한 모델이 맡고 코드는 저렴한 모델이 작성합니다.</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · 초기 버전</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · 초기 버전</p>
 
 [English](../../README.md) · [Русский](../ru/README.md) · [简体中文](../zh-cn/README.md) · [日本語](../ja/README.md) · **한국어** · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Bahasa Indonesia](../id/README.md)
 
@@ -33,18 +33,22 @@ _이 문서는 영어판 문서를 번역한 것입니다. 내용이 다를 경�
 
 ## 빠른 시작
 
-Python 3.9+, Git, 그리고 Claude Code 또는 Codex CLI(혹은 둘 다)가 필요합니다. 게이트와 브라우저 인수 확인에는 Docker도 필요합니다.
+Python 3.11+, Git, 그리고 Claude Code가 필요합니다(Codex CLI는 선택 사항). 게이트와 브라우저 인수 확인에는 Docker도 필요합니다.
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# in profiles/project-profile.json, set the repository path, the check commands and the gate
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# in project-profile.json, set your project's repository, worktree_root and executor_commands
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Friday는 10개 언어를 지원합니다. `friday --lang ru …`, `FRIDAY_LANG=ru`, 또는 `friday config language ru`로 바꿀 수 있습니다. 에이전트는 항상 영어로 작업하며, 사용자가 읽는 내용은 번역됩니다. Node와 Python 프로젝트용 예시 프로필은 [examples/profiles](../../examples/profiles)에 있습니다.
 
 ## 명령어
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | 워크트리와 카드를 삭제합니다. 브랜치는 남습니다 |
 | `journal KEY` | 작업 저널(Obsidian, jsonl)을 갱신합니다 |
 | `doctor --profile P` | 머신과 프로필이 준비되었는지 확인합니다 |
+| `config language L` | 이 머신에서 Friday가 사용할 언어를 설정합니다 |
 
-프로필, 모델, 경계에 대한 자세한 내용은 [가이드](guide.md)를 참고하세요. 파이프라인을 이렇게 설계한 이유는 [파일럿 분석](../process-redesign.md)(러시아어)과 [ADR](../adr/)(러시아어)에 있습니다.
+프로필, 모델, 경계에 대한 자세한 내용은 [가이드](guide.md)를 참고하세요. 파이프라인을 이렇게 설계한 이유는 [파일럿 분석](../process-redesign.md)(러시아어)과 [ADR](../adr/)(0001–0006은 러시아어)에 있습니다.
 
 ## 개발
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-테스트는 네트워크가 없는 컨테이너에서 임시 데이터와 가짜 에이전트를 사용합니다.
+테스트는 임시 데이터와 가짜 에이전트를 사용하며, 네트워크도 Docker도 필요 없습니다. 코드가 어떻게 구성되어 있는지는 [docs/architecture.md](../architecture.md), 변경을 제안하는 방법은 [CONTRIBUTING.md](../../CONTRIBUTING.md)에 있습니다.
 
 [가이드](guide.md) · [용어집](GLOSSARY.md) · [기여하기](../../CONTRIBUTING.md) · [라이선스](../../LICENSE)

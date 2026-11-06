@@ -15,7 +15,7 @@ def stop(root, key):
     value = cards.read(root, key)
     pid = value.get("runner_pid")
     if value["state"] != "running" or not isinstance(pid, int) or not cards.alive(pid):
-        raise FridayError("not_running", "Task %s is not running." % key)
+        raise FridayError("not_running", "Task {key} is not running.", key=key)
     os.kill(pid, signal.SIGTERM)
     return pid
 
@@ -24,7 +24,7 @@ def archive(root, key, profile, force=False):
     """Remove the task's worktree and move its card aside so the key can start again; the branch and its commits stay."""
     value = cards.read(root, key)
     if value["state"] == "running" and isinstance(value.get("runner_pid"), int) and cards.alive(value["runner_pid"]):
-        raise FridayError("task_busy", "Task %s is running; stop it first." % key)
+        raise FridayError("task_busy", "Task {key} is running; stop it first.", key=key)
     worktree = value.get("worktree")
     if worktree and Path(worktree).exists():
         dirty = subprocess.run(["git", "-C", worktree, "status", "--porcelain"], capture_output=True, text=True).stdout.strip()

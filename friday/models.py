@@ -8,19 +8,21 @@ from pathlib import Path
 
 from . import credentials
 from .errors import FridayError
+from .i18n import message
 from .locks import locked
 
 TIERS = ("efficient", "strong", "frontier")
 EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
 DRIVERS = ("claude", "codex")
+# Anthropic-compatible endpoints Friday knows by vendor; any other is given as base_url in the model's catalog entry.
 VENDOR_ENDPOINTS = {"zai": "https://api.z.ai/api/anthropic"}
-ROLES = ("plan", "plan-review", "develop", "review", "final-review", "blind-code", "browser")
+ROLES = ("plan", "plan-review", "develop", "review", "final-review", "blind-code", "browser", "translate")
 # Which role's work each reviewing role checks.
 REVIEWS = {"plan-review": "plan", "review": "develop", "final-review": "develop", "blind-code": "develop", "browser": "develop"}
 # Code is reviewed only by frontier models; the browser check only needs to match its author.
 CODE_REVIEWS = ("review", "final-review", "blind-code")
 # Tier preference when the profile gives no order for a role.
-DEFAULT_TIERS = {"develop": ("strong", "efficient", "frontier")}
+DEFAULT_TIERS = {"develop": ("strong", "efficient", "frontier"), "translate": ("efficient", "strong", "frontier")}
 QUOTA_FALLBACK = 3600
 
 
@@ -40,28 +42,32 @@ def catalog(profile):
     result = {}
     for name, entry in models.items():
         if not isinstance(entry, dict) or not isinstance(entry.get("model"), str) or not entry["model"]:
-            raise FridayError("invalid_profile", "Model %s requires a model id." % name)
+            raise FridayError("invalid_profile", "Model {name} requires a model id.", name=name)
         if entry.get("tier") not in TIERS:
-            raise FridayError("invalid_profile", "Model %s requires a tier: %s." % (name, ", ".join(TIERS)))
+            raise FridayError("invalid_profile", "Model {name} requires a tier: {items}.", name=name, items=", ".join(TIERS))
         if entry.get("driver") not in DRIVERS or not isinstance(entry.get("vendor"), str) or not entry["vendor"]:
-            raise FridayError("invalid_profile", "Model %s requires a driver (%s) and a vendor." % (name, ", ".join(DRIVERS)))
+            raise FridayError("invalid_profile", "Model {name} requires a driver ({items}) and a vendor.", name=name, items=", ".join(DRIVERS))
         if entry.get("effort") is not None and entry["effort"] not in EFFORTS:
-            raise FridayError("invalid_profile", "Model %s effort must be one of: %s." % (name, ", ".join(EFFORTS)))
+            raise FridayError("invalid_profile", "Model {name} effort must be one of: {items}.", name=name, items=", ".join(EFFORTS))
         if not isinstance(entry.get("scarce", False), bool):
-            raise FridayError("invalid_profile", "Model %s scarce must be true or false." % name)
+            raise FridayError("invalid_profile", "Model {name} scarce must be true or false.", name=name)
         strength = entry.get("strength", 0)
         if not isinstance(strength, int) or isinstance(strength, bool):
-            raise FridayError("invalid_profile", "Model %s strength must be an integer." % name)
+            raise FridayError("invalid_profile", "Model {name} strength must be an integer.", name=name)
+        base_url = entry.get("base_url")
+        if base_url is not None and (entry.get("driver") != "claude" or not isinstance(base_url, str) or not base_url.startswith("https://")):
+            raise FridayError("invalid_profile", "Model {name} base_url must be an HTTPS URL of an Anthropic-compatible API (claude driver).",
+                              name=name)
         price = entry.get("price")
         if price is not None and (not isinstance(price, dict) or any(not isinstance(value, (int, float)) for value in price.values())):
-            raise FridayError("invalid_profile", "Model %s price must map token kinds to USD per million." % name)
+            raise FridayError("invalid_profile", "Model {name} price must map token kinds to USD per million.", name=name)
         result[name] = dict(entry, name=name)
     preferences = profile.get("roles", {})
     if not isinstance(preferences, dict) or any(role not in ROLES for role in preferences):
-        raise FridayError("invalid_profile", "roles may only name: " + ", ".join(ROLES))
+        raise FridayError("invalid_profile", "roles may only name: {items}", items=", ".join(ROLES))
     for role, names in preferences.items():
         if not isinstance(names, list) or any(name not in result for name in names):
-            raise FridayError("invalid_profile", "roles.%s must list models from the catalog." % role)
+            raise FridayError("invalid_profile", "roles.{role} must list models from the catalog.", role=role)
     return result
 
 
@@ -96,14 +102,14 @@ def closeness(role, entry, author, planner, used=()):
 def note_for(role, entry, author, planner, value):
     own, reused, near = value
     if own:
-        return "%s: %s проверяет собственную работу, другой модели не ниже автора нет" % (role, entry["model"])
+        return message("{role}: {model} reviews its own work; no other model at least as strong as the author", role=role, model=entry["model"])
     if reused:
-        return "%s: %s используется в задаче повторно, других подходящих моделей нет" % (role, entry["model"])
+        return message("{role}: {model} is used again in this task; no other suitable model", role=role, model=entry["model"])
     if near and role == "blind-code" and planner is not None and entry["model"] == planner["model"]:
-        return "blind-code: кроме автора плана %s подходящих моделей нет" % entry["model"]
+        return message("blind-code: no suitable model besides the plan's author {model}", model=entry["model"])
     if near:
-        return "%s: другой вендор недоступен, %s проверяет работу %s того же вендора %s" % (
-            role, entry["model"], author["model"], entry["vendor"])
+        return message("{role}: no other vendor available; {model} reviews the work of {author} from the same vendor {vendor}",
+                       role=role, model=entry["model"], author=author["model"], vendor=entry["vendor"])
     return None
 
 
@@ -111,7 +117,7 @@ def choose(profile, role, author=None, available=lambda vendor: True, planner=No
     """Pick a model for a role. Hard rules raise when unmet; soft rules return a note instead."""
     options = [entry for entry in candidates(profile, role, available) if allowed(role, entry, author)]
     if not options:
-        raise FridayError("cast_impossible", "No available model satisfies the rules for " + role + ".")
+        raise FridayError("cast_impossible", "No available model satisfies the rules for {role}.", role=role)
     entry = min(options, key=lambda item: closeness(role, item, author, planner, used))
     return entry, note_for(role, entry, author, planner, closeness(role, entry, author, planner, used))
 
@@ -165,15 +171,15 @@ def executor(profile, layout, complexity="clear", failures=0, previous=None, ava
         return public(current), None
     options = [entry for entry in candidates(profile, "develop", available) if rank(entry["tier"]) >= floor]
     if not options:
-        raise FridayError("cast_impossible", "No available executor of tier %s or higher." % TIERS[floor])
+        raise FridayError("cast_impossible", "No available executor of tier {value} or higher.", value=TIERS[floor])
     chosen = min(options, key=lambda entry: rank(entry["tier"]))
     if rank(current["tier"]) >= floor:
-        reason = "квота вендора"
+        reason = message("vendor quota")
     elif failures >= 2:
-        reason = "два провала подряд"
+        reason = message("two failures in a row")
     else:
-        reason = "сложная веха"
-    return public(chosen), "исполнитель %s → %s (%s), новая сессия" % (current["model"], chosen["model"], reason)
+        reason = message("complex milestone")
+    return public(chosen), message("executor {old} → {new} ({reason}), new session", old=current["model"], new=chosen["model"], reason=reason)
 
 
 def reviewer(profile, layout, role, author, available=lambda vendor: True, planner=None):
@@ -187,19 +193,25 @@ def reviewer(profile, layout, role, author, available=lambda vendor: True, plann
     chosen, note = choose(profile, role, author, available, planner, used)
     if chosen["name"] == planned["name"]:
         return public(chosen), note
-    return public(chosen), note or "%s: %s заменён на %s для работы %s" % (role, planned["model"], chosen["model"], author["model"])
+    return public(chosen), note or message("{role}: {planned} replaced by {chosen} for the work of {author}", role=role, planned=planned["model"],
+                                           chosen=chosen["model"], author=author["model"])
 
 
 def environment(entry, profile):
-    """Environment for the agent process: vendor endpoint and its token, never other credentials."""
+    """Environment for the agent process: the model's endpoint and its token, never other credentials."""
     definition = catalog(profile)[entry["name"]]
-    env = {}
-    if definition["vendor"] in VENDOR_ENDPOINTS:
-        token = credentials.token({"token_env": definition.get("token_env", "FRIDAY_" + definition["vendor"].upper() + "_TOKEN"),
-                                   "token_file": definition.get("token_file"), "token_key": definition.get("token_key")},
-                                  "FRIDAY_" + definition["vendor"].upper() + "_TOKEN")
-        env = {"ANTHROPIC_BASE_URL": VENDOR_ENDPOINTS[definition["vendor"]], "ANTHROPIC_AUTH_TOKEN": token}
-    return env
+    base_url = endpoint(definition)
+    if not base_url:
+        return {}
+    name = "FRIDAY_" + re.sub(r"\W", "_", definition["vendor"]).upper() + "_TOKEN"
+    token = credentials.token({"token_env": definition.get("token_env", name), "token_file": definition.get("token_file"),
+                               "token_key": definition.get("token_key")}, name)
+    return {"ANTHROPIC_BASE_URL": base_url, "ANTHROPIC_AUTH_TOKEN": token}
+
+
+def endpoint(definition):
+    """The Anthropic-compatible API a claude-driver model talks to, when it is not Anthropic's own."""
+    return definition.get("base_url") or VENDOR_ENDPOINTS.get(definition["vendor"])
 
 
 def estimate(entry, profile, usage):

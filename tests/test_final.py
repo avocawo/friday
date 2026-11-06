@@ -1,7 +1,6 @@
 import contextlib
 import json
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +13,8 @@ from test_milestone import DONE, MODELS, PASS, git
 # Answers are chosen by what the prompt asks for, so the order of concurrent final checks does not matter.
 FAKE = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys
+
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
 directory = os.environ["FAKE_DIR"]
 prompt = sys.stdin.read()
 kinds = [("You do the final review", "final"), ("You check a change blind", "blind"), ("The final review of the whole task", "fix"),
@@ -110,9 +111,9 @@ class FinalTests(unittest.TestCase):
         result = milestone.finish(self.root, "T-1", self.profile)
         self.assertEqual(result["transport"], "none")
         text = Path(result["description"]).read_text()
-        for expected in ("Кнопка приветствия.", "**M1. Кнопка** — готово", "## Мелкие замечания", "Отступы.", "Friday: $"):
+        for expected in ("Кнопка приветствия.", "**M1. Кнопка** — done", "## Minor findings", "Отступы.", "Friday: $"):
             self.assertIn(expected, text)
-        self.assertNotIn("На решение владельцу", text)
+        self.assertNotIn("For the owner to decide", text)
         blind = self.log("blind")[0]
         self.assertEqual(blind["files"], [])  # the blind check runs in an empty directory
         self.assertNotIn("Тесты рядом", blind["prompt"])
@@ -136,7 +137,7 @@ class FinalTests(unittest.TestCase):
         self.assertEqual([d["problem"] for d in value["disputes"]], ["Нужен отдельный компонент."])
         self.assertEqual([f["problem"] for f in value["final_minor"]], ["Отступы."])
         text = (card.directory(self.root, "T-1") / "merge-request.md").read_text()
-        self.assertIn("## На решение владельцу", text)
+        self.assertIn("## For the owner to decide", text)
         self.assertIn("Компоненты в проекте не выделяют.", text)
         self.assertIn("T-1 final: aria", git("log", "-1", "--format=%s", cwd=self.worktree))
 

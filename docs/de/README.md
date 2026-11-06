@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — Neon-Logo" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>Eine persönliche Entwicklungs-Pipeline, die den Freitag näher rücken lässt.</strong><br>
 Von der Aufgabe bis zum Draft-MR: Starke Modelle planen und prüfen, günstige Modelle schreiben den Code.</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · frühe Version</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · frühe Version</p>
 
 [English](../../README.md) · [Русский](../ru/README.md) · [简体中文](../zh-cn/README.md) · [日本語](../ja/README.md) · [한국어](../ko/README.md) · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · **Deutsch** · [Français](../fr/README.md) · [Bahasa Indonesia](../id/README.md)
 
@@ -33,18 +33,22 @@ Du bist zweimal beteiligt: Du gibst den Plan frei und nimmst den Draft-MR ab. Zw
 
 ## Schnellstart
 
-Du brauchst Python 3.9+, Git sowie Claude Code und/oder die Codex CLI. Für das Gate und die Browser-Abnahme wird außerdem Docker benötigt.
+Du brauchst Python 3.11+, Git und Claude Code (die Codex CLI ist optional). Für das Gate und die Browser-Abnahme wird außerdem Docker benötigt.
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# in profiles/project-profile.json, set the repository path, the check commands and the gate
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# in project-profile.json, set your project's repository, worktree_root and executor_commands
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Friday spricht zehn Sprachen: `friday --lang ru …`, `FRIDAY_LANG=ru` oder `friday config language ru`. Agenten arbeiten immer auf Englisch; was du liest, wird übersetzt. Beispielprofile für Node- und Python-Projekte findest du in [examples/profiles](../../examples/profiles).
 
 ## Befehle
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Entfernt den Worktree und die Karte; der Branch bleibt erhalten |
 | `journal KEY` | Aktualisiert die Aufgaben-Journale (Obsidian, jsonl) |
 | `doctor --profile P` | Prüft, ob der Rechner und das Profil bereit sind |
+| `config language L` | Legt die Sprache fest, in der Friday auf diesem Rechner spricht |
 
-Details zu Profil, Modellen und Grenzen stehen im [Guide](guide.md). Warum die Pipeline so aufgebaut ist, erklären die [Pilot-Analyse](../process-redesign.md) (auf Russisch) und die [ADRs](../adr/) (auf Russisch).
+Details zu Profil, Modellen und Grenzen stehen im [Guide](guide.md). Warum die Pipeline so aufgebaut ist, erklären die [Pilot-Analyse](../process-redesign.md) (auf Russisch) und die [ADRs](../adr/) (0001–0006 auf Russisch).
 
 ## Entwicklung
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-Die Tests verwenden temporäre Daten und Fake-Agenten in einem Container ohne Netzwerkzugriff.
+Die Tests verwenden temporäre Daten und Fake-Agenten, ohne Netzwerk und ohne Docker. Wie der Code aufgebaut ist, steht in [docs/architecture.md](../architecture.md); wie du eine Änderung vorschlägst, steht in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 [Guide](guide.md) · [Glossar](GLOSSARY.md) · [Mitwirken](../../CONTRIBUTING.md) · [Lizenz](../../LICENSE)

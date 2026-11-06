@@ -38,7 +38,7 @@ def prepare(profile, worktree):
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise FridayError("worktree_setup_failed", str(exc))
         if result.returncode:
-            raise FridayError("worktree_setup_failed", " ".join(argv) + ": " + (result.stderr.strip() or result.stdout.strip())[-2000:])
+            raise FridayError("worktree_setup_failed", "{items}: {value}", items=" ".join(argv), value=(result.stderr.strip() or result.stdout.strip())[-2000:])
 
 
 def create(root, key, profile):
@@ -57,7 +57,7 @@ def create(root, key, profile):
     with locked(root, "repo:" + str(Path(repo).resolve()), timeout=300):
         if os.path.lexists(target):
             if not registered(repo, target, branch):
-                raise FridayError("worktree_conflict", "Worktree path already exists: " + str(target))
+                raise FridayError("worktree_conflict", "Worktree path already exists: {target}", target=str(target))
             base_commit = git(target, "merge-base", "HEAD", "origin/" + base)
         else:
             git(repo, "check-ref-format", "--branch", branch)

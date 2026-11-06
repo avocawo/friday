@@ -12,6 +12,8 @@ from friday import card, runner, status
 from friday.errors import FridayError
 from test_runner import ANSWER, FAKE, INIT, RESULT, alive
 
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
+
 CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
 
 
@@ -93,7 +95,7 @@ class CardTests(unittest.TestCase):
                    "started_at": time.time()}
         card.update(self.root, "T-1", lambda value: value.update(state="running", current=current))
         self.assertTrue(status.overview(self.root)[0]["now"][0]["lost"])
-        self.assertIn("ПОТЕРЯН", status.render(status.overview(self.root)))
+        self.assertIn("LOST", status.render(status.overview(self.root)))
         self.assertEqual(card.recover(self.root, "T-1")[0]["run"], "r1")
         orphan.wait(5)
         self.assertFalse(alive(orphan.pid))
@@ -112,8 +114,8 @@ class CardTests(unittest.TestCase):
         self.assertEqual(spent["by_role"]["review"]["runs"], 2)
         self.assertEqual(spent["tokens"], 2 * (4 + 9 + 70 + 110) + 1500)
         text = status.render(status.overview(self.root))
-        self.assertIn("$0.50 +1 без цены", text)
-        self.assertIn("ревью: 2 запуска", status.render_task(self.root, "T-1"))
+        self.assertIn("$0.50 +1 unpriced", text)
+        self.assertIn("review: 2 runs", status.render_task(self.root, "T-1"))
 
     def test_status_command_lists_tasks(self):
         card.create(self.root, "T-2", "/profiles/demo.json")
@@ -123,7 +125,7 @@ class CardTests(unittest.TestCase):
         self.assertEqual([row["key"] for row in json.loads(result.stdout)], ["T-1", "T-2"])
         result = subprocess.run([sys.executable, str(CLI), "status"], capture_output=True, text=True, env=environment)
         self.assertIn("T-2", result.stdout)
-        self.assertIn("ЗАДАЧА", result.stdout)
+        self.assertIn("TASK", result.stdout)
         result = subprocess.run([sys.executable, str(CLI), "status", "MISSING"], capture_output=True, text=True, env=environment)
         self.assertEqual(result.returncode, 1)
 

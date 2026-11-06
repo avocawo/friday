@@ -65,8 +65,8 @@ USE_DIGEST = (
     "this task into rules, each ending with its source path. Do not read those documents whole: when the digest is not "
     "enough, Grep the document the map names for the section you need. Executors do not reread those documents.\n")
 PLAN_RULES = (
-    "Write brief, steps, criteria, goal, title, summary, rules, assumptions and questions in the task's language; in "
-    "Russian call a milestone «веха» and a stage «этап».\n"
+    "Write everything in English, whatever the language of the ticket: brief, steps, criteria, goal, title, summary, "
+    "rules, assumptions and questions. Friday translates what the owner reads.\n"
     "{docs}"
     "Group stages into milestones that are reviewable as a whole. Order milestones with depends_on; set parallel only "
     "when the milestone shares no files with any milestone it is not ordered against.\n"
@@ -92,7 +92,7 @@ REVIEW_RULES = (
     "files the plan changes is below; read other files only to check a point, several in one turn with parallel Read "
     "calls. Use blocking for problems that would make "
     "the result wrong or the pipeline fail, minor otherwise. Do not report wording or style. Write problem and "
-    "suggestion in the task's language. Do not edit any file. verdict is ok only when there are no blocking findings.")
+    "suggestion in English. Do not edit any file. verdict is ok only when there are no blocking findings.")
 
 
 def validate(plan, worktree, limits=None):
@@ -174,7 +174,7 @@ def overlaps(root, key, plan, profile):
             same_repo = True  # an unreadable profile is no proof of another repository
         shared = sorted(mine & plan_files(json.loads(source.read_text(encoding="utf-8"))))
         if same_repo and shared:
-            warnings.append("Задача %s меняет те же файлы: %s" % (other, ", ".join(shared[:10]) + (" …" if len(shared) > 10 else "")))
+            warnings.append("Task %s changes the same files: %s" % (other, ", ".join(shared[:10]) + (" …" if len(shared) > 10 else "")))
     return warnings
 
 
@@ -191,7 +191,7 @@ def ticket_text(ticket):
 def context(card, profile, ticket):
     value = {"task": card["key"], "ticket": ticket_text(ticket)}
     if card["decisions"]:
-        value["owner_decisions"] = card["decisions"]
+        value["owner_decisions"] = cards.for_agents(card["decisions"])
     if profile.get("engineering_policy"):
         value["engineering_policy"] = profile["engineering_policy"]
     return json.dumps(value, ensure_ascii=False, indent=2)
@@ -230,7 +230,7 @@ def rules_digest(root, key, profile, worktree):
               "Write a digest for those who plan and implement changes here and will not read the files. rules: every rule "
               "a change must follow (architecture and layers, naming, code style, tests, UI kit, what is forbidden), one "
               "short rule per item, each ending with its source path and section. documents: for each file, the topics it "
-              "covers, so a planner can Grep the right section when a point is missing. Write in the documents' language. "
+              "covers, so a planner can Grep the right section when a point is missing. Write in English, whatever the documents' language. "
               "Do not edit any file." % ", ".join(files))
     result = agent(root, key, profile, "digest", prompt, DIGEST_SCHEMA, cast_role="plan")
     digest = dict(result.structured, files=files)
@@ -248,7 +248,7 @@ def agent(root, key, profile, role, prompt, schema, cast_role=None):
                        cwd=card["worktree"], log_dir="", schema=schema, env=models.environment(entry, profile), mcp=mcp)
     result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
     if result.status != "ok" or not isinstance(result.structured, dict):
-        raise FridayError("agent_failed", "%s did not return a result (%s): %s" % (role, result.status, result.error or "no structured answer"))
+        raise FridayError("agent_failed", "{role} did not return a result ({status}): {value}", role=role, status=result.status, value=result.error or "no structured answer")
     return result
 
 
@@ -268,7 +268,7 @@ def checked(root, key, profile, worktree, result, limits, prompt, retries=1):
             return result
         cards.record(root, key, "plan_invalid", errors=errors)
         if attempt == retries:
-            raise FridayError("plan_invalid", "The plan fails feasibility checks:\n- " + "\n- ".join(errors))
+            raise FridayError("plan_invalid", "The plan fails feasibility checks:\n- {items}", items="\n- ".join(errors))
         result = revise(root, key, profile, prompt, result.structured,
                         "Friday's feasibility checks rejected the plan. Fix every problem and return the whole plan again "
                         "with the same schema; keep responses as they were.\n- " + "\n- ".join(errors))
@@ -325,7 +325,7 @@ def plan_review(root, key, profile, prompt):
         if entry["model"] == layout["plan-review"]["model"]:
             raise FridayError("agent_failed", "No plan reviewer with quota is available.")
         cards.update(root, key, lambda value: value["cast"].update({"plan-review": entry}))
-        cards.record(root, key, "cast_note", note=note or "plan-review: замена после исчерпания квоты")
+        cards.record(root, key, "cast_note", note=note or "plan-review: replaced after its quota ran out")
 
 
 def make(root, key, profile, ticket):
@@ -374,7 +374,7 @@ def make(root, key, profile, ticket):
     for index, item in enumerate(findings):
         answer = responses.get(index)
         if answer is None or not answer["accepted"]:
-            open_notes.append(dict(item, answer=(answer or {}).get("reason", "Планировщик не ответил на замечание.")))
+            open_notes.append(dict(item, answer=(answer or {}).get("reason", "The planner did not answer this finding.")))
     warnings = overlaps(root, key, document, profile)
     (cards.directory(root, key) / "plan.json").write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     skeleton = [{"id": item["id"], "title": item["title"], "complexity": item["complexity"], "ui": item["ui"],
@@ -394,47 +394,66 @@ def approve(root, key, by="owner"):
     """Approve the waiting plan; by="auto" when the profile's approval is auto and nobody looked at it."""
     def change(value):
         if value["state"] != "awaiting_approval":
-            raise FridayError("invalid_state", "Task %s has no plan waiting for approval." % key)
+            raise FridayError("invalid_state", "Task {key} has no plan waiting for approval.", key=key)
         value["plan"]["approved"] = True
         value["state"] = "approved"
     cards.update(root, key, change)
     cards.record(root, key, "plan_approved", by=by)
 
 
-def render(root, key):
+def render(root, key, profile=None):
+    """The plan as the owner reads it, in their language; the plan itself stays in English."""
+    from . import i18n, translate
+    from .i18n import _
     value = cards.read(root, key)
     source = cards.directory(root, key) / "plan.json"
     if not source.is_file():
-        raise FridayError("not_found", "Task %s has no plan yet." % key)
+        raise FridayError("not_found", "Task {key} has no plan yet.", key=key)
     document = json.loads(source.read_text(encoding="utf-8"))
-    lines = ["# План %s" % key, "", document["summary"], ""]
+    if profile is None:
+        try:
+            profile = profiles.load(value["profile"])
+        except (FridayError, OSError):
+            profile = None
+    lang = i18n.language()
+    t = translate.into(root, key, profile or {}, lang)
+    if profile is not None:
+        texts = [document["summary"]] + value["plan"].get("questions", []) + value["plan"].get("overlaps", [])
+        texts += [text for note in value["plan"].get("review_notes", []) for text in (note["problem"], note["answer"])]
+        texts += document["assumptions"] + document["rules"]
+        for item in document["milestones"]:
+            texts += [item["title"], item["goal"]]
+            for stage in item["stages"]:
+                texts += [stage["brief"]] + [criterion["text"] for criterion in stage["criteria"]]
+        t.prefetch(texts)
+    lines = ["# " + _("Plan {key}", key=key), "", t(document["summary"]), ""]
     if value["plan"].get("questions"):
-        lines += ["## Вопросы владельцу"] + ["- " + item for item in value["plan"]["questions"]] + [""]
+        lines += ["## " + _("Questions for the owner")] + ["- " + t(item) for item in value["plan"]["questions"]] + [""]
     if value["plan"].get("review_notes"):
-        lines.append("## Несогласованные замечания проверки")
+        lines.append("## " + _("Open review notes"))
         for note in value["plan"]["review_notes"]:
-            lines.append("- [%s] %s/%s: %s" % (note["severity"], note["milestone"], note["stage"], note["problem"]))
-            lines.append("  Ответ планировщика: " + note["answer"])
+            lines.append("- [%s] %s/%s: %s" % (note["severity"], note["milestone"], note["stage"], t(note["problem"])))
+            lines.append("  " + _("Planner's answer: {answer}", answer=t(note["answer"])))
         lines.append("")
     if value["plan"].get("overlaps"):
-        lines += ["## Пересечения с другими задачами"] + ["- " + item for item in value["plan"]["overlaps"]] + [""]
-    lines.append("## Вехи")
+        lines += ["## " + _("Overlaps with other tasks")] + ["- " + t(item) for item in value["plan"]["overlaps"]] + [""]
+    lines.append("## " + _("Milestones"))
     for item in document["milestones"]:
-        flags = ", ".join(flag for flag, on in (("сложная", item["complexity"] == "complex"), ("интерфейс", item["ui"]),
-                                                ("параллельно", item["parallel"])) if on)
-        after = " после " + ", ".join(item["depends_on"]) if item["depends_on"] else ""
-        lines.append("### %s. %s%s%s" % (item["id"], item["title"], " (" + flags + ")" if flags else "", after))
-        lines.append(item["goal"])
+        flags = ", ".join(flag for flag, on in ((_("complex"), item["complexity"] == "complex"), (_("interface"), item["ui"]),
+                                                (_("parallel"), item["parallel"])) if on)
+        after = " " + _("after {milestones}", milestones=", ".join(item["depends_on"])) if item["depends_on"] else ""
+        lines.append("### %s. %s%s%s" % (item["id"], t(item["title"]), " (" + flags + ")" if flags else "", after))
+        lines.append(t(item["goal"]))
         for stage in item["stages"]:
-            lines.append("- **%s** %s (~%d строк, файлов: %d)" % (stage["id"], stage["brief"], stage["estimate_lines"],
-                                                                len(stage["files"]) + len(stage["new_files"])))
+            lines.append("- **%s** %s (%s)" % (stage["id"], t(stage["brief"]), _("~{lines} lines, {files} files", lines=stage["estimate_lines"],
+                                                                                   files=len(stage["files"]) + len(stage["new_files"]))))
             for criterion in stage["criteria"]:
-                lines.append("  - [%s] %s" % ("браузер" if criterion["check"] == "behavior" else "код", criterion["text"]))
+                lines.append("  - [%s] %s" % (_("browser") if criterion["check"] == "behavior" else _("code"), t(criterion["text"])))
         lines.append("")
     if document["assumptions"]:
-        lines += ["## Допущения"] + ["- " + item for item in document["assumptions"]] + [""]
+        lines += ["## " + _("Assumptions")] + ["- " + t(item) for item in document["assumptions"]] + [""]
     if document["rules"]:
-        lines += ["## Правила проекта для исполнителя"] + ["- " + item for item in document["rules"]] + [""]
-    lines.append("Раскладка: " + ", ".join("%s → %s" % (role, entry["model"] + (" " + entry["effort"] if entry.get("effort") else ""))
-                                         for role, entry in value["cast"].items()))
+        lines += ["## " + _("Project rules for the executor")] + ["- " + t(item) for item in document["rules"]] + [""]
+    lines.append(_("Models: {cast}", cast=", ".join("%s → %s" % (role, entry["model"] + (" " + entry["effort"] if entry.get("effort") else ""))
+                                                   for role, entry in value["cast"].items())))
     return "\n".join(lines)

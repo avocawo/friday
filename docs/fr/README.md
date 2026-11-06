@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo néon" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>Un pipeline de développement personnel qui rapproche le vendredi.</strong><br>
 De la tâche au MR en brouillon : les modèles puissants planifient et relisent, les modèles économiques écrivent le code.</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · version préliminaire</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · version préliminaire</p>
 
 [English](../../README.md) · [Русский](../ru/README.md) · [简体中文](../zh-cn/README.md) · [日本語](../ja/README.md) · [한국어](../ko/README.md) · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · [Deutsch](../de/README.md) · **Français** · [Bahasa Indonesia](../id/README.md)
 
@@ -33,18 +33,22 @@ Vous intervenez deux fois : vous approuvez le plan et vous acceptez le MR en bro
 
 ## Démarrage rapide
 
-Il vous faut Python 3.9+, Git, ainsi que Claude Code et/ou Codex CLI. Le gate et la recette dans le navigateur nécessitent aussi Docker.
+Il vous faut Python 3.11+, Git et Claude Code (Codex CLI est facultatif). Le gate et la recette dans le navigateur nécessitent aussi Docker.
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# dans profiles/project-profile.json, indiquez le chemin du dépôt, les commandes de vérification et le gate
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# in project-profile.json, set your project's repository, worktree_root and executor_commands
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Friday parle dix langues : `friday --lang ru …`, `FRIDAY_LANG=ru` ou `friday config language ru`. Les agents travaillent toujours en anglais ; ce que vous lisez est traduit. Des profils d'exemple pour les projets Node et Python se trouvent dans [examples/profiles](../../examples/profiles).
 
 ## Commandes
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Supprime le worktree et la fiche ; la branche reste |
 | `journal KEY` | Met à jour les journaux des tâches (Obsidian, jsonl) |
 | `doctor --profile P` | Vérifie que la machine et le profil sont prêts |
+| `config language L` | Définit la langue dans laquelle Friday s'exprime sur cette machine |
 
-Pour le détail du profil, des modèles et des limites, voir le [guide](guide.md). Pour comprendre pourquoi le pipeline est conçu ainsi, voir l'[analyse du pilote](../process-redesign.md) (en russe) et les [ADR](../adr/) (en russe).
+Pour le détail du profil, des modèles et des limites, voir le [guide](guide.md). Pour comprendre pourquoi le pipeline est conçu ainsi, voir l'[analyse du pilote](../process-redesign.md) (en russe) et les [ADR](../adr/) (0001–0006 en russe).
 
 ## Développement
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-Les tests utilisent des données temporaires et de faux agents dans un conteneur sans accès au réseau.
+Les tests utilisent des données temporaires et de faux agents, sans réseau ni Docker. L'organisation du code est décrite dans [docs/architecture.md](../architecture.md) ; la marche à suivre pour proposer une modification est dans [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 [Guide](guide.md) · [Glossaire](GLOSSARY.md) · [Contribuer](../../CONTRIBUTING.md) · [Licence](../../LICENSE)

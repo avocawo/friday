@@ -1,17 +1,15 @@
 {
   "name": "example",
   "extends": "models.json",
-  "repository": "../../my-project",
+  "repository": "~/code/my-project",
   "base_branch": "main",
-  "worktree_root": "../../my-project-worktrees",
+  "worktree_root": "~/code/my-project-worktrees",
   "branch_template": "friday/{key}",
   "engineering_policy": [
     "Follow the project's documented rules and inspect matching precedents before choosing a solution.",
     "Check the project's existing libraries before implementing a custom alternative."
   ],
-  "executor_commands": ["npm run lint", "npx vue-tsc --noEmit", "npx vitest run"],
-  "gate": ["npm", "run", "validate"],
-  "gate_image": "my-project-gate:local",
+  "executor_commands": ["make lint", "make test"],
   "limits": {"stage_files": 10, "stage_lines": 500},
   "delivery": {"transport": "none"}
 }

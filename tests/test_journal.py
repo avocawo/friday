@@ -1,3 +1,4 @@
+import os
 import json
 import tempfile
 import unittest
@@ -5,6 +6,8 @@ from pathlib import Path
 
 from friday import card, journal
 from friday.errors import FridayError
+
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
 
 PLAN = {"summary": "Кнопка приветствия. Показывает имя.", "rules": [], "assumptions": ["Язык — русский."], "questions": [],
         "milestones": [{"id": "M1", "title": "Кнопка", "goal": "Кнопка на странице.", "stages": []},
@@ -47,14 +50,14 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(len(written), 2)
         text = self.page()
         self.assertTrue(text.startswith("---\nfriday_generated: T-1\nkey: T-1\nstate: running"))  # front matter stays first
-        for expected in ("# T-1 — Кнопка приветствия", "В работе · ветка `friday/T-1`", "### M1. Кнопка — готова",
-                         "> Исполнитель (glm-5.3): Добавил кнопку и тест.", "- M1.1 `abcdef1234`", "Мелкое: `page.html` Отступы.",
-                         "Вне плана: `notes.md`", "### M2. Имя — впереди", "Нужен компонент.", "В проекте так не делают.",
-                         "**names**: Пустое имя — ошибка. (переоткрыты: M2)", "Несогласованное замечание (M1/M1.1): Шаблон.",
-                         "| исполнение | 1 | 1k | $0.12 |", "review (claude-opus-5-5): quota usage limit", "Допущение: Язык — русский."):
+        for expected in ("# T-1 — Кнопка приветствия", "Running · branch `friday/T-1`", "### M1. Кнопка — done",
+                         "> Executor (glm-5.3): Добавил кнопку и тест.", "- M1.1 `abcdef1234`", "Minor: `page.html` Отступы.",
+                         "Outside the plan: `notes.md`", "### M2. Имя — ahead", "Нужен компонент.", "В проекте так не делают.",
+                         "**names**: Пустое имя — ошибка. (reopened: M2)", "Open review note (M1/M1.1): Шаблон.",
+                         "| development | 1 | 1k | $0.12 |", "review (claude-opus-5-5): quota usage limit", "Assumption: Язык — русский."):
             self.assertIn(expected, text)
-        now = (self.root.parent / "vault" / "Friday — сейчас.md").read_text()
-        self.assertIn("| [[T-1]] | В работе |", now)
+        now = (self.root.parent / "vault" / "Friday — now.md").read_text()
+        self.assertIn("| [[T-1]] | Running |", now)
         lines = (self.root.parent / "events" / "T-1.jsonl").read_text().splitlines()
         self.assertEqual(json.loads(lines[0])["task"], "T-1")
         self.assertEqual(len(lines), len(card.events(self.root, "T-1")))
@@ -78,7 +81,7 @@ class JournalTests(unittest.TestCase):
         self.assertFalse((self.root.parent / "vault" / "T-1.md").exists())  # not significant
         card.record(self.root, "T-1", "milestone_done", milestone="M1", rounds=1, commits=1, disputes=1)
         text = self.page()
-        self.assertTrue(text.startswith("<!-- friday:generated T-1 -->\n# T-1\nВ работе"))
+        self.assertTrue(text.startswith("<!-- friday:generated T-1 -->\n# T-1\nRunning"))
         self.assertIn("Нужен компонент.", text)
         self.assertNotIn("## Расход", text)
 

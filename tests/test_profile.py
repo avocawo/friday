@@ -17,7 +17,26 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(selected["delivery"], {"transport": "none"})
         for key in ("tracker", "gitlab", "github"):
             self.assertNotIn(key, selected)
-        self.assertEqual(models.cast(selected)[0]["plan"]["name"], "fable")
+        self.assertEqual(models.cast(selected)[0]["plan"]["name"], "opus-xhigh")
+
+    def test_home_relative_paths_are_expanded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "p.json"
+            source.write_text(json.dumps({"name": "p", "repository": "~/code/app", "worktree_root": "~/code/app-worktrees"}))
+            selected = profile.load(source)
+        self.assertEqual(selected["repository"], str(Path.home().resolve() / "code" / "app"))
+        self.assertEqual(selected["worktree_root"], str(Path.home().resolve() / "code" / "app-worktrees"))
+
+    def test_every_example_profile_loads_with_a_valid_catalog(self):
+        from friday import gate, models
+        examples = Path(__file__).resolve().parents[1] / "examples"
+        for path in sorted(examples.rglob("*.json")):
+            selected = profile.load(path)
+            self.assertTrue(models.catalog(selected), path)
+            gate.links(selected)
+            gate.tmpfs(selected)
+            if "roles" in selected:
+                self.assertEqual(models.choose(selected, "translate")[0]["tier"], "efficient", path)
 
     def test_inherited_paths_remain_relative_to_their_own_file(self):
         with tempfile.TemporaryDirectory() as directory:

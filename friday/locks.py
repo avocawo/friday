@@ -21,7 +21,7 @@ def locked(root, resource, timeout=30):
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise FridayError("lock_timeout", "Resource is busy: " + resource)
+                    raise FridayError("lock_timeout", "Resource is busy: {resource}", resource=resource)
                 time.sleep(0.05)
         try:
             yield

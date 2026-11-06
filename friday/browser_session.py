@@ -34,19 +34,74 @@ def configuration(spec, preview):
         return origin, None
     if spec.get("mode") not in (None, "staging"):
         raise FridayError("invalid_profile", "Unknown browser mode.")
+    return origin, stage_origin(spec)
+
+
+# Labels that mark a test environment in a host name; a team with another convention sets stage_host_pattern.
+TEST_LABELS = ("stage", "staging", "stg", "dev", "test", "testing", "qa", "uat", "sandbox", "preview", "preprod")
+
+
+def staging_host(host, pattern=None):
+    if pattern is not None:
+        return bool(re.fullmatch(pattern, host))
+    return any(label in TEST_LABELS or label.split("-")[0] in TEST_LABELS or label.split("-")[-1] in TEST_LABELS
+               for label in host.split(".")[:-1])
+
+
+def stage_origin(spec):
+    """The one staging origin the browser may reach: explicit HTTPS, no path or credentials, and a host named as a test
+    environment (stage, staging, dev, qa, …, or browser.stage_host_pattern), so that a profile cannot point at production."""
     stage = spec.get("stage_origin")
     if not isinstance(stage, str):
         raise FridayError("invalid_profile", "Browser stage origin is required.")
+    pattern = spec.get("stage_host_pattern")
+    if pattern is not None:
+        try:
+            re.compile(pattern)
+        except (re.error, TypeError):
+            raise FridayError("invalid_profile", "browser.stage_host_pattern must be a regular expression.")
     target = urllib.parse.urlsplit(stage)
-    if target.scheme != "https" or not target.hostname or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.stage\.[a-z0-9.-]+", target.hostname) or target.username or target.password or target.path or target.query or target.fragment or target.port not in (None, 443):
-        raise FridayError("invalid_profile", "Browser API must use an explicit HTTPS staging origin.")
-    return origin, stage
+    try:
+        port = target.port
+    except ValueError:
+        port = -1
+    if (target.scheme != "https" or not target.hostname or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", target.hostname)
+            or not staging_host(target.hostname, pattern) or target.username or target.password or target.path or target.query
+            or target.fragment or port not in (None, 443)):
+        raise FridayError("invalid_profile", "Browser API must use an explicit HTTPS origin of a staging environment.")
+    return "https://" + target.hostname
+
+
+def stage_check(spec):
+    """How the preview proves it talks to staging: a script of the app that names the staging API in a variable
+    ({"path": "/src/app/main.ts", "variable": "VITE_API_APOLLO_URI"}); None when the profile gives none."""
+    value = spec.get("stage_check")
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or not isinstance(value.get("path"), str) or not value["path"].startswith("/")
+            or value["path"].startswith("//") or ".." in value["path"].split("/") or any(x in value["path"] for x in "?#")
+            or not isinstance(value.get("variable"), str) or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", value["variable"])):
+        raise FridayError("invalid_profile", "browser.stage_check needs a local script path and a variable name.")
+    return value
+
+
+def stage_check_script(check, stage):
+    """A page function: true when the script names the staging origin in the variable."""
+    return r"""async () => {
+        try {
+            const response = await fetch(PATH, {redirect: 'error'});
+            const text = await response.text();
+            const match = text.match(new RegExp(VARIABLE + "[\"']?\\s*[:=]\\s*[\"']([^\"']+)[\"']"));
+            return response.ok && !!match && new URL(match[1]).origin === STAGE;
+        } catch (_) { return false; }
+    }""".replace("PATH", json.dumps(check["path"])).replace("VARIABLE", json.dumps(check["variable"])).replace("STAGE", json.dumps(stage))
 
 
 class Session:
     def __init__(self, spec, preview):
         self.origin, self.stage = configuration(spec, preview)
         self.path = browser_probe.server_path({"browser": spec})
+        self.chrome = browser_probe.chrome_url(spec)
         self.fixture = browser_probe.Fixture()
         self.client = None
         self.marker = "friday-" + uuid.uuid4().hex
@@ -57,7 +112,7 @@ class Session:
             patterns = [self.origin + "/*", self.fixture.origin + "/*"]
             if self.stage:
                 patterns.append(self.stage + "/*")
-            self.client = browser_protocol.Client(browser_probe.command(self.path, patterns))
+            self.client = browser_protocol.Client(browser_probe.command(self.path, patterns, self.chrome))
             probe = browser_probe.exercise(self.client, self.fixture)
             token = browser_auth.capture(spec)
             pages = browser_protocol.text(self.client.tool("list_pages", {}))
@@ -77,20 +132,14 @@ class Session:
                 token = None
                 self.client.tool("navigate_page", {"pageId": self.page, "type": "url", "url": preview, "timeout": 120000}, timeout=130)
                 browser_auth.verify_preview(spec, self.client, self.page)
-            source = """async () => {
-                try {
-                    const response = await fetch('/src/app/main.ts', {redirect: 'error'});
-                    const text = await response.text();
-                    const match = text.match(/VITE_API_APOLLO_URI[\"']?\\s*[:=]\\s*[\"']([^\"']+)[\"']/);
-                    return response.ok && !!match && new URL(match[1]).origin === STAGE;
-                } catch (_) { return false; }
-            }""".replace("STAGE", json.dumps(self.stage))
-            if self.stage:
-                result = browser_protocol.text(self.client.tool("evaluate_script", {"pageId": self.page, "function": source}, timeout=90))
+            check = stage_check(spec)
+            if self.stage and check:
+                result = browser_protocol.text(self.client.tool("evaluate_script", {"pageId": self.page,
+                                                                                    "function": stage_check_script(check, self.stage)}, timeout=90))
                 if not re.search(r"```json\s*true\s*```", result):
                     raise FridayError("isolation_unavailable", "The preview did not prove its API is staging.")
             self.client.tool("close_page", {"pageId": probe})
-            browser_probe.cleanup(self.path, self.fixture.forbidden_origin)
+            browser_probe.cleanup(self.path, self.fixture.forbidden_origin, browser_url=self.chrome)
             self.fixture.close()
         except BaseException:
             self.close()
@@ -156,11 +205,11 @@ class Session:
             self.client = None
         try:
             if self.page is not None:
-                browser_probe.cleanup(self.path, self.origin, self.marker)
+                browser_probe.cleanup(self.path, self.origin, self.marker, self.chrome)
             elif self.preview_started:
-                browser_probe.cleanup(self.path, self.origin)
-            browser_probe.cleanup(self.path, self.fixture.origin)
-            browser_probe.cleanup(self.path, self.fixture.forbidden_origin)
+                browser_probe.cleanup(self.path, self.origin, browser_url=self.chrome)
+            browser_probe.cleanup(self.path, self.fixture.origin, browser_url=self.chrome)
+            browser_probe.cleanup(self.path, self.fixture.forbidden_origin, browser_url=self.chrome)
         finally:
             self.fixture.close()
 
