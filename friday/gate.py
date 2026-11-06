@@ -60,21 +60,21 @@ def verify_archive(repository, archive, index):
             item = members[name]
             if mode == b"120000":
                 if not source.is_symlink() or not item.issym() or os.readlink(source) != item.linkname:
-                    raise FridayError("incomplete_snapshot", "Snapshot differs from worktree: " + name)
+                    raise FridayError("incomplete_snapshot", "Snapshot differs from worktree: {name}", name=name)
             elif mode in (b"100644", b"100755"):
                 if not item.isfile() or source.is_symlink():
-                    raise FridayError("incomplete_snapshot", "Snapshot differs from worktree: " + name)
+                    raise FridayError("incomplete_snapshot", "Snapshot differs from worktree: {name}", name=name)
                 if bool(source.stat().st_mode & 0o111) != (mode == b"100755"):
-                    raise FridayError("incomplete_snapshot", "File mode differs from git: " + name)
+                    raise FridayError("incomplete_snapshot", "File mode differs from git: {name}", name=name)
                 with source.open("rb") as handle, tar.extractfile(item) as archived:
                     while True:
                         left, right = handle.read(1024 * 1024), archived.read(1024 * 1024)
                         if left != right:
-                            raise FridayError("incomplete_snapshot", "Snapshot differs from worktree: " + name)
+                            raise FridayError("incomplete_snapshot", "Snapshot differs from worktree: {name}", name=name)
                         if not left:
                             break
             else:
-                raise FridayError("incomplete_snapshot", "Unsupported git file mode for: " + name)
+                raise FridayError("incomplete_snapshot", "Unsupported git file mode for: {name}", name=name)
 
 
 def image_id(image):
@@ -84,7 +84,7 @@ def image_id(image):
     except FileNotFoundError:
         raise FridayError("environment_unavailable", "Docker is not available.")
     if result.returncode or not result.stdout.strip():
-        raise FridayError("environment_unavailable", "Gate image is unavailable locally: " + image)
+        raise FridayError("environment_unavailable", "Gate image is unavailable locally: {image}", image=image)
     return result.stdout.strip()
 
 
@@ -95,6 +95,36 @@ def extract(archive, path):
             if member.name.startswith("/") or ".." in parts or member.isdev() or member.isfifo():
                 raise FridayError("invalid_snapshot", "Unsafe path in git archive.")
         tar.extractall(path)
+
+
+def links(profile):
+    """gate_links: {path in the snapshot: absolute path in the image}, e.g. dependencies installed in the image
+    ({"node_modules": "/app/node_modules"} or {".venv": "/opt/venv"}). gate_node_modules is the older form of the first."""
+    value = dict(profile.get("gate_links") or {})
+    if profile.get("gate_node_modules") is not None:
+        value.setdefault("node_modules", profile["gate_node_modules"])
+    for name, target in value.items():
+        if (not isinstance(name, str) or not name or name.startswith("/") or ".." in Path(name).parts or
+                not isinstance(target, str) or not target.startswith("/") or ".." in Path(target).parts):
+            raise FridayError("invalid_profile", "gate_links must map relative snapshot paths to absolute image paths.")
+    return value
+
+
+def tmpfs(profile):
+    """gate_tmpfs: writable scratch directories in the read-only container (caches of the tools the gate runs)."""
+    value = profile.get("gate_tmpfs", [])
+    if not isinstance(value, list) or any(not isinstance(path, str) or not path.startswith("/") or ".." in Path(path).parts or
+                                          path.rstrip("/") in ("", "/workspace") or path.startswith("/workspace/")
+                                          for path in value):
+        raise FridayError("invalid_profile", "gate_tmpfs entries must be absolute container paths outside /workspace.")
+    return value
+
+
+def image_root(profile):
+    value = profile.get("gate_image_root", "/app")
+    if not isinstance(value, str) or not value.startswith("/") or ".." in Path(value).parts:
+        raise FridayError("invalid_profile", "gate_image_root must be an absolute path.")
+    return value.rstrip("/") or "/"
 
 
 def container(profile, image, head, archive):
@@ -114,34 +144,29 @@ def container(profile, image, head, archive):
             raise FridayError("invalid_profile", "gate_private_tmp must be a boolean.")
         if private_tmp:
             command += ["--tmpfs", "/private/tmp" + tmp_options]
+        for name, target in links(profile).items():
+            if os.path.lexists(os.path.join(directory, name)):
+                raise FridayError("invalid_profile", "gate_links: {path} exists in the snapshot and cannot be linked to the image.", path=name)
+            os.makedirs(os.path.dirname(os.path.join(directory, name)) or directory, exist_ok=True)
+            os.symlink(target, os.path.join(directory, name))
+        for cache in tmpfs(profile):
+            command += ["--tmpfs", cache]
         if profile.get("gate_mode", "snapshot") == "git-diff":
             common = git(profile["repository"], "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()
             if "," in common:
                 raise FridayError("invalid_profile", "Git directory path cannot contain a comma for Docker mounts.")
-            node_modules = profile.get("gate_node_modules")
-            if node_modules is not None:
-                if not isinstance(node_modules, str) or not node_modules.startswith("/") or os.path.lexists(os.path.join(directory, "node_modules")):
-                    raise FridayError("invalid_profile", "gate_node_modules must name an absolute image path; snapshot must not contain node_modules.")
-                os.symlink(node_modules, os.path.join(directory, "node_modules"))
-            caches = profile.get("gate_tmpfs", [])
-            if not isinstance(caches, list) or any(not isinstance(cache, str) or not node_modules or
-                                                    not cache.startswith(node_modules.rstrip("/") + "/.") or
-                                                    ".." in Path(cache).parts for cache in caches):
-                raise FridayError("invalid_profile", "gate_tmpfs entries must be hidden cache directories under gate_node_modules.")
-            for cache in caches:
-                command += ["--tmpfs", cache]
             lockfile = profile.get("gate_lockfile", "")
             if not isinstance(lockfile, str) or lockfile.startswith("/") or ".." in Path(lockfile).parts:
                 raise FridayError("invalid_profile", "gate_lockfile must be a relative path without '..'.")
             script = ('env -u GIT_DIR -u GIT_WORK_TREE git init --bare -q "$GIT_DIR" && git symbolic-ref HEAD refs/heads/friday && '
                       'git update-ref refs/heads/friday "$FRIDAY_BASE" && git read-tree "$FRIDAY_HEAD" && '
-                      'if [ -n "$FRIDAY_LOCKFILE" ]; then cmp "/workspace/$FRIDAY_LOCKFILE" "/app/$FRIDAY_LOCKFILE" || '
+                      'if [ -n "$FRIDAY_LOCKFILE" ]; then cmp "/workspace/$FRIDAY_LOCKFILE" "$FRIDAY_IMAGE_ROOT/$FRIDAY_LOCKFILE" || '
                       '{ echo "FRIDAY_ENVIRONMENT_UNAVAILABLE: image lockfile differs"; exit 125; }; fi && exec "$@"')
             command += ["--mount", "type=bind,src=%s,dst=/friday-git,readonly" % common,
                         "--env", "GIT_DIR=/tmp/friday.git", "--env", "GIT_WORK_TREE=/workspace",
                         "--env", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/friday-git/objects",
                         "--env", "FRIDAY_BASE=" + profile["gate_base"], "--env", "FRIDAY_HEAD=" + head,
-                        "--env", "FRIDAY_LOCKFILE=" + lockfile,
+                        "--env", "FRIDAY_LOCKFILE=" + lockfile, "--env", "FRIDAY_IMAGE_ROOT=" + image_root(profile),
                         "--env", "GIT_CONFIG_COUNT=1", "--env", "GIT_CONFIG_KEY_0=safe.directory",
                         "--env", "GIT_CONFIG_VALUE_0=/workspace", "--entrypoint", "sh", image, "-c", script,
                         "friday"] + profile["gate"]

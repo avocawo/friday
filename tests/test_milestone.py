@@ -12,6 +12,8 @@ from friday.errors import FridayError
 # Each call takes the next entry of calls.json: files to write, commits to make, the structured answer and its session.
 FAKE = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys
+
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
 directory = os.environ["FAKE_DIR"]
 prompt = sys.stdin.read()
 counter = os.path.join(directory, "counter")
@@ -168,7 +170,7 @@ class MilestoneTests(unittest.TestCase):
         self.assertNotIn("--resume", third["argv"])
         self.assertIn("Continue from them", third["prompt"])
         notes = [event.get("note", "") for event in card.events(self.root, "T-1") if event["type"] == "cast_note"]
-        self.assertTrue(any("два провала подряд" in note for note in notes))
+        self.assertTrue(any("two failures in a row" in note for note in notes))
         self.assertEqual(card.read(self.root, "T-1")["milestones"][0]["state"], "done")
 
     def test_gate_that_never_passes_fails_the_milestone(self):

@@ -45,14 +45,14 @@ EXECUTOR_RULES = (
     "git add <files> and git commit -m \"{key} <stage id>: <short summary>\". Follow the project rules below; they are "
     "a digest made for you, read the source only when a rule is unclear. Stay within the milestone's files; if you must "
     "change another file, do it and list it in extra_files with the reason. You have no network. Do not push, do not "
-    "change git configuration, do not delete or rewrite earlier commits. Write summary in the task's language.")
+    "change git configuration, do not delete or rewrite earlier commits. Write summary in English.")
 REVIEW_RULES = (
     "You review one milestone of an approved plan. You get the milestone's goal, criteria and the project rules digest, "
     "the diff of this milestone only, and the result of the isolated gate (lint, typecheck, tests) on the same commit. "
     "You may read the repository for context. Judge every criterion as pass, fail or unverifiable with concrete evidence "
     "(file and line). Report every actionable defect in one pass: blocking for wrong behaviour, broken criteria, breaches "
     "of project rules or missing tests; minor for anything that can wait. Do not report style the linter accepts. "
-    "verdict is pass when no blocking finding remains. Do not edit files. Write problems and evidence in the task's language.")
+    "verdict is pass when no blocking finding remains. Do not edit files. Write problems and evidence in English.")
 
 
 def git(worktree, *args):
@@ -78,7 +78,7 @@ def define(document, milestone_id):
     for item in document["milestones"]:
         if item["id"] == milestone_id:
             return item
-    raise FridayError("not_found", "Unknown milestone: " + milestone_id)
+    raise FridayError("not_found", "Unknown milestone: {milestone_id}", milestone_id=milestone_id)
 
 
 def set_state(root, key, milestone_id, **changes):
@@ -87,7 +87,7 @@ def set_state(root, key, milestone_id, **changes):
             if item["id"] == milestone_id:
                 item.update(changes)
                 return
-        raise FridayError("not_found", "Unknown milestone: " + milestone_id)
+        raise FridayError("not_found", "Unknown milestone: {milestone_id}", milestone_id=milestone_id)
     cards.update(root, key, change)
 
 
@@ -133,7 +133,7 @@ def run(root, key, profile, milestone_id, worktree=None):
     base_prompt = (EXECUTOR_RULES.format(key=key) + "\n\nShell commands you may run, each starting exactly like one of "
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
                    "\n".join("- " + command for command in allowed) + "\n\n" +
-                   milestone_text(key, document, item, card["decisions"]))
+                   milestone_text(key, document, item, cards.for_agents(card["decisions"])))
     if reopened:
         base_prompt += ("\n\nThis milestone was implemented before; the owner's latest decision changes it. Update the "
                         "existing implementation on this branch to match the decision instead of starting over.")
@@ -144,11 +144,11 @@ def run(root, key, profile, milestone_id, worktree=None):
         if result.status == "quota":
             available = models.availability(root)
             entry, note = models.executor(profile, layout, item["complexity"], failures, entry, available)
-            cards.record(root, key, "cast_note", milestone=milestone_id, note=note or "квота исполнителя")
+            cards.record(root, key, "cast_note", milestone=milestone_id, note=note or "executor quota")
             prompt, session = base_prompt + ("\n\nPrevious attempt feedback:\n" + feedback_text if round_number > 1 else ""), None
             continue
         if result.status != "ok":
-            raise FridayError("agent_failed", "Executor failed on %s (%s): %s" % (milestone_id, result.status, result.error))
+            raise FridayError("agent_failed", "Executor failed on {milestone_id} ({status}): {error}", milestone_id=milestone_id, status=result.status, error=result.error)
         session = result.session
         answer = result.structured or {}
         if answer.get("summary"):
@@ -184,7 +184,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                 cards.record(root, key, "gate", milestone=milestone_id, status=gate_record["status"], head=gate_record["head"])
                 if gate_record["status"] == "environment_unavailable":
                     set_state(root, key, milestone_id, state="blocked")
-                    raise FridayError("environment_unavailable", "The gate environment is unavailable; see " + gate_record["log"])
+                    raise FridayError("environment_unavailable", "The gate environment is unavailable; see {log}", log=gate_record["log"])
             if gate_record and gate_record["status"] != "passed":
                 failures += 1
                 feedback_text = "The isolated gate failed on your last commit. Fix these errors:\n\n" + gate.failures(
@@ -198,7 +198,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                     if review_value is not None:
                         break
                 if review_value is None:
-                    raise FridayError("agent_failed", "No reviewer with quota is available for " + milestone_id)
+                    raise FridayError("agent_failed", "No reviewer with quota is available for {milestone_id}", milestone_id=milestone_id)
                 # Exact match only: a rephrased repeat of a disputed finding goes back to the executor once more.
                 disputed = {(d["file"], d["problem"]) for d in disputes}
                 findings = [finding for finding in review_value["findings"]
@@ -226,16 +226,16 @@ def run(root, key, profile, milestone_id, worktree=None):
         reason = "no commits" if git(worktree, "rev-parse", "HEAD").strip() == start else "the gate never passed"
         set_state(root, key, milestone_id, state="failed")
         cards.record(root, key, "milestone_failed", milestone=milestone_id, reason=reason)
-        raise FridayError("milestone_failed", "Milestone %s was never reviewed: %s." % (milestone_id, reason))
+        raise FridayError("milestone_failed", "Milestone {milestone_id} was never reviewed: {reason}.", milestone_id=milestone_id, reason=reason)
     if gate_record is None or gate_record["status"] == "passed":
         # The pipeline does not stop on review disagreement: what remains goes to the owner with the draft.
         for finding in findings:
-            disputes.append(dict(finding, milestone=milestone_id, executor_reason="Не исправлено за отведённые круги.",
+            disputes.append(dict(finding, milestone=milestone_id, executor_reason="Not fixed within the allowed rounds.",
                                  executor_evidence="", reviewer=review_entry["model"], status="owner"))
         return close(root, key, milestone_id, item, start, worktree, review_value, gate_record, disputes, extra, ROUNDS)
     set_state(root, key, milestone_id, state="failed")
     cards.record(root, key, "milestone_failed", milestone=milestone_id, gate=gate_record["log"])
-    raise FridayError("milestone_failed", "Milestone %s still fails the gate after all rounds; see %s" % (milestone_id, gate_record["log"]))
+    raise FridayError("milestone_failed", "Milestone {milestone_id} still fails the gate after all rounds; see {log}", milestone_id=milestone_id, log=gate_record["log"])
 
 
 def accept_in_browser(root, key, profile, layout, author, worktree, item):
@@ -262,7 +262,7 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
     diff = git(worktree, "diff", start + "..HEAD")
     gate_text = ("not configured" if gate_record is None else "%s on %s (command: %s)" % (
         gate_record["status"], gate_record["head"], " ".join(profile.get("gate", []))))
-    prompt = (REVIEW_RULES + "\n\n" + milestone_text(key, document, item, cards.read(root, key)["decisions"]) +
+    prompt = (REVIEW_RULES + "\n\n" + milestone_text(key, document, item, cards.for_agents(cards.read(root, key)["decisions"])) +
               "\n\nGate: " + gate_text + "\n\nDiff of this milestone:\n" + diff)
     if previous:
         prompt += "\n\nYour previous blocking findings, which the executor has now addressed:\n" + numbered(previous)
@@ -273,7 +273,7 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
     if result.status == "quota":
         return None
     if result.status != "ok" or not isinstance(result.structured, dict):
-        raise FridayError("agent_failed", "Review of %s failed (%s): %s" % (item["id"], result.status, result.error))
+        raise FridayError("agent_failed", "Review of {id} failed ({status}): {error}", id=item["id"], status=result.status, error=result.error)
     value = result.structured
     cards.record(root, key, "milestone_reviewed", milestone=item["id"], verdict=value["verdict"], model=entry["model"],
                  blocking=sum(f["severity"] == "blocking" for f in value["findings"]),
@@ -309,7 +309,7 @@ def run_task(root, key, profile):
     """Run every milestone whose dependencies are done, in plan order, until none is left."""
     card = cards.read(root, key)
     if card["state"] not in ("approved", "running", "stopped") or not card["plan"]["approved"]:
-        raise FridayError("invalid_state", "Approve the plan of %s before running it." % key)
+        raise FridayError("invalid_state", "Approve the plan of {key} before running it.", key=key)
     cards.update(root, key, lambda value: value.update(state="running", runner_pid=os.getpid()))
     cards.record(root, key, "run_task_started")
     previous = None
@@ -395,11 +395,11 @@ def finish(root, key, profile):
             cards.stop_waiting(root, key, "final")
             cards.record(root, key, "gate", milestone="final", status=record["status"], head=record["head"])
             if record["status"] != "passed":
-                raise FridayError("final_failed", "The gate fails after the final fixes; see " + record["log"])
+                raise FridayError("final_failed", "The gate fails after the final fixes; see {log}", log=record["log"])
         again, _ = final.final_review(root, key, profile, run_role, REVIEW_SCHEMA, roles=("final-review",))
         disputed = {(d["file"], d["problem"]) for d in disputes}
         remaining = [f for f in again["final-review"]["findings"] if f["severity"] == "blocking" and (f["file"], f["problem"]) not in disputed]
-        disputes += [dict(f, milestone="final", executor_reason="Не исправлено после финального ревью.", executor_evidence="",
+        disputes += [dict(f, milestone="final", executor_reason="Not fixed after the final review.", executor_evidence="",
                           reviewer=final_entry["model"], status="owner") for f in remaining]
         if disputes:
             cards.update(root, key, lambda value: value["disputes"].extend(disputes))
@@ -457,7 +457,7 @@ def integrate(root, key, profile, name, main, lane):
         if result.returncode:
             subprocess.run(["git", "-C", main, "cherry-pick", "--abort"], capture_output=True)
             set_state(root, key, name, state="failed")
-            raise FridayError("merge_conflict", "Parallel milestone %s conflicts with the task branch: %s" % (name, result.stderr.strip()))
+            raise FridayError("merge_conflict", "Parallel milestone {name} conflicts with the task branch: {value}", name=name, value=result.stderr.strip())
     subjects = [line.split(" ", 1) for line in git(main, "log", "--format=%H %s", before + "..HEAD").splitlines()]
     stages = [{"id": stage["id"], "commit": next((sha for sha, subject in subjects if (" " + stage["id"] + ":") in (" " + subject)), None)}
               for stage in item["stages"]]
@@ -465,14 +465,18 @@ def integrate(root, key, profile, name, main, lane):
     cards.record(root, key, "parallel_integrated", milestone=name, commits=len(commits))
 
 
-def decide(root, key, name, text, reopen=()):
-    """Record an owner decision; only the milestones the owner names (and those after them) are reopened."""
+def decide(root, key, name, text, reopen=(), profile=None):
+    """Record an owner decision; only the milestones the owner names (and those after them) are reopened.
+    The decision is kept as written; agents get its English translation."""
+    from . import translate
+    english = translate.to_english(root, key, profile, text) if profile is not None else text
     def change(value):
         ids = {item["id"] for item in value["milestones"]}
         unknown = set(reopen) - ids
         if unknown:
-            raise FridayError("not_found", "Unknown milestones: " + ", ".join(sorted(unknown)))
-        value["decisions"].append({"name": name, "text": text, "reopen": list(reopen)})
+            raise FridayError("not_found", "Unknown milestones: {items}", items=", ".join(sorted(unknown)))
+        value["decisions"].append(dict({"name": name, "text": text, "reopen": list(reopen)},
+                                       **({"text_en": english} if english != text else {})))
         affected = set(reopen)
         for item in value["milestones"]:
             if set(item["depends_on"]) & affected and item["state"] == "done":
@@ -492,7 +496,7 @@ def resume(root, key, profile):
     """Run a stopped or failed task again: failed or blocked milestones start over from the current branch."""
     def change(value):
         if value["state"] not in ("stopped", "failed", "approved", "running") or not value["plan"]["approved"]:
-            raise FridayError("invalid_state", "Task %s has nothing to resume (%s)." % (key, value["state"]))
+            raise FridayError("invalid_state", "Task {key} has nothing to resume ({state}).", key=key, state=value["state"])
         for item in value["milestones"]:
             if item["state"] in ("failed", "blocked", "running"):
                 item["state"] = "pending"

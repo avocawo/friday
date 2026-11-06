@@ -1,0 +1,34 @@
+name: Bug report
+description: Friday did something wrong or failed.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For a security problem, use [private vulnerability reporting](https://github.com/avocawo/friday/security/advisories/new) instead.
+        Never paste tokens, credentials or private code here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what you got. Paste the error output.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest steps that show the problem. If a profile is involved, paste the relevant part with secrets removed.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: friday doctor output
+      description: Output of `friday doctor --profile <your profile>`.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: "`friday --version`, operating system, Python, and Claude Code / Codex versions."
+    validations:
+      required: true

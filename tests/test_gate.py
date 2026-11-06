@@ -78,6 +78,25 @@ class GateTests(unittest.TestCase):
             self.assertIn(expected, command)
         self.assertNotIn("exec", command.split("--tmpfs /tmp")[1].split()[0])  # /tmp is not executable without opt-in
 
+    def test_image_dependencies_are_linked_and_caches_are_writable(self):
+        captured = {}
+        def run(command, **kwargs):
+            workspace = next(part for part in command if "dst=/workspace" in part).split(",")[1][4:]
+            captured["links"] = {name: os.readlink(os.path.join(workspace, name)) for name in (".venv", "node_modules")}
+            captured["command"] = command
+            return subprocess.CompletedProcess(command, 0, "")
+        archive = gate.snapshot(self.profile)[2]
+        profile = dict(self.profile, gate_links={".venv": "/opt/venv"}, gate_node_modules="/app/node_modules",
+                       gate_tmpfs=["/opt/venv/.cache"])
+        with patch("friday.gate.subprocess.run", side_effect=run):
+            gate.container(profile, "sha256:x", "HEAD", archive)
+        self.assertEqual(captured["links"], {".venv": "/opt/venv", "node_modules": "/app/node_modules"})
+        self.assertIn("--tmpfs /opt/venv/.cache", " ".join(captured["command"]))
+        for bad in ({"gate_links": {"../x": "/opt"}}, {"gate_links": {"x": "relative"}}, {"gate_tmpfs": ["/workspace/cache"]},
+                    {"gate_tmpfs": ["cache"]}):
+            with self.assertRaises(FridayError):
+                gate.container(dict(self.profile, **bad), "sha256:x", "HEAD", archive)
+
     def test_failures_keep_failed_sections_and_drop_passing_output(self):
         log = ("\x1b[36m—→ ESLint\x1b[0m\n  3:7  error  'unref' no-shadow\n✖ 1 problem (1 error, 0 warnings)\n"
                "\x1b[36m—→ TypeScript\x1b[0m\nsrc/b.ts(4,1): error TS6133: unused\n"

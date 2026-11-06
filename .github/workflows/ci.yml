@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the test suite
+        env:
+          FRIDAY_LANG: en
+        run: python -m unittest discover -s tests -v
+
+  lint:
+    name: Lint and catalogs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Ruff
+        run: pipx run --spec ruff==0.14.3 ruff check .
+      - name: Message catalogs are complete
+        run: python -m friday.i18n
+      - name: Package builds with its data files
+        run: |
+          pipx run --spec build==1.3.0 pyproject-build --outdir dist .
+          python -m zipfile -l dist/*.whl | grep -q 'friday/locales/ru.json'
+          python -m zipfile -l dist/*.whl | grep -q 'friday/templates/task.md'

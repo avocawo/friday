@@ -2,11 +2,22 @@
 import time
 
 from . import card as cards
+from . import i18n
+from .i18n import N_, _, ngettext
 
-ROLE_NAMES = {"digest": "дайджест правил", "plan": "план", "plan-review": "проверка плана", "develop": "исполнение", "review": "ревью",
-              "final-review": "финальное ревью", "blind-code": "слепая проверка", "browser": "браузер", "gate": "гейт"}
-STATE_NAMES = {"planning": "план", "awaiting_approval": "ждёт утверждения", "approved": "утверждена", "running": "в работе",
-               "stopped": "остановлена", "done": "готова", "failed": "сбой"}
+ROLE_NAMES = {"digest": N_("rules digest"), "plan": N_("plan"), "plan-review": N_("plan review"), "develop": N_("development"),
+              "review": N_("review"), "final-review": N_("final review"), "blind-code": N_("blind check"), "browser": N_("browser"),
+              "gate": N_("gate"), "translate": N_("translation")}
+STATE_NAMES = {"planning": N_("planning"), "awaiting_approval": N_("awaiting approval"), "approved": N_("approved"),
+               "running": N_("running"), "stopped": N_("stopped"), "done": N_("done"), "failed": N_("failed")}
+
+
+def role_name(role, lang=None):
+    return i18n.tr(lang or i18n.language(), ROLE_NAMES[role]) if role in ROLE_NAMES else role
+
+
+def state_name(value, lang=None):
+    return i18n.tr(lang or i18n.language(), STATE_NAMES[value]) if value in STATE_NAMES else value
 
 
 def totals(events):
@@ -55,28 +66,21 @@ def overview(root, now=None):
     return [task(root, key, now) for key in cards.keys(root)]
 
 
-def duration(seconds):
+def duration(seconds, lang=None):
+    lang = lang or i18n.language()
     seconds = int(max(seconds, 0))
     if seconds < 60:
-        return "%dс" % seconds
+        return i18n.tr(lang, "{s}s", s=seconds)
     if seconds < 3600:
-        return "%dм" % (seconds // 60)
-    return "%dч%02dм" % (seconds // 3600, seconds % 3600 // 60)
+        return i18n.tr(lang, "{m}m", m=seconds // 60)
+    return i18n.tr(lang, "{h}h{m:02d}m", h=seconds // 3600, m=seconds % 3600 // 60)
 
 
-def plural(count, one, few, many):
-    if count % 10 == 1 and count % 100 != 11:
-        return "%d %s" % (count, one)
-    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
-        return "%d %s" % (count, few)
-    return "%d %s" % (count, many)
-
-
-def money(spent):
+def money(spent, lang=None):
     cost = spent["cost_usd"]
     text = "$%.4f" % cost if 0 < cost < 0.01 else "$%.2f" % cost
     if spent["unpriced_runs"]:
-        text += " +%d без цены" % spent["unpriced_runs"]
+        text += " " + i18n.tr(lang or i18n.language(), "+{count} unpriced", count=spent["unpriced_runs"])
     return text
 
 
@@ -88,10 +92,10 @@ def describe(now):
     if now is None:
         return "—"
     parts = [now["milestone"]] if now["milestone"] else []
-    parts.append(ROLE_NAMES.get(now["role"], now["role"]))
+    parts.append(role_name(now["role"]))
     parts.append(now["model"])
     if now["lost"]:
-        parts.append("ПОТЕРЯН: процесс Friday завершился")
+        parts.append(_("LOST: the Friday process has exited"))
     elif now["last_event"]:
         parts.append(now["last_event"])
     return " · ".join(parts)
@@ -99,17 +103,17 @@ def describe(now):
 
 def describe_wait(wait):
     parts = [wait["milestone"]] if wait["milestone"] else []
-    return " · ".join(parts + ["ждёт места: " + wait["resource"]])
+    return " · ".join(parts + [_("waiting for a slot: {resource}", resource=wait["resource"])])
 
 
 def render(rows, width=110):
     if not rows:
-        return "Активных задач нет."
-    header = ("ЗАДАЧА", "СОСТОЯНИЕ", "ИДЁТ", "ТИШИНА", "ТОКЕНЫ", "РАСХОД", "СЕЙЧАС")
+        return _("No active tasks.")
+    header = (_("TASK"), _("STATE"), _("ELAPSED"), _("QUIET"), _("TOKENS"), _("SPENT"), _("NOW"))
     table = [header]
     for row in rows:
         live = sum(now["tokens"] for now in row["now"])
-        first = (row["key"], STATE_NAMES.get(row["state"], row["state"]))
+        first = (row["key"], state_name(row["state"]))
         totals_cells = (tokens(row["spent"]["tokens"] + live), money(row["spent"]))
         activity = [(duration(now["elapsed"]), duration(now["quiet"]), describe(now)) for now in row["now"]]
         activity += [(duration(wait["elapsed"]), "—", describe_wait(wait)) for wait in row["waiting"]]
@@ -130,25 +134,27 @@ def render(rows, width=110):
 def render_task(root, key, recent=10):
     row = task(root, key)
     card = cards.read(root, key)
-    lines = ["%s — %s" % (key, STATE_NAMES.get(card["state"], card["state"]))]
+    lines = ["%s — %s" % (key, state_name(card["state"]))]
     if card.get("branch"):
-        lines.append("Ветка: %s  Рабочая копия: %s" % (card["branch"], card.get("worktree") or "—"))
+        lines.append(_("Branch: {branch}  Worktree: {worktree}", branch=card["branch"], worktree=card.get("worktree") or "—"))
     if card["cast"]:
-        lines.append("Раскладка: " + ", ".join("%s → %s" % (ROLE_NAMES.get(role, role), value.get("model"))
-                                             for role, value in card["cast"].items()))
+        lines.append(_("Models: {cast}", cast=", ".join("%s → %s" % (role_name(role), value.get("model"))
+                                                       for role, value in card["cast"].items())))
     for now in row["now"]:
-        lines.append("Сейчас: %s (идёт %s, тишина %s)" % (describe(now), duration(now["elapsed"]), duration(now["quiet"])))
+        lines.append(_("Now: {activity} (running {elapsed}, quiet {quiet})", activity=describe(now),
+                       elapsed=duration(now["elapsed"]), quiet=duration(now["quiet"])))
     for wait in row["waiting"]:
-        lines.append("Ждёт: %s (%s)" % (describe_wait(wait), duration(wait["elapsed"])))
+        lines.append(_("Waiting: {activity} ({elapsed})", activity=describe_wait(wait), elapsed=duration(wait["elapsed"])))
     spent = row["spent"]
-    lines.append("Расход: %s, %s токенов, %s, %s работы моделей" % (
-        money(spent), tokens(spent["tokens"]), plural(spent["runs"], "запуск", "запуска", "запусков"), duration(spent["seconds"])))
+    lines.append(_("Spent: {money}, {tokens} tokens, {runs}, {seconds} of model work", money=money(spent), tokens=tokens(spent["tokens"]),
+                   runs=ngettext("{n} run", "{n} runs", spent["runs"]), seconds=duration(spent["seconds"])))
     for role, value in sorted(spent["by_role"].items(), key=lambda item: -item[1]["tokens"]):
-        lines.append("  %s: %s, %s токенов, %s" % (ROLE_NAMES.get(role, role), plural(value["runs"], "запуск", "запуска", "запусков"),
-                                                tokens(value["tokens"]), money({"cost_usd": value["cost_usd"], "unpriced_runs": 0})))
+        lines.append("  " + _("{role}: {runs}, {tokens} tokens, {money}", role=role_name(role),
+                              runs=ngettext("{n} run", "{n} runs", value["runs"]), tokens=tokens(value["tokens"]),
+                              money=money({"cost_usd": value["cost_usd"], "unpriced_runs": 0})))
     history = cards.events(root, key)[-recent:]
     if history:
-        lines.append("Последние события:")
+        lines.append(_("Recent events:"))
         for event in history:
             detail = " ".join(str(event[name]) for name in ("role", "status", "model") if event.get(name))
             lines.append("  %s %s %s" % (event["at"][11:19], event["type"], detail))

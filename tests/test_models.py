@@ -11,6 +11,8 @@ from friday import card, models, runner
 from friday.errors import FridayError
 from test_runner import FAKE, INIT, RESULT
 
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
+
 CATALOG = {
     "opus": {"model": "claude-opus-5-5", "vendor": "anthropic", "driver": "claude", "tier": "frontier"},
     "fable": {"model": "claude-fable-5-1", "vendor": "anthropic", "driver": "claude", "tier": "frontier"},
@@ -69,7 +71,7 @@ class ModelPolicyTests(unittest.TestCase):
     def test_same_vendor_is_allowed_with_a_note_when_no_other_vendor_fits(self):
         layout, notes = models.cast(profile({"develop": ["sonnet"]}, only=("opus", "fable", "sonnet")))
         self.assertEqual(layout["review"]["vendor"], "anthropic")
-        self.assertTrue(any("другой вендор недоступен" in note for note in notes))
+        self.assertTrue(any("no other vendor available" in note for note in notes))
 
     def test_final_blind_check_needs_a_frontier_model_other_than_the_author(self):
         with self.assertRaises(FridayError) as error:
@@ -84,11 +86,11 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertEqual(notes, [])
         layout, notes = models.cast(profile({"plan": ["opus"], "develop": ["sonnet"]}, only=("opus", "sonnet", "glm")))
         self.assertEqual(layout["blind-code"]["name"], "opus")
-        self.assertTrue(any("автора плана" in note for note in notes))
+        self.assertTrue(any("plan's author" in note for note in notes))
 
     def test_example_catalog_gives_the_agreed_layout(self):
         from friday import profile as profiles
-        selected = profiles.load(Path(__file__).resolve().parents[1] / "examples" / "models.json")
+        selected = profiles.load(Path(__file__).resolve().parents[1] / "examples" / "models-multi-vendor.json")
         layout, notes = models.cast(selected)
         self.assertEqual(names(layout), {"plan": "fable", "plan-review": "astra-high", "develop": "glm-high", "review": "opus-high",
                                          "final-review": "opus-xhigh", "blind-code": "astra-high", "browser": "sonnet"})
@@ -114,7 +116,7 @@ class ModelPolicyTests(unittest.TestCase):
         opus = models.public(dict(CATALOG["opus"], name="opus"))
         chosen, note = models.reviewer(selected, layout, "review", opus, available=lambda vendor: vendor != "openai")
         self.assertEqual(chosen["name"], "fable")
-        self.assertIn("того же вендора", note)
+        self.assertIn("from the same vendor", note)
         scarce = dict(selected, models=dict(CATALOG, fable=dict(CATALOG["fable"], scarce=True)),
                       roles={"plan": ["fable"], "develop": ["glm"]})
         layout, _ = models.cast(scarce, available=lambda vendor: vendor != "openai")
@@ -122,7 +124,7 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertNotEqual(layout["review"]["name"], "fable")  # scarce models are used once when others fit
         chosen, note = models.reviewer(scarce, layout, "review", opus, available=lambda vendor: vendor != "openai")
         self.assertEqual(chosen["name"], "fable")  # reused rather than letting Opus review itself
-        self.assertIn("повторно", note)
+        self.assertIn("used again", note)
 
     def test_vendors_out_of_quota_are_skipped(self):
         layout, notes = models.cast(profile(), available=lambda vendor: vendor != "openai")
@@ -136,17 +138,17 @@ class ModelPolicyTests(unittest.TestCase):
         layout, _ = models.cast(selected)
         self.assertEqual(models.executor(selected, layout), (layout["develop"], None))
         chosen, note = models.executor(selected, layout, complexity="complex")
-        self.assertEqual((chosen["tier"], "сложная веха" in note), ("frontier", True))
+        self.assertEqual((chosen["tier"], "complex milestone" in note), ("frontier", True))
         chosen, note = models.executor(selected, layout, failures=2)
         self.assertEqual(chosen["tier"], "frontier")
-        self.assertIn("два провала подряд", note)
-        self.assertIn("новая сессия", note)
+        self.assertIn("two failures in a row", note)
+        self.assertIn("new session", note)
         flash = models.public(dict(CATALOG["flash"], name="flash"))
         chosen, _ = models.executor(selected, layout, failures=2, previous=flash)
         self.assertEqual(chosen["tier"], "strong")
         chosen, note = models.executor(selected, layout, available=lambda vendor: vendor != "zai")
         self.assertEqual(chosen["name"], "sonnet")
-        self.assertIn("квота вендора", note)
+        self.assertIn("vendor quota", note)
 
     def test_reviewer_is_checked_against_the_actual_author(self):
         selected = profile({"develop": ["glm"], "review": ["sol"]})
@@ -156,14 +158,15 @@ class ModelPolicyTests(unittest.TestCase):
         opus = models.public(dict(CATALOG["opus"], name="opus"))
         chosen, note = models.reviewer(selected, layout, "review", opus)
         self.assertEqual(chosen["name"], "astra")
-        self.assertIn("заменён", note)
+        self.assertIn("replaced by", note)
 
     def test_quota_reset_times_are_parsed_and_respected(self):
         with tempfile.TemporaryDirectory() as root:
             now = time.time()
-            message = "You've hit your usage limit. Try again at Nov 4th, 2026 12:10 PM."
+            year = datetime.date.today().year + 1  # a reset time that is always ahead
+            message = "You've hit your usage limit. Try again at Nov 4th, %d 12:10 PM." % year
             until = models.exhausted(root, "openai", message, now=now)
-            self.assertEqual(until, datetime.datetime(2026, 11, 4, 12, 10).timestamp())
+            self.assertEqual(until, datetime.datetime(year, 11, 4, 12, 10).timestamp())
             self.assertEqual(models.exhausted(root, "anthropic", "limit", {"resetsAt": now + 50}, now=now), now + 50)
             self.assertEqual(models.exhausted(root, "zai", "429", now=now), now + models.QUOTA_FALLBACK)
             available = models.availability(root, now=now)

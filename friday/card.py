@@ -37,18 +37,18 @@ def read(root, key):
     try:
         card = json.loads(path(root, key).read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise FridayError("not_found", "Task not found: " + key)
+        raise FridayError("not_found", "Task not found: {key}", key=key)
     except (OSError, ValueError) as exc:
-        raise FridayError("invalid_state", "Cannot read task %s: %s" % (key, exc))
+        raise FridayError("invalid_state", "Cannot read task {key}: {exc}", key=key, exc=exc)
     if not isinstance(card, dict) or card.get("version") != VERSION or card.get("key") != key or card.get("state") not in STATES:
-        raise FridayError("invalid_state", "Invalid or unsupported task card: " + key)
+        raise FridayError("invalid_state", "Invalid or unsupported task card: {key}", key=key)
     return card
 
 
 def create(root, key, profile, **fields):
     with locked(root, "card:" + state.validate_key(key)):
         if path(root, key).exists():
-            raise FridayError("already_exists", "Task already exists: " + key)
+            raise FridayError("already_exists", "Task already exists: {key}", key=key)
         card = {"version": VERSION, "key": key, "profile": str(profile), "state": "planning",
                 "created_at": state.now(), "updated_at": state.now(),
                 "branch": None, "worktree": None, "base": None, "cast": {},
@@ -65,7 +65,7 @@ def update(root, key, change):
         card = read(root, key)
         value = change(card)
         if card.get("state") not in STATES:
-            raise FridayError("invalid_state", "Unknown task state: " + str(card.get("state")))
+            raise FridayError("invalid_state", "Unknown task state: {value}", value=str(card.get("state")))
         card["updated_at"] = state.now()
         save(root, key, card)
         return card if value is None else value
@@ -79,6 +79,11 @@ def record(root, key, kind, **fields):
     from . import journal  # journals render the card, so they come after it
     journal.on_event(root, key, event)
     return event
+
+
+def for_agents(decisions):
+    """Owner decisions as agents read them: in English when the owner wrote in another language."""
+    return [{"name": item["name"], "text": item.get("text_en") or item["text"], "reopen": item.get("reopen", [])} for item in decisions]
 
 
 def events(root, key):
@@ -172,7 +177,7 @@ def run_agent(root, key, spec, *, role, milestone=None, phase=None, entry=None, 
     def begin(card):
         for other in running(card).values():
             if other.get("milestone") == milestone:
-                raise FridayError("task_busy", "Task %s is already running %s." % (key, other["run"]))
+                raise FridayError("task_busy", "Task {key} is already running {run}.", key=key, run=other["run"])
         card["current"] = dict(running(card), **{run_id: current})
     update(root, key, begin)
     # Until the runner starts, the run waits for a slot; its status names the owner so it is never taken for lost.

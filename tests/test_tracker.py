@@ -1,3 +1,5 @@
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -97,3 +99,22 @@ class TrackerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GitHubIssueTests(unittest.TestCase):
+    def test_issue_and_comments_are_read_with_gh(self):
+        issue = {"number": 42, "title": "Add greeting", "body": "Say hello.", "url": "https://github.com/o/r/issues/42",
+                 "comments": [{"body": "Use the name.", "author": {"login": "pat"}}], "labels": [{"name": "ui"}]}
+        def run(args, **kwargs):
+            self.assertEqual(args[:6], ["gh", "issue", "view", "42", "--repo", "o/r"])
+            return subprocess.CompletedProcess(args, 0, json.dumps(issue), "")
+        with patch("friday.tracker.subprocess.run", side_effect=run):
+            value = tracker.ticket({"tracker": {"backend": "github"}, "github": {"repository": "o/r"}}, "GH-42")
+        self.assertEqual((value["summary"], value["description"], value["comments"][0]["text"], value["labels"]),
+                         ("Add greeting", "Say hello.", "Use the name.", ["ui"]))
+
+    def test_unknown_backend_and_keys_without_a_number_are_refused(self):
+        for profile, key in (({"tracker": {"backend": "jira"}}, "T-1"),
+                             ({"tracker": {"backend": "github", "repository": "o/r"}}, "TASK")):
+            with self.assertRaises(FridayError):
+                tracker.ticket(profile, key)

@@ -297,7 +297,7 @@ def kill_group(process, grace=5):
 
 def run(spec, on_event=None):
     if spec.driver not in DRIVERS:
-        raise FridayError("invalid_runner", "Unknown agent driver: " + str(spec.driver))
+        raise FridayError("invalid_runner", "Unknown agent driver: {driver}", driver=str(spec.driver))
     driver = DRIVERS[spec.driver](spec)
     logs = Path(spec.log_dir)
     logs.mkdir(parents=True, exist_ok=True)

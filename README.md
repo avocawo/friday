@@ -7,7 +7,7 @@
 <p align="center"><strong>Личный конвейер разработки, который приближает пятницу.</strong><br>
 От задачи до чернового MR: сильные модели планируют и проверяют, недорогие пишут код.</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="LICENSE">MIT</a> · ранняя версия</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="LICENSE">MIT</a> · ранняя версия</p>
 
 ---
 
@@ -28,18 +28,22 @@
 
 ## Быстрый старт
 
-Нужны Python 3.9+, Git, Claude Code и/или Codex CLI. Для гейта и браузерной приёмки нужен Docker.
+Нужны Python 3.11+, Git и Claude Code (Codex CLI — по желанию). Для гейта и браузерной приёмки нужен Docker.
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# укажите в profiles/project-profile.json путь к репозиторию, команды проверки и гейт
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # или: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# в project-profile.json укажите repository, worktree_root и executor_commands своего проекта
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Язык вывода: `friday --lang ru …`, `FRIDAY_LANG=ru` или `friday config language ru`. Примеры профилей для Node и Python — в [examples/profiles](examples/profiles).
 
 ## Команды
 
@@ -54,16 +58,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Убрать рабочую копию и карточку; ветка остаётся |
 | `journal KEY` | Обновить журналы задачи (Obsidian, jsonl) |
 | `doctor --profile P` | Готовность машины и профиля |
+| `config language L` | Язык вывода на этой машине |
 
 Подробно о профиле, моделях и границах — в [руководстве](docs/guide.md). Почему конвейер устроен так — в [разборе пилота](docs/process-redesign.md) и [ADR](docs/adr/).
 
 ## Разработка
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-Тесты работают с временными данными и фейковыми агентами в контейнере без сети.
+Тесты работают с временными данными и фейковыми агентами, без сети и Docker. Как устроен код — в [архитектуре](docs/architecture.md), как предлагать изменения — в [CONTRIBUTING.md](CONTRIBUTING.md).
 
 [Руководство](docs/guide.md) · [Глоссарий](GLOSSARY.md) · [Участие в разработке](CONTRIBUTING.md) · [Лицензия](LICENSE)

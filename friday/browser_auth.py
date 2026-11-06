@@ -20,10 +20,16 @@ def read_only_query(query):
 
 
 def probe_script(spec, source_check=False):
+    """A page function that proves the staging session works; with source_check it first proves the local app talks
+    to that staging (browser.stage_check) and returns the session token."""
+    from .browser_session import stage_check
     settings = spec["auth"]
-    source = """const text = await fetch('/src/app/main.ts', {redirect:'error'}).then(r => r.text());
-        const match = text.match(/VITE_API_APOLLO_URI[\"']?\\s*[:=]\\s*[\"']([^\"']+)[\"']/);
-        if (!match || new URL(match[1]).origin !== __ORIGIN__) return null;""" if source_check else ""
+    check = stage_check(spec) if source_check else None
+    source = ("""const text = await fetch(__CHECK_PATH__, {redirect:'error'}).then(r => r.text());
+        const match = text.match(new RegExp(__CHECK_VARIABLE__ + "[\\"']?\\\\s*[:=]\\\\s*[\\"']([^\\"']+)[\\"']"));
+        if (!match || new URL(match[1]).origin !== __ORIGIN__) return null;"""
+              .replace("__CHECK_PATH__", json.dumps(check["path"])).replace("__CHECK_VARIABLE__", json.dumps(check["variable"]))
+              if check else "")
     result = "token" if source_check else "true"
     fingerprint = settings.get("fingerprint")
     fingerprint_script = ""
@@ -74,16 +80,11 @@ def capture(spec):
         module, exported, header = fingerprint.get("module"), fingerprint.get("export"), fingerprint.get("header")
         if not isinstance(module, str) or not module.startswith("/") or module.startswith("//") or ".." in module.split("/") or "?" in module or "#" in module or not isinstance(exported, str) or not re.fullmatch(r"[A-Za-z_$][A-Za-z_0-9$]*", exported) or not isinstance(header, str) or not re.fullmatch(r"[A-Za-z0-9-]+", header):
             raise FridayError("invalid_profile", "Browser fingerprint requires a local module, export and HTTP header.")
-    origin = spec.get("stage_origin")
-    target = urlsplit(origin) if isinstance(origin, str) else None
-    try:
-        valid_port = bool(target) and target.port in (None, 443)
-    except ValueError:
-        valid_port = False
-    if not target or target.scheme != "https" or not target.hostname or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.stage\.[a-z0-9.-]+", target.hostname) or target.username or target.password or target.path or target.query or target.fragment or not valid_port:
-        raise FridayError("invalid_profile", "Browser auth requires an HTTPS staging origin.")
+    from .browser_session import stage_origin
+    spec = dict(spec, stage_origin=stage_origin(spec))
     source = probe_script(spec, source_check=True)
-    client = browser_protocol.Client(browser_probe.command(browser_probe.server_path({"browser": spec})))
+    client = browser_protocol.Client(browser_probe.command(browser_probe.server_path({"browser": spec}),
+                                                           browser_url=browser_probe.chrome_url(spec)))
     try:
         listing = browser_protocol.text(client.tool("list_pages", {}))
         for page, url in browser_probe.pages(listing):
