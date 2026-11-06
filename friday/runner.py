@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import codex_policy
+from . import codex_policy, codex_git
 from .errors import FridayError
 
 BASE_ENV = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SHELL", "USER")
@@ -194,6 +194,8 @@ class Codex:
         if not executable:
             raise FridayError("runner_unavailable", "Codex CLI is unavailable.")
         codex_policy.verify_environment(executable, Path(spec.cwd).resolve())
+        self.git = (codex_git.Runtime(spec.cwd, directory, spec.log_dir, spec.write)
+                    if (Path(spec.cwd) / '.git').exists() else None)
         # The sandbox profile grants read access to the runtime directory, so Codex runs from a copy placed there.
         source = Path(os.path.realpath(executable))
         local = Path(directory) / "codex"
@@ -207,9 +209,13 @@ class Codex:
         options = ["--json", "--ignore-user-config", "--skip-git-repo-check",
                    "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
                    "--disable", "browser_use", "--disable", "computer_use",
-                   *codex_policy.options("develop" if spec.write else "review", directory),
+                   *codex_policy.options("develop" if spec.write else "review", directory,
+                                         git_directory=str(self.git.gitdir) if self.git else None),
                    *[option for path in spec.add_dirs for option in ("--add-dir", str(Path(path).resolve()))],
                    "-c", 'web_search="disabled"', "-c", 'approval_policy="never"', "--model", spec.model]
+        if self.git:
+            for name, value in self.git.environment.items():
+                options += ['-c', 'shell_environment_policy.set.' + name + '=' + json.dumps(value)]
         if spec.effort:
             options += ["-c", "model_reasoning_effort=" + json.dumps(spec.effort)]
         for server in mcp_servers(spec):
@@ -229,6 +235,10 @@ class Codex:
         if spec.resume:
             return [str(local), "exec", "resume", *options, spec.resume, "-"]
         return [str(local), "exec", *options, "-"]
+
+    def finish(self):
+        if getattr(self, 'git', None):
+            self.git.finish()
 
     def busy(self):
         return bool(self.open_tools)
@@ -403,6 +413,11 @@ def run(spec, on_event=None):
                 if reader is not None:
                     reader.join(5)
                 process.stdout.close()
+            if isinstance(driver, Codex):
+                try:
+                    driver.finish()
+                except FridayError as exc:
+                    result.status, result.error = 'failed', str(exc)
             if previous_handler is not None:
                 signal.signal(signal.SIGTERM, previous_handler)
             result.session = result.session or status["session"]

@@ -160,7 +160,7 @@ class ModelPolicyTests(unittest.TestCase):
 
     def test_quota_reset_times_are_parsed_and_respected(self):
         with tempfile.TemporaryDirectory() as root:
-            now = time.time()
+            now = datetime.datetime(2026, 11, 4, 12, 0).timestamp()
             message = "You've hit your usage limit. Try again at Nov 4th, 2026 12:10 PM."
             until = models.exhausted(root, "openai", message, now=now)
             self.assertEqual(until, datetime.datetime(2026, 11, 4, 12, 10).timestamp())

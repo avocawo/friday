@@ -44,6 +44,8 @@ def inspect(path):
             if not executable:
                 raise FridayError("missing", "Codex CLI is not installed.")
             codex_policy.verify_sandbox(executable)
+            from . import codex_git
+            codex_git.verify(executable)
         check("codex_cli_and_sandbox", codex)
     for name, entry in catalog.items():
         if entry["vendor"] in models.VENDOR_ENDPOINTS:
