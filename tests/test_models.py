@@ -161,9 +161,11 @@ class ModelPolicyTests(unittest.TestCase):
     def test_quota_reset_times_are_parsed_and_respected(self):
         with tempfile.TemporaryDirectory() as root:
             now = time.time()
-            message = "You've hit your usage limit. Try again at Nov 4th, 2026 12:10 PM."
+            reset = (datetime.datetime.now() + datetime.timedelta(days=2)).replace(second=0, microsecond=0)
+            message = "You've hit your usage limit. Try again at %s %dth, %s." % (
+                reset.strftime("%b"), reset.day, reset.strftime("%Y %I:%M %p"))
             until = models.exhausted(root, "openai", message, now=now)
-            self.assertEqual(until, datetime.datetime(2026, 11, 4, 12, 10).timestamp())
+            self.assertEqual(until, reset.timestamp())
             self.assertEqual(models.exhausted(root, "anthropic", "limit", {"resetsAt": now + 50}, now=now), now + 50)
             self.assertEqual(models.exhausted(root, "zai", "429", now=now), now + models.QUOTA_FALLBACK)
             available = models.availability(root, now=now)
