@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — неоновый логотип" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>Личный конвейер разработки, который приближает пятницу.</strong><br>
 От задачи до чернового MR: сильные модели планируют и проверяют, недорогие пишут код.</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · ранняя версия</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · ранняя версия</p>
 
 [English](../../README.md) · **Русский** · [简体中文](../zh-cn/README.md) · [日本語](../ja/README.md) · [한국어](../ko/README.md) · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Bahasa Indonesia](../id/README.md)
 
@@ -33,18 +33,22 @@ _Это перевод английской документации; при р�
 
 ## Быстрый старт
 
-Нужны Python 3.9+, Git, Claude Code и/или Codex CLI. Для гейта и браузерной приёмки нужен Docker.
+Нужны Python 3.11+, Git и Claude Code (Codex CLI — по желанию). Для гейта и браузерной приёмки нужен Docker.
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# укажите в profiles/project-profile.json путь к репозиторию, команды проверки и гейт
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# in project-profile.json, set your project's repository, worktree_root and executor_commands
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Friday говорит на десяти языках: `friday --lang ru …`, `FRIDAY_LANG=ru` или `friday config language ru`. Агенты всегда работают по-английски; переводится то, что читаете вы. Примеры профилей для проектов на Node и Python лежат в [examples/profiles](../../examples/profiles).
 
 ## Команды
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Убирает рабочую копию и карточку; ветка остаётся |
 | `journal KEY` | Обновляет журналы задачи (Obsidian, jsonl) |
 | `doctor --profile P` | Проверяет, что машина и профиль готовы |
+| `config language L` | Задаёт язык, на котором Friday говорит на этой машине |
 
-Подробно о профиле, моделях и границах — в [руководстве](guide.md). Почему конвейер устроен так — в [разборе пилота](../process-redesign.md) и [ADR](../adr/).
+Подробно о профиле, моделях и границах — в [руководстве](guide.md). Почему конвейер устроен так — в [разборе пилота](../process-redesign.md) и [ADR](../adr/) (0001–0006 на русском).
 
 ## Разработка
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-Тесты работают с временными данными и фейковыми агентами в контейнере без сети.
+Тесты работают с временными данными и фейковыми агентами, без сети и Docker. Как устроен код — в [docs/architecture.md](../architecture.md); как предложить изменение — в [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 [Руководство](guide.md) · [Глоссарий](GLOSSARY.md) · [Участие в разработке](../../CONTRIBUTING.md) · [Лицензия](../../LICENSE)

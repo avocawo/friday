@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=5262ab4aca2b -->
+<!-- i18n: source=README.md sha256=a008f1f30688 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — ネオンロゴ" width="900">
 </p>
@@ -8,7 +8,7 @@
 <p align="center"><strong>金曜日をぐっと近づける、個人用の開発パイプライン。</strong><br>
 タスクからドラフト MR まで、計画とレビューは高性能なモデルが、コードの実装は低コストなモデルが担当します。</p>
 
-<p align="center">Python 3.9+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · 初期バージョン</p>
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · 初期バージョン</p>
 
 [English](../../README.md) · [Русский](../ru/README.md) · [简体中文](../zh-cn/README.md) · **日本語** · [한국어](../ko/README.md) · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Bahasa Indonesia](../id/README.md)
 
@@ -33,18 +33,22 @@ _この文書は英語版ドキュメントの翻訳です。内容が異なる�
 
 ## クイックスタート
 
-必要なものは、Python 3.9+、Git、そして Claude Code または Codex CLI (あるいはその両方) です。ゲートとブラウザ受け入れ確認には Docker も必要です。
+必要なものは、Python 3.11+、Git、そして Claude Code (Codex CLI は任意) です。ゲートとブラウザ受け入れ確認には Docker も必要です。
 
 ```sh
-git clone git@github.com:avocawo/friday.git && cd friday
-mkdir -p profiles
-cp examples/models.json examples/project-profile.json profiles/
-# profiles/project-profile.json に、リポジトリのパス、チェックのコマンド、ゲートを設定します
-./bin/friday doctor --profile profiles/project-profile.json
-./bin/friday start TASK-1 --profile profiles/project-profile.json --brief task.md
-./bin/friday approve TASK-1
-./bin/friday status
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# in project-profile.json, set your project's repository, worktree_root and executor_commands
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
 ```
+
+Friday は 10 言語に対応しています。`friday --lang ru …`、`FRIDAY_LANG=ru`、または `friday config language ru` で切り替えられます。エージェントは常に英語で作業し、あなたが読む内容は翻訳されます。Node と Python のプロジェクト向けのプロファイル例は [examples/profiles](../../examples/profiles) にあります。
 
 ## コマンド
 
@@ -59,16 +63,19 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | ワークツリーとカードを削除します。ブランチは残ります |
 | `journal KEY` | タスクのジャーナル (Obsidian、jsonl) を更新します |
 | `doctor --profile P` | マシンとプロファイルの準備ができているかを確認します |
+| `config language L` | このマシンで Friday が使う言語を設定します |
 
-プロファイル、モデル、動作上の境界の詳細は[ガイド](guide.md)を参照してください。パイプラインがこのように作られている理由は、[パイロット分析](../process-redesign.md) (ロシア語) と [ADR](../adr/) (ロシア語) にあります。
+プロファイル、モデル、動作上の境界の詳細は[ガイド](guide.md)を参照してください。パイプラインがこのように作られている理由は、[パイロット分析](../process-redesign.md) (ロシア語) と [ADR](../adr/) (0001–0006 はロシア語) にあります。
 
 ## 開発
 
 ```sh
-docker build -f Dockerfile.test -t friday-test:local .
-./bin/test-offline
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
 ```
 
-テストは、ネットワークのないコンテナー内で、一時的なデータと偽のエージェントを使って実行されます。
+テストは一時的なデータと偽のエージェントを使い、ネットワークも Docker も必要としません。コードの構成は [docs/architecture.md](../architecture.md)、変更を提案する方法は [CONTRIBUTING.md](../../CONTRIBUTING.md) にあります。
 
 [ガイド](guide.md) · [用語集](GLOSSARY.md) · [コントリビュート](../../CONTRIBUTING.md) · [ライセンス](../../LICENSE)
