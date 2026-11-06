@@ -29,6 +29,9 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
+      - name: Remove Git LFS filters from the runner's global config
+        # macOS images run `git lfs install`; Friday refuses external Git filters by design.
+        run: git config --global --remove-section filter.lfs || true
       - name: Run the test suite
         env:
           FRIDAY_LANG: en
