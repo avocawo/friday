@@ -1,4 +1,3 @@
-import os
 import subprocess
 import tempfile
 import unittest
@@ -90,6 +89,15 @@ class GateTests(unittest.TestCase):
         plain = gate.failures("line\n" * 50 + "Error: boom\n" + "line\n" * 50)
         self.assertIn("Error: boom", plain)
         self.assertLess(len(plain.splitlines()), 10)
+
+    def test_python_failure_feedback_preserves_the_traceback_body(self):
+        body = ('  File "/workspace/tests/test_export.py", line 18, in setUp\n'
+                '    self.git("add", "source.py")\n'
+                '  File "/usr/lib/python3/subprocess.py", line 571, in run\n'
+                '    raise CalledProcessError(retcode, process.args)\n'
+                'subprocess.CalledProcessError: git add returned exit status 128.\n')
+        log = 'passing output\n' * 100 + 'ERROR: test_export\n--------\nTraceback (most recent call last):\n' + body + '\nRan 1 test\nFAILED (errors=1)\n'
+        self.assertIn(body.strip(), gate.failures(log))
 
 
 if __name__ == "__main__":

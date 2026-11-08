@@ -201,9 +201,15 @@ def failures(output, limit=12000):
             if any(FAILURE.search(line) and not SUMMARY.search(line) for line in block):
                 chunks.append(block)
     if not chunks:
-        marked = sorted({near for index, line in enumerate(lines) if FAILURE.search(line)
-                         for near in range(max(index - 2, 0), min(index + 3, len(lines)))})
-        chunks = [[lines[index] for index in marked]] if marked else [lines[-80:]]
+        marked = {near for index, line in enumerate(lines) if FAILURE.search(line)
+                  for near in range(max(index - 2, 0), min(index + 3, len(lines)))}
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith("Traceback (most recent call last):"):
+                end = index + 1
+                while end < len(lines) and lines[end].strip():
+                    end += 1
+                marked.update(range(index, end))
+        chunks = [[lines[index] for index in sorted(marked)]] if marked else [lines[-80:]]
     budget = limit // max(len(chunks), 1)
     parts = []
     for block in chunks:

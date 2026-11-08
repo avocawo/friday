@@ -161,6 +161,32 @@ class MilestoneTests(unittest.TestCase):
                 self.assertEqual(result.stderr, "")
                 self.assertEqual(card.read(self.root, "T-1")["task_statement"], STATEMENT)
 
+    def test_resume_reviews_retained_commits_without_requiring_a_dummy_commit(self):
+        before = card.read(self.root, "T-1")["base"]
+        (Path(self.worktree) / 'greet.py').write_text('def greet(n):\n    return n\n')
+        git('add', 'greet.py', cwd=self.worktree)
+        git('commit', '-qm', 'T-1 M1.1: retained implementation', cwd=self.worktree)
+        def failed(value):
+            value['state'] = 'failed'
+            value['milestones'][0].update(state='failed', start=before)
+        card.update(self.root, 'T-1', failed)
+        log = card.directory(self.root, 'T-1') / 'gates/M1-1.log'
+        log.parent.mkdir()
+        log.write_text('ERROR: fixture\nTraceback (most recent call last):\n  File "fixture.py", line 18\n    selected_repository()\nRuntimeError: example\n')
+        card.record(self.root, 'T-1', 'gate', milestone='M1', status='failed',
+                    head=git('rev-parse', 'HEAD', cwd=self.worktree).strip(), log=str(log))
+        self.calls(('e1', None, DONE), ('rev', None, PASS),
+                   ('e2', {'write': {'app.py': 'print(1)\n'}, 'commit': ['T-1 M2.1: print']}, DONE),
+                   ('rev', None, PASS))
+        def passed(*args, **kwargs):
+            return dict(status='passed', head=git('rev-parse', 'HEAD', cwd=self.worktree).strip(), log=str(log))
+        with patch('friday.gate.check', side_effect=passed):
+            self.profile['gate'] = ['check']
+            milestone.resume(self.root, 'T-1', self.profile)
+        self.assertIn('selected_repository()', self.call(0)['prompt'])
+        self.assertEqual(card.read(self.root, 'T-1')['milestones'][0]['start'], before)
+        self.assertIn('def greet(n)', self.call(1)['prompt'])
+
     def test_without_a_gate_a_finished_task_is_unverified_everywhere(self):
         from friday import final, journal, status
         self.calls(("e1", {"write": {"greet.py": "def greet(n):\n    return n\n"}, "commit": ["T-1 M1.1: greet"]}, DONE),

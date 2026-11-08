@@ -137,12 +137,15 @@ def run(root, key, profile, milestone_id, worktree=None):
     worktree, layout = worktree or card["worktree"], card["cast"]
     document = load_plan(root, key)
     item = define(document, milestone_id)
-    start = git(worktree, "rev-parse", "HEAD").strip()
-    showcase_start = stories.head(card)
+    head = git(worktree, "rev-parse", "HEAD").strip()
+    record = next(row for row in card["milestones"] if row["id"] == milestone_id)
+    reopened = record["state"] == "reopened"
+    start = head if reopened else record.get("start", head)
+    git(worktree, "merge-base", "--is-ancestor", start, head)
+    showcase_start = (record.get("showcase_start") if not reopened else None) or stories.head(card)
     def mark():  # progress is a commit in the kit or in the showcase
         return git(worktree, "rev-parse", "HEAD").strip() + ("+" + stories.head(card) if showcase_start else "")
-    start_mark = mark()
-    reopened = any(entry["id"] == milestone_id and entry["state"] == "reopened" for entry in card["milestones"])
+    start_mark = start + ("+" + showcase_start if showcase_start else "")
     set_state(root, key, milestone_id, state="running", start=start, **({"showcase_start": showcase_start} if showcase_start else {}))
     cards.record(root, key, "milestone_started", milestone=milestone_id, start=start)
     available = models.availability(root)
@@ -156,6 +159,16 @@ def run(root, key, profile, milestone_id, worktree=None):
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
                    "\n".join("- " + command for command in allowed) + "\n\n" +
                    milestone_text(key, document, item, card["decisions"], card.get("task_statement")))
+    if start != head:
+        base_prompt += "\n\nContinue the retained commits on this branch; completed stages need no dummy commit."
+        previous = next((event for event in reversed(cards.events(root, key))
+                         if event["type"] == "gate" and event.get("milestone") == milestone_id), None)
+        if previous and previous.get("status") == "failed" and previous.get("head") == head:
+            directory = cards.directory(root, key) / "gates"
+            logs = list(directory.glob(milestone_id + "-*.log"))
+            path = directory / Path(previous["log"]).name if previous.get("log") else (max(logs, key=lambda p: p.stat().st_mtime_ns) if logs else None)
+            if path and not directory.is_symlink() and not path.is_symlink() and path.is_file():
+                base_prompt += "\n\nPrevious failed gate:\n" + gate.failures(path.read_text(encoding="utf-8"))
     if reopened:
         base_prompt += ("\n\nThis milestone was implemented before; the owner's latest decision changes it. Update the "
                         "existing implementation on this branch to match the decision instead of starting over.")
@@ -207,7 +220,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                 gate_record = gate.check(root, profile, worktree, card.get("base"), log,
                                          on_wait=lambda name: cards.waiting(root, key, name, milestone_id))
                 cards.stop_waiting(root, key, milestone_id)
-                cards.record(root, key, "gate", milestone=milestone_id, status=gate_record["status"], head=gate_record["head"])
+                cards.record(root, key, "gate", milestone=milestone_id, status=gate_record["status"], head=gate_record["head"], log=gate_record["log"])
                 if gate_record["status"] == "environment_unavailable":
                     set_state(root, key, milestone_id, state="blocked")
                     raise FridayError("environment_unavailable", "The gate environment is unavailable; see " + gate_record["log"])
