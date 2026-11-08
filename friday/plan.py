@@ -73,7 +73,9 @@ PLAN_RULES = (
     "complexity is complex when the milestone needs design judgment across modules or the approach is uncertain; "
     "otherwise clear. ui is true when the milestone changes what a user sees or does.\n"
     "Each stage lists the existing files it changes in files and the files it creates in new_files; a milestone's "
-    "files cover all files of its stages. Keep each stage within {stage_files} files and {stage_lines} added lines "
+    "files cover all files of its stages. A file created in an earlier stage of the same milestone or in a declared "
+    "milestone dependency is existing at that stage; otherwise it must exist in the source snapshot. "
+    "Keep each stage within {stage_files} files and {stage_lines} added lines "
     "including tests; estimate_lines from the size of a comparable slice already in the repository.\n"
     "Every stage has criteria. A code criterion must be verifiable from that stage's own diff; a behavior criterion "
     "must be observable in the browser and is allowed only in ui milestones, and every ui milestone has at least one. "
@@ -108,12 +110,14 @@ def validate(plan, worktree, limits=None):
         if count > 1:
             errors.append("Duplicate id %s." % name)
     order = {name: index for index, name in enumerate(ids)}
-    after = {}
+    after, created, creators = {}, {}, set()
     for index, item in enumerate(milestones):
         for dependency in item["depends_on"]:
             if order.get(dependency, len(ids)) >= index:
                 errors.append("Milestone %s depends on %s, which is not an earlier milestone." % (item["id"], dependency))
         after[item["id"]] = set(item["depends_on"]).union(*(after.get(name, set()) for name in item["depends_on"]))
+        available = set().union(*(created.get(name, set()) for name in after[item["id"]]))
+        created[item["id"]] = set()
         if not item["stages"]:
             errors.append("Milestone %s has no stages." % item["id"])
         if item["ui"] and not any(criterion["check"] == "behavior" for stage in item["stages"] for criterion in stage["criteria"]):
@@ -131,12 +135,20 @@ def validate(plan, worktree, limits=None):
             for path in touched:
                 if path.startswith("/") or ".." in Path(path).parts:
                     errors.append("%s has an unsafe path %s." % (where, path))
-            missing = [path for path in stage["files"] if not (Path(worktree) / path).is_file()]
+            missing = [path for path in stage["files"]
+                       if Path(worktree) / path not in available
+                       and not (Path(worktree) / path).is_file()]
             if missing:
                 errors.append("%s changes files that do not exist: %s." % (where, ", ".join(missing)))
-            present = [path for path in stage["new_files"] if (Path(worktree) / path).exists()]
+            present = [path for path in stage["new_files"]
+                       if Path(worktree) / path in creators
+                       or (Path(worktree) / path).exists()]
             if present:
                 errors.append("%s creates files that already exist: %s." % (where, ", ".join(present)))
+            new_paths = {Path(worktree) / path for path in stage["new_files"]}
+            created[item["id"]].update(new_paths)
+            available.update(new_paths)
+            creators.update(new_paths)
             if not stage["criteria"]:
                 errors.append("%s has no criteria." % where)
             if not item["ui"] and any(criterion["check"] == "behavior" for criterion in stage["criteria"]):
