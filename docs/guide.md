@@ -27,6 +27,8 @@ The plugin teaches the agent to read `status` and `plan`. Starting a task, appro
 5. **Final.** The final review and the blind check of the whole diff run in parallel. Blocking findings get one round of fixes.
 6. **Draft MR** is opened if the profile sets `delivery`. Otherwise its text is saved in `merge-request.md` in the task folder.
 
+A stage can edit a file created by an earlier stage of its milestone or by a declared milestone dependency, including a transitive dependency. A file from an independent milestone is unavailable until that dependency is declared. A plan cannot create the same file twice or edit it before creation.
+
 The pipeline stops only when the gate never passed, the executor did nothing, the environment is unavailable, or the models allowed by the rules are used up. Disagreements in review do not stop it.
 
 `decide KEY name "text" --reopen M2` records your decision. Only the named milestones and the milestones that depend on them are reopened. Without `--reopen`, the following milestones take the decision into account. `resume` continues a stopped or failed task. `stop` stops a running task: the agents end together with their child processes.
