@@ -4,6 +4,10 @@ All notable changes to Friday are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Fixed
+
+- Plan validation accepts edits to files created in an earlier stage or a declared milestone dependency, while rejecting use before creation and duplicate creation.
+
 ## [0.3.0] - unreleased
 
 ### Added

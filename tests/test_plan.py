@@ -177,6 +177,16 @@ class PlanTests(unittest.TestCase):
             self.start("T-2")
         self.assertEqual(error.exception.code, "plan_invalid")
 
+    def test_ordered_file_creation_reaches_review_without_an_extra_model_run(self):
+        document = copy.deepcopy(PLAN)
+        document["milestones"][0]["stages"].append(dict(
+            document["milestones"][0]["stages"][0], id="M1.2", files=["greet.py"], new_files=[]))
+        self.calls(("planner", document), ("reviewer", {"verdict": "ok", "findings": []}))
+        self.start()
+        self.assertEqual(card.read(self.root, "T-1")["state"], "awaiting_approval")
+        self.assertNotIn("plan_invalid", [event["type"] for event in card.events(self.root, "T-1")])
+        self.assertEqual((self.fake / "counter").read_text(), "2")
+
     def test_rules_digest_is_made_once_per_document_content_and_replaces_reading(self):
         (self.repo / "AGENTS.md").write_text("Тесты рядом с кодом.\n")
         (self.repo / "docs").mkdir()
