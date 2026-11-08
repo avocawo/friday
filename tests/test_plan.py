@@ -298,7 +298,7 @@ class PlanTests(unittest.TestCase):
         card.update(self.root, "T-1", lambda value: value.update(worktree=None))
         self.assertEqual(workspace.create(self.root, "T-1", self.profile), first)  # registered path is reused
         self.assertEqual(subprocess.run(["git", "-C", first, "branch", "--show-current"], capture_output=True, text=True).stdout.strip(),
-                         "friday/T-1")
+                         "origin/T-1")
 
     def test_worktree_setup_runs_in_a_new_worktree_and_failures_stop_the_start(self):
         self.profile["worktree_setup"] = [["sh", "-c", "[ -e deps ] || cp -R {repository}/app.py deps"]]

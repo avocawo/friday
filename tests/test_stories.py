@@ -121,6 +121,15 @@ class StoriesTests(unittest.TestCase):
         self.assertEqual(stories.executor_commands(self.profile)[:2], ["git -C ../.. add", "git -C ../.. commit"])
         self.assertIn("npm --prefix ../.. run build", stories.executor_commands(self.profile))
 
+    def test_default_branch_uses_the_kit_name_in_both_repositories(self):
+        del self.profile["branch_template"]
+        showcase = stories.create(self.root, "T-1", self.profile)
+        self.profile["branch_template"] = "later/{key}"  # a partially created task keeps its recorded branch
+        kit = workspace.create(self.root, "T-1", self.profile)
+        self.assertEqual(git("branch", "--show-current", cwd=kit).strip(), "kit/T-1")
+        self.assertEqual(git("branch", "--show-current", cwd=showcase).strip(), "kit/T-1")
+        self.assertEqual(workspace.create(self.root, "T-1", self.profile), kit)
+
     def test_showcase_that_does_not_ignore_the_kit_is_refused(self):
         (self.showcase_repo / ".gitignore").write_text("node_modules\n")
         git("commit", "-qam", "no ignore", cwd=self.showcase_repo)

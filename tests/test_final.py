@@ -376,15 +376,15 @@ class FinalTests(unittest.TestCase):
         self.assertEqual(again["url"], result["url"])
         self.assertEqual(len(created), 1)
         branch, target, title, body = created[0]
-        self.assertEqual((branch, target, title), ("friday/T-1", "main", "T-1: Кнопка приветствия"))
+        self.assertEqual((branch, target, title), ("origin/T-1", "main", "T-1: Кнопка приветствия"))
         self.assertIn("**M1. Кнопка**", body)
-        remote = git("ls-remote", str(self.origin), "refs/heads/friday/T-1").split()[0]
+        remote = git("ls-remote", str(self.origin), "refs/heads/origin/T-1").split()[0]
         self.assertEqual(remote, git("rev-parse", "HEAD", cwd=self.worktree).strip())
 
     def test_foreign_remote_branch_is_not_overwritten(self):
         self.commit_work()
         self.profile.update(delivery={"transport": "github", "target_branch": "main"})
-        git("push", "-q", "origin", "main:refs/heads/friday/T-1", cwd=self.worktree)
+        git("push", "-q", "origin", "main:refs/heads/origin/T-1", cwd=self.worktree)
         with self.assertRaises(FridayError) as error:
             final.deliver(self.root, "T-1", self.profile)
         self.assertEqual(error.exception.code, "remote_conflict")

@@ -4,7 +4,6 @@
   "repository": "../../my-project",
   "base_branch": "main",
   "worktree_root": "../../my-project-worktrees",
-  "branch_template": "friday/{key}",
   "engineering_policy": [
     "Follow the project's documented rules and inspect matching precedents before choosing a solution.",
     "Check the project's existing libraries before implementing a custom alternative."

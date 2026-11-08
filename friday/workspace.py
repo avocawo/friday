@@ -1,7 +1,9 @@
 """Create the task's own branch and worktree from the freshly fetched base branch, and record them on the card."""
 import os
+import re
 import subprocess
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from . import card as cards
 from . import state, stories
@@ -27,6 +29,31 @@ def registered(repo, target, branch):
     return any("worktree " + str(target) in record and "branch refs/heads/" + branch in record for record in records)
 
 
+def task_branch(profile, key, card):
+    """Keep a recorded branch; new tasks use an explicit template or origin's repository name."""
+    recorded = card.get("branch") or (card.get("stories") or {}).get("branch")
+    if recorded:
+        return recorded
+    if "branch_template" in profile:
+        return state.task_branch(profile["branch_template"], key)
+    repo = profile["repository"]
+    try:
+        remote = git(repo, "remote", "get-url", "origin")
+    except FridayError:
+        common = Path(git(repo, "rev-parse", "--git-common-dir"))
+        common = (Path(repo) / common).resolve()
+        name = common.parent.name if common.name == ".git" else common.name
+    else:
+        path = unquote(urlsplit(remote).path) if "://" in remote else remote.rsplit(":", 1)[-1]
+        parts = path.rstrip("/").split("/")
+        name = parts[-2] if parts[-1] == ".git" and len(parts) > 1 else parts[-1]
+    name = name.removesuffix(".git")
+    name = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-")
+    if not name:
+        raise FridayError("invalid_profile", "Cannot derive a repository name; set branch_template explicitly.")
+    return state.task_branch(name + "/{key}", key)
+
+
 def prepare(profile, worktree):
     """Run the profile's worktree_setup commands (dependencies and the like) in a worktree new to this task."""
     for command in profile.get("worktree_setup") or []:
@@ -47,11 +74,11 @@ def create(root, key, profile):
     base = profile.get("base_branch")
     if not profile.get("worktree_root") or not isinstance(base, str) or not base or base.startswith("-"):
         raise FridayError("invalid_profile", "worktree_root and base_branch are required to prepare a worktree.")
-    branch = state.task_branch(profile.get("branch_template", "friday/{key}"), key)
+    card = cards.read(root, key)
+    branch = task_branch(profile, key, card)
     target = Path(profile["worktree_root"]).resolve() / (branch if profile.get("worktree_layout", "key") == "branch" else key)
     if stories.settings(profile):
         target = Path(stories.create(root, key, profile)) / stories.mount(profile)  # the kit inside its showcase
-    card = cards.read(root, key)
     if card.get("worktree"):
         if card["worktree"] != str(target) or not registered(repo, target, branch):
             raise FridayError("worktree_conflict", "The recorded worktree is unavailable or conflicts with the profile.")

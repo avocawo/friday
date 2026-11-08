@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 from . import card as cards
-from . import gate, state
+from . import gate
 from .errors import FridayError
 from .locks import locked
 
@@ -82,9 +82,9 @@ def create(root, key, profile):
     config = settings(profile)
     repo = config["repository"]
     base = config["base_branch"]
-    branch = state.task_branch(profile.get("branch_template", "friday/{key}"), key)
-    target = Path(config["worktree_root"]).resolve() / key
     card = cards.read(root, key)
+    branch = workspace.task_branch(profile, key, card)
+    target = Path(config["worktree_root"]).resolve() / key
     if worktree(card):
         if worktree(card) != str(target) or not workspace.registered(repo, target, branch):
             raise FridayError("worktree_conflict", "The recorded showcase worktree is unavailable or conflicts with the profile.")
