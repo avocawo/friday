@@ -339,6 +339,7 @@ def run(spec, on_event=None):
     result.usage = usage
     status_path = logs / "status.json"
     started = time.time()
+    monotonic_started = time.monotonic()
     status = {"driver": spec.driver, "model": spec.model, "state": "starting", "session": getattr(driver, "session", spec.resume),
               "pid": None, "owner": os.getpid(), "started_at": started, "last_activity_at": started, "last_event": None, "usage": usage}
     write_status(status_path, status)
@@ -424,8 +425,10 @@ def run(spec, on_event=None):
             failure = sys.exc_info()[1]
             if failure is not None:
                 result.error = result.error or "Friday stopped the agent: %s: %s" % (type(failure).__name__, failure)
+            if result.duration_ms is None:
+                result.duration_ms = max(0, round((time.monotonic() - monotonic_started) * 1000))
             status.update(state=result.status if process is not None else "failed", session=result.session,
-                          finished_at=time.time(), error=result.error)
+                          finished_at=time.time(), duration_ms=result.duration_ms, error=result.error)
             write_status(status_path, status)
     if result.status == "ok" and result.exit_code not in (0, -signal.SIGTERM, -signal.SIGKILL):
         result.status, result.error = "failed", "The agent exited with status %s." % result.exit_code

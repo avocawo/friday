@@ -3,11 +3,12 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from friday import card, final, milestone, workspace
+from friday import card, final, milestone, models, runner, workspace
 from friday.errors import FridayError
 from test_milestone import DONE, MODELS, PASS, git
 
@@ -120,6 +121,226 @@ class FinalTests(unittest.TestCase):
         self.assertIn("+<button>hi</button>", blind["prompt"])
         models = {entry["kind"]: entry["argv"][entry["argv"].index("--model") + 1] for entry in self.log()}
         self.assertEqual((models["final"], models["blind"]), ("big-1", "rival-1"))
+
+    def test_resume_keeps_a_completed_peer_when_another_review_fails(self):
+        self.commit_work()
+        for failure in ("quota", "exception"):
+            with self.subTest(failure=failure):
+                card.update(self.root, "T-1", lambda value: value.update(final_reviews={}))
+                calls = []
+                def review(root, key, profile, role, *args):
+                    calls.append(role)
+                    if role == "blind-code" and calls.count(role) == 1:
+                        if failure == "exception":
+                            raise FridayError("agent_failed", "review interrupted")
+                        return runner.Result("quota", error="quota reached")
+                    return runner.Result("ok", structured=PASS)
+                with self.assertRaises(FridayError):
+                    final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+                self.assertIn("final-review", card.read(self.root, "T-1").get("final_reviews", {}))
+                choose = models.reviewer
+                def only_missing(profile, layout, role, *args):
+                    self.assertEqual(role, "blind-code", "a completed reviewer need not have quota to reuse its result")
+                    return choose(profile, layout, role, *args)
+                with patch("friday.models.reviewer", side_effect=only_missing):
+                    results, entry = final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+                self.assertEqual(set(results), {"final-review", "blind-code"})
+                self.assertEqual(entry["model"], "big-1")
+                self.assertEqual(calls.count("final-review"), 1)
+                self.assertEqual(calls.count("blind-code"), 2)
+
+    def test_review_reuse_requires_unchanged_source_and_review_context(self):
+        self.commit_work()
+        calls = []
+        def review(root, key, profile, role, *args):
+            calls.append(role)
+            return runner.Result("ok", structured=PASS)
+        def check():
+            return final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        check()
+        check()
+        self.assertEqual(len(calls), 2)
+        (Path(self.worktree) / "page.html").write_text("<button>hello</button>\n")
+        git("commit", "-qam", "changed source", cwd=self.worktree)
+        check()
+        self.assertEqual(len(calls), 4)
+        plan_path = card.directory(self.root, "T-1") / "plan.json"
+        document = json.loads(plan_path.read_text())
+        document["milestones"][0]["stages"][0]["criteria"][0]["text"] += " updated"
+        plan_path.write_text(json.dumps(document))
+        check()
+        self.assertEqual(len(calls), 6)
+        card.update(self.root, "T-1", lambda value: value["decisions"].append(
+            {"name": "clarification", "text": "Keep the current behavior.", "reopen": []}))
+        check()
+        self.assertEqual(len(calls), 8)
+        self.profile["executor_deny_read"] = ["/unavailable-private-directory"]
+        check()
+        self.assertEqual(len(calls), 10)
+        changed_schema = dict(milestone.REVIEW_SCHEMA, description="updated review schema")
+        final.final_review(self.root, "T-1", self.profile, review, changed_schema)
+        self.assertEqual(len(calls), 12)
+
+    def test_dirty_tracked_or_untracked_files_reject_review_before_agent_calls(self):
+        self.commit_work()
+        calls = []
+        def review(root, key, profile, role, *args):
+            calls.append(role)
+            return runner.Result("ok", structured=PASS)
+        check = lambda: final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        check()
+        saved = card.read(self.root, "T-1").get("final_reviews")
+        untracked = Path(self.worktree) / "untracked.txt"
+        untracked.write_text("review context outside the diff\n")
+        with self.assertRaises(FridayError) as error:
+            check()
+        self.assertEqual(error.exception.code, "stale_evidence")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(card.read(self.root, "T-1").get("final_reviews"), saved)
+        untracked.unlink()
+        check()
+        self.assertEqual(len(calls), 2)
+        (Path(self.worktree) / "page.html").write_text("uncommitted change\n")
+        with self.assertRaises(FridayError) as error:
+            check()
+        self.assertEqual(error.exception.code, "stale_evidence")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(card.read(self.root, "T-1").get("final_reviews"), saved)
+
+    def test_showcase_changes_invalidate_reuse_and_dirty_showcase_disables_it(self):
+        self.commit_work()
+        showcase = Path(self.directory.name) / "showcase"
+        git("init", "-q", "-b", "main", str(showcase))
+        story = showcase / "story.txt"
+        story.write_text("original\n")
+        git("add", ".", cwd=showcase)
+        git("commit", "-qm", "initial story", cwd=showcase)
+        base = git("rev-parse", "HEAD", cwd=showcase).strip()
+        card.update(self.root, "T-1", lambda value: value.update(stories={"worktree": str(showcase), "base": base}))
+        calls = []
+        def review(root, key, profile, role, *args):
+            calls.append(role)
+            return runner.Result("ok", structured=PASS)
+        check = lambda: final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        check()
+        check()
+        self.assertEqual(len(calls), 2)
+        story.write_text("updated\n")
+        git("commit", "-qam", "changed story", cwd=showcase)
+        check()
+        self.assertEqual(len(calls), 4)
+        story.write_text("uncommitted story\n")
+        with self.assertRaises(FridayError) as error:
+            check()
+        self.assertEqual(error.exception.code, "stale_evidence")
+        self.assertEqual(len(calls), 4)
+
+    def test_changed_external_guidance_invalidates_only_its_review(self):
+        self.commit_work()
+        calls = []
+        def review(root, key, profile, role, *args):
+            calls.append(role)
+            return runner.Result("ok", structured=PASS)
+        with patch("friday.design.guidance", return_value="original review reference"):
+            final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        with patch("friday.design.guidance", return_value="updated review reference"):
+            final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertEqual(calls.count("final-review"), 2)
+        self.assertEqual(calls.count("blind-code"), 1)
+
+    def test_budget_increase_reuses_completed_peer_after_admission_failure(self):
+        self.commit_work()
+        calls = []
+        def review(root, key, profile, role, *args):
+            calls.append(role)
+            if role == "blind-code" and profile["budget"]["max_model_runs"] == 1:
+                raise FridayError("budget_exhausted", "The model-call budget is exhausted.")
+            return runner.Result("ok", structured=PASS)
+        self.profile["budget"] = {"max_model_runs": 1}
+        self.profile["max_parallel_milestones"] = 1
+        with self.assertRaises(FridayError):
+            final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        self.profile["budget"]["max_model_runs"] = 2
+        self.profile["max_parallel_milestones"] = 2
+        final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertEqual(calls.count("final-review"), 1)
+        self.assertEqual(calls.count("blind-code"), 2)
+
+    def test_review_is_not_saved_if_its_context_changes_while_it_runs(self):
+        self.commit_work()
+        def review(*args):
+            card.update(self.root, "T-1", lambda value: value["decisions"].append(
+                {"name": "late clarification", "text": "new context", "reopen": []}))
+            return runner.Result("ok", structured=PASS)
+        with self.assertRaises(FridayError) as error:
+            final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA, roles=("final-review",))
+        self.assertEqual(error.exception.code, "stale_evidence")
+        self.assertFalse(card.read(self.root, "T-1").get("final_reviews"))
+
+    def test_source_drift_during_review_rejects_the_obsolete_verdict(self):
+        self.commit_work()
+        def review(*args):
+            (Path(self.worktree) / "page.html").write_text("changed during review\n")
+            return runner.Result("ok", structured=PASS)
+        with self.assertRaises(FridayError) as error:
+            final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA, roles=("final-review",))
+        self.assertEqual(error.exception.code, "stale_evidence")
+        self.assertFalse(card.read(self.root, "T-1").get("final_reviews"))
+
+    def test_profile_can_request_one_final_review_without_selecting_a_blind_reviewer(self):
+        self.commit_work()
+        self.profile["final_review_roles"] = ["final-review"]
+        self.answers(final=[{"answer": PASS}])
+        choose = models.reviewer
+        def only_requested(profile, layout, role, *args):
+            self.assertEqual(role, "final-review")
+            return choose(profile, layout, role, *args)
+        with patch("friday.models.reviewer", side_effect=only_requested):
+            milestone.finish(self.root, "T-1", self.profile)
+        self.assertEqual(len(self.log("final")), 1)
+        self.assertEqual(self.log("blind"), [])
+
+    def test_explicit_final_roles_do_not_select_an_omitted_reviewer(self):
+        self.commit_work()
+        choose = models.reviewer
+        def only_requested(profile, layout, role, *args):
+            self.assertEqual(role, "final-review")
+            return choose(profile, layout, role, *args)
+        def review(*args):
+            return runner.Result("ok", structured=PASS)
+        with patch("friday.models.reviewer", side_effect=only_requested):
+            results, _ = final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA,
+                                            roles=("final-review",))
+        self.assertEqual(set(results), {"final-review"})
+
+    def test_available_review_is_saved_even_if_peer_selection_fails(self):
+        self.commit_work()
+        calls = []
+        choose = models.reviewer
+        def missing_final(profile, layout, role, *args):
+            if role == "final-review":
+                raise FridayError("cast_impossible", "No available final reviewer")
+            return choose(profile, layout, role, *args)
+        def review(root, key, profile, role, *args):
+            calls.append(role)
+            return runner.Result("ok", structured=PASS)
+        with patch("friday.models.reviewer", side_effect=missing_final), self.assertRaises(FridayError):
+            final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertEqual(calls, ["blind-code"])
+        final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertEqual(calls, ["blind-code", "final-review"])
+
+    def test_both_requested_reviews_still_run_concurrently(self):
+        self.commit_work()
+        barrier = threading.Barrier(2)
+        def review(root, key, profile, role, entry, worktree, *args):
+            barrier.wait(timeout=5)
+            if role == "blind-code":
+                self.assertNotEqual(worktree, self.worktree)
+                self.assertEqual(list(Path(worktree).iterdir()), [])
+            return runner.Result("ok", structured=PASS)
+        results, _ = final.final_review(self.root, "T-1", self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertEqual(set(results), {"final-review", "blind-code"})
 
     def test_blocking_findings_get_one_fix_round_and_disputes_go_to_the_owner(self):
         self.commit_work()

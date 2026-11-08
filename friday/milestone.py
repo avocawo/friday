@@ -5,7 +5,7 @@ import signal
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import card as cards
 from . import design, final, gate, models, runner, stories, workspace
@@ -13,6 +13,7 @@ from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
 ROUNDS = 4
+PARALLEL_LIMIT = 2
 
 STRINGS = {"type": "array", "items": {"type": "string"}}
 EXECUTOR_SCHEMA = {
@@ -112,6 +113,8 @@ def numbered(findings):
 
 
 def run_role(root, key, profile, role, entry, worktree, prompt, schema, milestone_id, *, write=False, resume=None, mcp=None):
+    if write:
+        models.require_executor(profile, entry)
     commands = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile) if write else []
     card = cards.read(root, key)
     showcase = stories.worktree(card) if worktree == card.get("worktree") else None
@@ -388,6 +391,11 @@ def run_task(root, key, profile):
     card = cards.read(root, key)
     if card["state"] not in ("approved", "running", "stopped") or not card["plan"]["approved"]:
         raise FridayError("invalid_state", "Approve the plan of %s before running it." % key)
+    for item in card["milestones"]:
+        if item.get("recovery_worktree") and (os.path.lexists(item["recovery_worktree"]) or
+                git(profile["repository"], "branch", "--list", item["recovery_branch"]).strip()):
+            raise FridayError("parallel_recovery_required", "Inspect retained work for %s before resuming: %s (%s)."
+                              % (item["id"], item["recovery_worktree"], item["recovery_branch"]))
     cards.update(root, key, lambda value: value.update(state="running", runner_pid=os.getpid()))
     cards.record(root, key, "run_task_started")
     previous = None
@@ -403,7 +411,7 @@ def run_task(root, key, profile):
             pending = ready(cards.read(root, key))
             if not pending:
                 break
-            group = [name for name in pending if define(document, name)["parallel"]]
+            group = [name for name in pending if define(document, name)["parallel"]][:profile.get("max_parallel_milestones", PARALLEL_LIMIT)]
             if len(group) >= 2:
                 completed.extend(run_parallel(root, key, profile, group))
             else:
@@ -451,7 +459,9 @@ def finish(root, key, profile):
     cards.update(root, key, lambda value: value.update(final_minor=minor))
     if blocking:
         document = load_plan(root, key)
-        entry = layout["develop"]
+        entry, note = models.executor(profile, layout, available=models.availability(root))
+        if note:
+            cards.record(root, key, "cast_note", milestone="final", note=note)
         allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile)
         prompt = (FIX_RULES.format(key=key) + stories.executor_text(profile, card) + "\n\nShell commands you may run, each starting exactly like one of these:\n" +
                   "\n".join("- " + command for command in allowed) + "\n\nProject rules:\n" + "\n".join(document["rules"]) +
@@ -486,19 +496,49 @@ def finish(root, key, profile):
     return final.deliver(root, key, profile)
 
 
+def parallel_overlap(changes):
+    """Path aliases and file/directory collisions also share a write surface."""
+    owners = []
+    shared = set()
+    for name, paths in changes.items():
+        for path in {str(PurePosixPath(path)) for path in paths}:
+            for owner, other in owners:
+                if owner != name and (path == other or path.startswith(other + "/") or other.startswith(path + "/")):
+                    shared.add(path if path == other else path + " <-> " + other)
+            owners.append((name, path))
+    return sorted(shared)
+
+
+def changed_paths(worktree, start):
+    paths = set()
+    for commit in git(worktree, "rev-list", start + "..HEAD").split():
+        if len(git(worktree, "rev-list", "--parents", "-n", "1", commit).split()) > 2:
+            raise FridayError("parallel_merge", "A parallel lane contains a merge commit; inspect it before integration.")
+        paths.update(filter(None, git(worktree, "diff-tree", "--no-commit-id", "--name-only", "--no-renames",
+                                      "-r", "-z", commit).split("\0")))
+    return paths
+
+
 def run_parallel(root, key, profile, group):
     """Milestones the plan marks parallel (no shared files) run at once, each in its own worktree; their commits
     are then cherry-picked onto the task branch in plan order."""
     card = cards.read(root, key)
+    document = load_plan(root, key)
+    overlap = parallel_overlap({name: define(document, name)["files"] for name in group})
+    if overlap:
+        raise FridayError("parallel_overlap", "Parallel milestones declare shared paths: " + ", ".join(overlap))
     main, branch, repo = card["worktree"], card["branch"], profile["repository"]
     lanes = {}
+    lane_base = git(main, "rev-parse", "HEAD").strip()
     for name in group:
         path, lane = str(Path(main).parent / (Path(main).name + "--" + name)), branch + "--" + name
-        workspace.git(repo, "worktree", "add", "-q", "-b", lane, path, git(main, "rev-parse", "HEAD").strip())
+        if os.path.lexists(path) or git(repo, "branch", "--list", lane).strip():
+            raise FridayError("parallel_recovery_required", "Inspect retained parallel work before reusing %s (%s)." % (path, lane))
+        workspace.git(repo, "worktree", "add", "-q", "-b", lane, path, lane_base)
         lanes[name] = (path, lane)
     cards.record(root, key, "parallel_started", milestones=group)
     results, errors = {}, {}
-    pool = ThreadPoolExecutor(max_workers=len(group))
+    pool = ThreadPoolExecutor(max_workers=min(len(group), profile.get("max_parallel_milestones", PARALLEL_LIMIT)))
     futures = {name: pool.submit(run, root, key, profile, name, lanes[name][0]) for name in group}
     try:
         for name, future in futures.items():
@@ -506,19 +546,42 @@ def run_parallel(root, key, profile, group):
                 results[name] = future.result()
             except FridayError as exc:
                 errors[name] = exc
+                set_state(root, key, name, state="failed", blocked_reason=str(exc))
     except BaseException:
         runner.CANCEL.set()  # Ctrl-C or SIGTERM: stop the other lanes' agents too
         pool.shutdown(wait=True)
+        for name, (path, lane) in lanes.items():
+            set_state(root, key, name, state="failed", recovery_worktree=path, recovery_branch=lane)
+            cards.record(root, key, "parallel_lane_retained", milestone=name, worktree=path, branch=lane)
         raise
     pool.shutdown(wait=True)
+    retained = {name for name in errors if git(lanes[name][0], "rev-parse", "HEAD").strip() != lane_base
+                or git(lanes[name][0], "status", "--porcelain").strip()}
+    integrated = set()
     try:
+        overlap = parallel_overlap({name: changed_paths(lanes[name][0],
+            next(item["start"] for item in cards.read(root, key)["milestones"] if item["id"] == name)) for name in results})
+        if overlap:
+            cards.record(root, key, "parallel_overlap", files=overlap, lanes={name: path for name, (path, _) in lanes.items()})
+            raise FridayError("parallel_overlap", "Parallel milestones changed shared paths: %s. Lanes retained for recovery."
+                              % ", ".join(overlap))
         for name in group:
             if name in results:
                 integrate(root, key, profile, name, main, lanes[name][0])
+                integrated.add(name)
+    except BaseException:
+        retained.update(set(results) - integrated)
+        for name in set(results) - integrated:
+            set_state(root, key, name, state="failed", blocked_reason="Parallel work was not integrated; inspect its retained lane.")
+        raise
     finally:
-        for path, lane in lanes.values():
-            workspace.git(repo, "worktree", "remove", "--force", path)
-            workspace.git(repo, "branch", "-D", lane)
+        for name, (path, lane) in lanes.items():
+            if name in retained:
+                set_state(root, key, name, recovery_worktree=path, recovery_branch=lane)
+                cards.record(root, key, "parallel_lane_retained", milestone=name, worktree=path, branch=lane)
+            else:
+                workspace.git(repo, "worktree", "remove", "--force", path)
+                workspace.git(repo, "branch", "-D", lane)
     if errors:
         raise next(iter(errors.values()))
     return [results[name] for name in group]

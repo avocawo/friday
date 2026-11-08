@@ -114,6 +114,11 @@ def validate(plan, worktree, limits=None, showcase=None):
         return ["The plan has no milestones."]
     ids = [item["id"] for item in milestones]
     stage_ids = [stage["id"] for item in milestones for stage in item["stages"]]
+    for field, count, label in (("task_milestones", len(milestones), "milestones"),
+                                ("task_stages", len(stage_ids), "stages")):
+        if field in limits and count > limits[field]:
+            errors.append("The plan has %d %s; the task limit is %d. Split the task before implementation."
+                          % (count, label, limits[field]))
     for name, count in Counter(ids + stage_ids).items():
         if count > 1:
             errors.append("Duplicate id %s." % name)
@@ -364,7 +369,10 @@ def make(root, key, profile, ticket, use_design=True):
     limits = profile.get("limits")
     def rules(docs, reading=""):
         return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading)) + (
-            "\n" + design.PLAN_FIGMA if figma else "") + (stories.plan_text(profile) if showcase else "")
+            "\n" + design.PLAN_FIGMA if figma else "") + (stories.plan_text(profile) if showcase else "") + (
+            "\n\nWhole-task limits: " + json.dumps({field: limits[field] for field in ("task_milestones", "task_stages")
+                                                     if field in limits}) + ". Split larger scope before implementation."
+            if limits and any(field in limits for field in ("task_milestones", "task_stages")) else "")
     task = "\n\nTask:\n" + context(card, profile, ticket)
     identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest or map caches
     saved = saved_draft(root, key, identity)

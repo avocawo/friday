@@ -79,6 +79,12 @@ class JournalTests(unittest.TestCase):
             with self.assertRaises(FridayError):
                 journal.sync(self.root, "T-1")
 
+    def test_role_cost_and_model_time_keep_unknown_runs_visible(self):
+        journal.sync(self.root, "T-1")
+        text = self.page()
+        self.assertIn("| ревью | 1 | 0 | неизвестно (1 без цены) |", text)
+        self.assertIn("1 без длительности", text)
+
     def test_owner_notes_survive_and_foreign_pages_are_left_alone(self):
         journal.sync(self.root, "T-1")
         page = self.root.parent / "vault" / "T-1.md"

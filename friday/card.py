@@ -4,6 +4,7 @@ import os
 import signal
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from . import models, resources, runner, state
@@ -112,10 +113,19 @@ def run_status(root, key, run_id):
         return {}
 
 
+def observed_usage(status):
+    """Keep measured partial work when a caller or runner dies; recovery time is not execution time."""
+    observed = {"usage": status["usage"]} if isinstance(status.get("usage"), dict) else {}
+    duration = status.get("duration_ms")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration >= 0:
+        observed["duration_ms"] = duration
+    return observed
+
+
 def lost(root, key, current):
     """A run is lost when the Friday process that owned it died without recording the result."""
     status = run_status(root, key, current["run"])
-    owner = status.get("owner")
+    owner = status.get("owner", current.get("owner"))
     return not isinstance(owner, int) or not alive(owner)
 
 
@@ -136,15 +146,22 @@ def recover(root, key):
         if not lost(root, key, current):
             continue
         status = run_status(root, key, run_id)
+        def claim(value):
+            if running(value).get(run_id) != current:
+                return False
+            value["current"] = {k: v for k, v in running(value).items() if k != run_id}
+            return True
+        if not update(root, key, claim):
+            continue
         pid = status.get("pid")
         if isinstance(pid, int) and status.get("state") in ("starting", "running"):
             try:
                 os.killpg(pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
-        update(root, key, lambda value: value.update(current={k: v for k, v in running(value).items() if k != run_id}))
         record(root, key, "run_finished", run=run_id, role=current["role"], milestone=current.get("milestone"),
-               model=current["model"], driver=current["driver"], status="lost", error="The Friday process that owned the run died.")
+               model=current["model"], driver=current["driver"], status="lost", error="The Friday process that owned the run died.",
+               **observed_usage(status))
         recovered.append(current)
     return recovered or None
 
@@ -160,6 +177,28 @@ def stop_waiting(root, key, milestone=None):
     update(root, key, lambda value: value.get("waiting", {}).pop(milestone or "task", None) and None)
 
 
+def reserve_run(value, profile, history, milestone):
+    """Called under the card lock: count admitted calls across resumes, including unfinished attempts."""
+    limits = (profile or {}).get("budget", {})
+    previous = value.get("budget_usage")
+    if previous is None:
+        starts = [event for event in history if event["type"] == "run_started"]
+        previous = {"model_runs": len(starts), "milestone_runs": dict(Counter(
+            event["milestone"] for event in starts if event.get("milestone") is not None))}
+    total = previous["model_runs"]
+    milestones = dict(previous["milestone_runs"])
+    used = milestones.get(milestone, 0)
+    if limits.get("max_model_runs") is not None and total >= limits["max_model_runs"]:
+        raise FridayError("budget_exhausted", "Task model-call budget exhausted (%d/%d); resume does not reset it."
+                          % (total, limits["max_model_runs"]))
+    if milestone is not None and limits.get("max_milestone_runs") is not None and used >= limits["max_milestone_runs"]:
+        raise FridayError("budget_exhausted", "Model-call budget exhausted for %s (%d/%d); reopening does not reset it."
+                          % (milestone, used, limits["max_milestone_runs"]))
+    if milestone is not None:
+        milestones[milestone] = used + 1
+    value["budget_usage"] = {"model_runs": total + 1, "milestone_runs": milestones}
+
+
 def run_agent(root, key, spec, *, role, milestone=None, phase=None, entry=None, profile=None, on_event=None):
     """Run one agent for a task: the card shows it while it works and the result lands in events.
 
@@ -167,12 +206,13 @@ def run_agent(root, key, spec, *, role, milestone=None, phase=None, entry=None, 
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     spec.log_dir = str(directory(root, key) / "runs" / run_id)
     current = {"run": run_id, "role": role, "milestone": milestone, "phase": phase or role, "model": spec.model,
-               "driver": spec.driver, "started_at": time.time()}
+               "driver": spec.driver, "owner": os.getpid(), "started_at": time.time()}
     recover(root, key)
     def begin(card):
         for other in running(card).values():
             if other.get("milestone") == milestone:
                 raise FridayError("task_busy", "Task %s is already running %s." % (key, other["run"]))
+        reserve_run(card, profile, events(root, key) if card.get("budget_usage") is None else (), milestone)
         card["current"] = dict(running(card), **{run_id: current})
     update(root, key, begin)
     # Until the runner starts, the run waits for a slot; its status names the owner so it is never taken for lost.
@@ -180,18 +220,23 @@ def run_agent(root, key, spec, *, role, milestone=None, phase=None, entry=None, 
     (Path(spec.log_dir) / "status.json").write_text(json.dumps({"state": "waiting", "owner": os.getpid(), "usage": {}}))
     record(root, key, "run_started", run=run_id, role=role, milestone=milestone, model=spec.model, driver=spec.driver)
     result = None
+    execution_started = False
     vendor = (entry or {}).get("vendor")
     try:
         with resources.slot(root, "vendor:" + str(vendor), on_wait=lambda name: waiting(root, key, name, milestone)):
             stop_waiting(root, key, milestone)
+            execution_started = True
             result = runner.run(spec, on_event)
         return result
     finally:
         update(root, key, lambda card: card.update(current={k: v for k, v in running(card).items() if k != run_id}))
         finished = {"run": run_id, "role": role, "milestone": milestone, "model": spec.model, "driver": spec.driver,
-                    "vendor": vendor, "tier": (entry or {}).get("tier")}
+                    "vendor": vendor, "tier": (entry or {}).get("tier"), "execution_started": execution_started}
         if result is None:
-            finished.update(status="interrupted", error=run_status(root, key, run_id).get("error", ""))
+            observed = run_status(root, key, run_id)
+            finished.update(status="interrupted", error=observed.get("error", ""), **observed_usage(observed))
+            if not execution_started:
+                finished["duration_ms"] = 0
         else:
             finished.update(status=result.status, session=result.session, usage=result.usage, duration_ms=result.duration_ms,
                             turns=result.turns, error=result.error, denials=len(result.denials))

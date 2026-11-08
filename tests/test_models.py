@@ -78,6 +78,27 @@ class ModelPolicyTests(unittest.TestCase):
         layout, _ = models.cast(profile({"develop": ["opus"]}, only=("opus", "fable")))
         self.assertEqual(layout["blind-code"]["name"], "fable")
 
+    def test_disabled_blind_review_is_not_a_cast_prerequisite(self):
+        selected = profile({"develop": ["opus"]}, only=("opus", "sonnet"))
+        with self.assertRaises(FridayError) as error:
+            models.cast(selected)
+        self.assertEqual(error.exception.code, "cast_impossible")
+        selected["final_review_roles"] = ["final-review"]
+        layout, _ = models.cast(selected)
+        self.assertEqual(layout["final-review"]["name"], "opus")
+        self.assertNotIn("blind-code", layout)
+        with self.assertRaises(FridayError) as error:
+            models.reviewer(selected, layout, "blind-code", layout["develop"])
+        self.assertEqual(error.exception.code, "cast_impossible")
+
+    def test_an_explicit_later_review_can_select_a_role_omitted_from_the_cast(self):
+        selected = dict(profile(), final_review_roles=["final-review"])
+        layout, _ = models.cast(selected)
+        self.assertNotIn("blind-code", layout)
+        entry, _ = models.reviewer(selected, layout, "blind-code", layout["develop"])
+        self.assertEqual(entry["tier"], "frontier")
+        self.assertNotEqual(entry["model"], layout["develop"]["model"])
+
     def test_final_blind_check_avoids_the_plan_author_when_possible(self):
         layout, notes = models.cast(profile({"plan": ["opus"], "develop": ["glm"], "blind-code": ["opus"]}))
         self.assertEqual(layout["blind-code"]["name"], "fable")
@@ -148,6 +169,59 @@ class ModelPolicyTests(unittest.TestCase):
         self.assertEqual(chosen["name"], "sonnet")
         self.assertIn("квота вендора", note)
 
+    def test_executor_tier_policy_keeps_complex_work_and_escalation_below_frontier(self):
+        selected = dict(profile({"develop": ["astra", "glm", "sonnet"]}), executor_tiers=["strong", "efficient"])
+        layout, _ = models.cast(selected)
+        self.assertEqual(layout["develop"]["name"], "glm")
+        self.assertEqual(layout["review"]["tier"], "frontier")
+        for complexity, failures in (("clear", 0), ("complex", 0), ("complex", 2), ("clear", 20)):
+            with self.subTest(complexity=complexity, failures=failures):
+                chosen, _ = models.executor(selected, layout, complexity=complexity, failures=failures)
+                self.assertEqual(chosen["tier"], "strong")
+        flash = models.public(dict(CATALOG["flash"], name="flash"))
+        chosen, _ = models.executor(selected, layout, failures=2, previous=flash)
+        self.assertEqual(chosen["tier"], "strong")
+
+    def test_executor_tier_policy_filters_quota_fallback_and_never_silently_downgrades(self):
+        selected = dict(profile({"develop": ["glm", "sonnet", "astra"]}), executor_tiers=["strong", "efficient"])
+        layout, _ = models.cast(selected)
+        chosen, _ = models.executor(selected, layout, available=lambda vendor: vendor != "zai")
+        self.assertEqual(chosen["name"], "sonnet")
+        # Frontier Anthropic remains available, but the only permitted survivor is too weak.
+        limited = dict(selected, models={name: CATALOG[name] for name in ("glm", "opus")},
+                       roles={"develop": ["glm", "opus"]})
+        limited["models"]["flash"] = dict(CATALOG["flash"], vendor="tiny")
+        with self.assertRaises(FridayError) as error:
+            models.executor(limited, layout, available=lambda vendor: vendor != "zai")
+        self.assertEqual(error.exception.code, "cast_impossible")
+        with self.assertRaises(FridayError):
+            models.cast(dict(limited, models={name: CATALOG[name] for name in ("glm", "opus")}),
+                        available=lambda vendor: vendor != "zai")
+
+    def test_executor_tier_policy_replaces_a_stale_frontier_layout(self):
+        selected = dict(profile({"develop": ["glm", "sonnet"]}), executor_tiers=["strong", "efficient"])
+        layout, _ = models.cast(selected)
+        layout["develop"] = models.public(dict(CATALOG["astra"], name="astra"))
+        chosen, note = models.executor(selected, layout)
+        self.assertEqual(chosen["name"], "glm")
+        self.assertIn("executor_tiers", note)
+        with self.assertRaises(FridayError) as error:
+            models.require_executor(selected, layout["develop"])
+        self.assertEqual(error.exception.code, "cast_impossible")
+        # A caller's stale or forged tier does not override the canonical model definition.
+        with self.assertRaises(FridayError):
+            models.require_executor(selected, dict(layout["develop"], tier="strong"))
+        with self.assertRaises(FridayError):
+            models.require_executor(selected, dict(chosen, model=CATALOG["astra"]["model"]))
+        models.require_executor(selected, chosen)
+
+    def test_executor_tier_policy_can_allow_only_efficient_work(self):
+        selected = dict(profile({"develop": ["glm", "flash"]}), executor_tiers=["efficient"])
+        layout, _ = models.cast(selected)
+        self.assertEqual(layout["develop"]["name"], "flash")
+        chosen, _ = models.executor(selected, layout, complexity="complex", failures=2)
+        self.assertEqual(chosen["name"], "flash")
+
     def test_reviewer_is_checked_against_the_actual_author(self):
         selected = profile({"develop": ["glm"], "review": ["sol"]})
         layout, _ = models.cast(selected)
@@ -186,6 +260,16 @@ class ModelPolicyTests(unittest.TestCase):
                 os.environ.pop("FRIDAY_ZAI_TOKEN", None)
                 env = models.environment({"name": "glm"}, selected)
         self.assertEqual(env, {"ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic", "ANTHROPIC_AUTH_TOKEN": "synthetic"})
+
+    def test_partial_price_catalog_does_not_make_unpriced_usage_free(self):
+        selected = profile()
+        selected["models"]["sol"] = dict(CATALOG["sol"], price={"input": 2.0})
+        entry = {"name": "sol"}
+        self.assertIsNone(models.estimate(entry, selected, {"input": 1e6, "output": 1000}))
+        self.assertIsNone(models.estimate(entry, selected, {"cache_write": 1000}))
+        self.assertEqual(models.estimate(entry, selected, {"input": 1e6, "output": 0}), 2.0)
+        selected["models"]["sol"] = dict(CATALOG["sol"], price={"input": 2.0, "output": 0.0})
+        self.assertEqual(models.estimate(entry, selected, {"output": 1000}), 0.0)
 
     def test_runs_record_quota_and_estimated_cost(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -179,10 +179,10 @@ def render_task(root, key, profile, sink, previous=""):
     decisions = ["- **%s**: %s%s" % (d["name"], d["text"], " (переоткрыты: %s)" % ", ".join(d["reopen"]) if d.get("reopen") else "")
                  for d in card["decisions"]]
     costs = ["%s, %s токенов, %d запусков, %s работы моделей." % (
-        status.money(spent), status.tokens(spent["tokens"]), spent["runs"], status.duration(spent["seconds"])), ""]
+        status.money(spent), status.tokens(spent["tokens"]), spent["runs"], status.work_time(spent)), ""]
     costs += ["| Роль | Запусков | Токенов | Расход |", "|---|---|---|---|"]
     costs += ["| %s | %d | %s | %s |" % (status.ROLE_NAMES.get(role, role), value["runs"], status.tokens(value["tokens"]),
-                                       status.money({"cost_usd": value["cost_usd"], "unpriced_runs": 0}))
+                                       status.money(value))
               for role, value in sorted(spent["by_role"].items(), key=lambda item: -item[1]["tokens"])]
     timeline = ["- %s %s" % (local_time(event["at"]), line) for event in events for line in [describe(event)] if line]
     found = NOTES.search(previous)

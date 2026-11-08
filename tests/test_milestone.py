@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from friday import card, milestone, plan, workspace
+from friday import card, milestone, models, plan, workspace
 from friday.errors import FridayError
 
 REAL_FINISH = milestone.finish  # setUp replaces it; the dist test needs the real one
@@ -166,6 +166,43 @@ class MilestoneTests(unittest.TestCase):
         self.assertIn("## Шаги профиля не выполнены", texts[0])
         self.assertIn("- bundle — не выполнен: `friday step bundle T-1`", texts[0])
         self.assertIn("Шаг не выполнен: bundle — friday step bundle T-1", status.render_task(self.root, "T-1"))
+
+    def test_final_fix_replaces_a_stale_frontier_cast_before_the_write_agent_runs(self):
+        self.profile["executor_tiers"] = ["strong", "efficient"]
+        stale = models.public(dict(MODELS["big"], name="big"))
+        card.update(self.root, "T-1", lambda value: value["cast"].update(develop=stale))
+        self.calls(("fix", {"write": {"greet.py": "def greet(n):\n    return n or '?'\n"},
+                            "commit": ["T-1 final: fix empty name"]}, DONE))
+        reviews = [({"final-review": BLOCK}, stale), ({"final-review": PASS}, stale)]
+        with patch("friday.final.final_review", side_effect=reviews), \
+                patch("friday.final.deliver", return_value={"transport": "none"}), \
+                patch("friday.runner.run", wraps=__import__("friday").runner.run) as spy:
+            REAL_FINISH(self.root, "T-1", self.profile)
+        writing = [call.args[0] for call in spy.call_args_list if call.args[0].write]
+        self.assertEqual([spec.model for spec in writing], ["worker-1"])
+        invoked = self.call(0)
+        self.assertEqual(invoked["argv"][invoked["argv"].index("--model") + 1], "worker-1")
+        self.assertIn("The final review of the whole task found blocking problems", invoked["prompt"])
+        writes = [event for event in card.events(self.root, "T-1")
+                  if event["type"] == "run_finished" and event.get("role") == "develop"]
+        self.assertEqual([(event["model"], event["tier"]) for event in writes], [("worker-1", "strong")])
+        self.assertIn("return n or '?'", (Path(self.worktree) / "greet.py").read_text())
+
+    def test_write_role_rejects_forbidden_or_spoofed_executors_before_admission(self):
+        self.profile["executor_tiers"] = ["strong", "efficient"]
+        frontier = models.public(dict(MODELS["big"], name="big"))
+        worker = models.public(dict(MODELS["worker"], name="worker"))
+        initial_events = len(card.events(self.root, "T-1"))
+        for entry in (frontier, dict(frontier, tier="strong"), dict(worker, model=frontier["model"]),
+                      dict(worker, name="unknown")):
+            with self.subTest(entry=entry), patch("friday.card.run_agent") as admitted, \
+                    patch("friday.runner.run") as started, self.assertRaises(FridayError) as error:
+                milestone.run_role(self.root, "T-1", self.profile, "develop", entry, self.worktree,
+                                   "implement", milestone.EXECUTOR_SCHEMA, "M1", write=True)
+            self.assertEqual(error.exception.code, "cast_impossible")
+            admitted.assert_not_called()
+            started.assert_not_called()
+        self.assertEqual(len(card.events(self.root, "T-1")), initial_events)
 
     def test_unverified_reasons(self):
         ui = {"ui": True}

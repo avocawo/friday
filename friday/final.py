@@ -1,9 +1,10 @@
 """The end of a task: browser acceptance of UI milestones, final review with a blind check, and the draft merge request."""
+import hashlib
 import json
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import card as cards
@@ -77,17 +78,54 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
     return result
 
 
-def final_review(root, key, profile, run_role, schema, roles=("final-review", "blind-code")):
-    """Final review and blind check of the whole diff, at the same time; returns both structured results."""
+def review_snapshot(card, profile, document, schema, author):
+    """Everything a final reviewer may inspect; dirty worktrees cannot supply reusable evidence."""
+    clean = not gate.git(card["worktree"], "status", "--porcelain=v1", "--untracked-files=all")
+    if stories.worktree(card):
+        clean = clean and not stories.git(card, "status", "--porcelain=v1", "--untracked-files=all")
+    review_profile = {key: value for key, value in profile.items() if key not in ("budget", "max_parallel_milestones")}
+    snapshot = {"version": 2, "base": card["base"],
+                "head": gate.git(card["worktree"], "rev-parse", "HEAD").decode().strip(),
+                "stories": card.get("stories"), "stories_head": stories.head(card),
+                "plan": document, "decisions": card["decisions"], "cast": card["cast"],
+                "profile": review_profile, "schema": schema, "author": author}
+    return clean, json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
+
+
+def verify_review_inputs(root, key, profile, schema, snapshot, guidance, ui):
+    """A completed or cached verdict must still describe the current committed inputs."""
+    current = cards.read(root, key)
+    document = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
+    clean, observed = review_snapshot(current, profile, document, schema, strongest_author(root, key, current["cast"]))
+    guidance_changed = guidance is not None and guidance != design.guidance(profile, "final-review", document, ui)
+    if not clean or observed != snapshot or guidance_changed:
+        raise FridayError("stale_evidence", "Final review inputs changed; repeat the review on the current source and context.")
+
+
+def review_signature(snapshot, role, prompt):
+    value = {"snapshot": snapshot, "role": role, "prompt": prompt}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def reusable_review(saved, signature, profile, role, author):
+    if not isinstance(saved, dict) or saved.get("signature") != signature or not isinstance(saved.get("value"), dict):
+        return False
+    entry = saved.get("entry") or {}
+    configured = models.catalog(profile).get(entry.get("name"))
+    return (configured is not None and entry == models.public(configured) and models.allowed(role, entry, author)
+            and saved["value"].get("verdict") in ("pass", "fail") and isinstance(saved["value"].get("findings"), list))
+
+
+def final_review(root, key, profile, run_role, schema, roles=None):
+    """Run the requested final checks concurrently, retaining completed peers across an unchanged resume."""
+    roles = tuple(profile.get("final_review_roles", models.FINAL_REVIEW_ROLES) if roles is None else roles)
     card = cards.read(root, key)
     layout, worktree = card["cast"], card["worktree"]
     document = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
     author = strongest_author(root, key, layout)
-    available = models.availability(root)
-    final_entry, note_final = models.reviewer(profile, layout, "final-review", author, available)
-    blind_entry, note_blind = models.reviewer(profile, layout, "blind-code", author, available)
-    for note in filter(None, (note_final, note_blind)):
-        cards.record(root, key, "cast_note", note=note)
+    clean, snapshot = review_snapshot(card, profile, document, schema, author)
+    if not clean:
+        raise FridayError("stale_evidence", "Final review requires clean committed task and showcase worktrees.")
     diff = gate.git(worktree, "diff", card["base"] + "..HEAD").decode("utf-8", "replace")
     showcase = stories.diff(card, (card.get("stories") or {}).get("base"))
     if showcase:
@@ -97,28 +135,54 @@ def final_review(root, key, profile, run_role, schema, roles=("final-review", "b
                        "criteria": criteria(document), "owner_decisions": card["decisions"],
                        **({"design_spec": document["design"]} if document.get("design") else {})}, ensure_ascii=False, indent=2)
     ui = any(item["ui"] for item in document["milestones"])
+    guidance = design.guidance(profile, "final-review", document, ui) if "final-review" in roles else ""
+    prompts = {"final-review": FINAL_RULES + guidance + "\n\n" + full +
+               "\n\nDiff of the whole task:\n" + diff,
+               "blind-code": BLIND_RULES + "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
+                                                                              ensure_ascii=False, indent=2) + "\n\nDiff:\n" + diff}
+    signatures = {role: review_signature(snapshot, role, prompts[role]) for role in roles}
+    results, entries, errors = {}, {}, {}
+    available = models.availability(root)
+    for role in roles:
+        saved = (card.get("final_reviews") or {}).get(role)
+        if clean and reusable_review(saved, signatures[role], profile, role, author):
+            results[role], entries[role] = saved["value"], saved["entry"]
+            cards.record(root, key, "final_review_reused", role=role, model=entries[role]["model"], signature=signatures[role])
+            continue
+        try:
+            entries[role], note = models.reviewer(profile, layout, role, author, available)
+            if note:
+                cards.record(root, key, "cast_note", note=note)
+        except FridayError as exc:
+            errors[role] = exc
     with tempfile.TemporaryDirectory(prefix="friday-blind-") as empty, ThreadPoolExecutor(max_workers=2) as pool:
-        jobs = {}
-        if "final-review" in roles:
-            jobs["final-review"] = pool.submit(run_role, root, key, profile, "final-review", final_entry, worktree,
-                                               FINAL_RULES + design.guidance(profile, "final-review", document, ui) + "\n\n" + full + "\n\nDiff of the whole task:\n" + diff, schema, "final-review")
-        if "blind-code" in roles:
-            jobs["blind-code"] = pool.submit(run_role, root, key, profile, "blind-code", blind_entry, empty,
-                                             BLIND_RULES + "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
-                                                                                         ensure_ascii=False, indent=2) +
-                                             "\n\nDiff:\n" + diff, schema, "blind-code")
-        results = {role: job.result() for role, job in jobs.items()}
-    for role, result in results.items():
-        if result.status != "ok" or not isinstance(result.structured, dict):
-            raise FridayError("agent_failed", "%s failed (%s): %s" % (role, result.status, result.error))
-        value = result.structured
-        cards.record(root, key, "final_reviewed", role=role, verdict=value["verdict"], model=result_model(role, final_entry, blind_entry),
-                     blocking=sum(f["severity"] == "blocking" for f in value["findings"]))
-    return {role: result.structured for role, result in results.items()}, final_entry
-
-
-def result_model(role, final_entry, blind_entry):
-    return (final_entry if role == "final-review" else blind_entry)["model"]
+        jobs = {pool.submit(run_role, root, key, profile, role, entries[role], worktree if role == "final-review" else empty,
+                            prompts[role], schema, role): role
+                for role in roles if role not in results and role not in errors}
+        for job in as_completed(jobs):
+            role = jobs[job]
+            try:
+                result = job.result()
+                if result.status != "ok" or not isinstance(result.structured, dict):
+                    raise FridayError("agent_failed", "%s failed (%s): %s" % (role, result.status, result.error))
+                value = result.structured
+                # Save each completed role before handling a failed peer. Never bind it to a changed working tree.
+                verify_review_inputs(root, key, profile, schema, snapshot, guidance if role == "final-review" else None, ui)
+                cards.record(root, key, "final_reviewed", role=role, verdict=value["verdict"], model=entries[role]["model"],
+                             blocking=sum(f["severity"] == "blocking" for f in value["findings"]), signature=signatures[role])
+                def remember(card):
+                    card.setdefault("final_reviews", {})[role] = {"signature": signatures[role], "entry": entries[role],
+                                                                   "value": value}
+                cards.update(root, key, remember)
+                results[role] = value
+            except Exception as exc:
+                errors[role] = exc
+    for role in roles:
+        if role in errors:
+            raise errors[role]
+    # Cached peers also need to remain current until this invocation has finished.
+    verify_review_inputs(root, key, profile, schema, snapshot, guidance if "final-review" in roles else None, ui)
+    return {role: results[role] for role in roles}, entries.get("final-review", layout["final-review"])
 
 
 def description(root, key):

@@ -95,6 +95,22 @@ class RunnerTests(unittest.TestCase):
         status = json.loads((self.root / "logs" / "status.json").read_text())
         self.assertEqual((status["state"], status["session"], status["usage"]["cost_usd"]), ("ok", "s-1", 0.25))
 
+    def test_codex_duration_is_measured_when_the_driver_reports_none(self):
+        self.scenario([{"emit": {"type": "thread.started", "thread_id": "th-1"}},
+                       {"emit": {"type": "turn.completed", "usage": {}}}])
+        with patch("friday.runner.time.monotonic", side_effect=[100.0, 101.75]):
+            result = runner.run(self.spec(driver="codex"))
+        self.assertEqual(result.duration_ms, 1750)
+        recorded = json.loads((self.root / "logs" / "status.json").read_text())
+        self.assertEqual(recorded["duration_ms"], 1750)
+
+    def test_crashed_agent_still_has_a_measured_duration(self):
+        self.scenario([{"stderr": "broken"}, {"exit": 3}])
+        with patch("friday.runner.time.monotonic", side_effect=[100.0, 102.5]):
+            result = runner.run(self.spec())
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.duration_ms, 2500)
+
     def test_live_events_and_status_arrive_before_the_agent_exits(self):
         self.scenario([{"emit": INIT}, {"emit": ANSWER}, {"sleep": 1.2}, {"emit": RESULT}])
         seen = []

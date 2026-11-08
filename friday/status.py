@@ -1,4 +1,6 @@
 """What every task is doing right now, and what it has cost so far."""
+import datetime
+import math
 import time
 
 from . import card as cards
@@ -16,24 +18,55 @@ def state_name(card):
     return STATE_NAMES.get(card.get("state"), card.get("state"))
 
 
+def run_seconds(event, started):
+    """Prefer recorded execution time; legacy pairs include any wait for a vendor slot."""
+    milliseconds = event.get("duration_ms")
+    if (isinstance(milliseconds, (int, float)) and not isinstance(milliseconds, bool)
+            and math.isfinite(milliseconds) and milliseconds >= 0):
+        return milliseconds / 1000, False
+    # Recovery may happen long after the agent died. Its timestamp is not an end time.
+    if started is None or event.get("status") == "lost" or "execution_started" in event:
+        return None, False
+    try:
+        begin = datetime.datetime.fromisoformat(started["at"])
+        end = datetime.datetime.fromisoformat(event["at"])
+        seconds = (end - begin).total_seconds()
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None, False
+    return (seconds, True) if seconds >= 0 else (None, False)
+
+
 def totals(events):
-    spent = {"runs": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_runs": 0, "seconds": 0.0, "by_role": {}}
+    spent = {"runs": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_runs": 0, "seconds": 0.0,
+             "unmeasured_runs": 0, "duration_estimated_runs": 0, "by_role": {}}
+    starts = {}
     for event in events:
+        if event.get("type") == "run_started" and event.get("run"):
+            starts[event["run"]] = event
         if event.get("type") != "run_finished":
             continue
         usage = event.get("usage") or {}
         tokens = sum(usage.get(name, 0) for name in ("input", "output", "cache_read", "cache_write"))
-        role = spent["by_role"].setdefault(event.get("role", "?"), {"runs": 0, "tokens": 0, "cost_usd": 0.0})
+        role = spent["by_role"].setdefault(event.get("role", "?"), {
+            "runs": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_runs": 0,
+            "seconds": 0.0, "unmeasured_runs": 0, "duration_estimated_runs": 0})
         spent["runs"] += 1
         role["runs"] += 1
         spent["tokens"] += tokens
         role["tokens"] += tokens
         if usage.get("cost_usd") is None:
             spent["unpriced_runs"] += 1
+            role["unpriced_runs"] += 1
         else:
             spent["cost_usd"] += usage["cost_usd"]
             role["cost_usd"] += usage["cost_usd"]
-        spent["seconds"] += (event.get("duration_ms") or 0) / 1000
+        seconds, estimated = run_seconds(event, starts.get(event.get("run")))
+        for total in (spent, role):
+            if seconds is None:
+                total["unmeasured_runs"] += 1
+            else:
+                total["seconds"] += seconds
+                total["duration_estimated_runs"] += int(estimated)
     return spent
 
 
@@ -81,9 +114,20 @@ def plural(count, one, few, many):
 
 def money(spent):
     cost = spent["cost_usd"]
+    if cost == 0 and spent["unpriced_runs"]:
+        return "неизвестно (%d без цены)" % spent["unpriced_runs"]
     text = "$%.4f" % cost if 0 < cost < 0.01 else "$%.2f" % cost
     if spent["unpriced_runs"]:
         text += " +%d без цены" % spent["unpriced_runs"]
+    return text
+
+
+def work_time(spent):
+    text = duration(spent["seconds"])
+    if spent.get("duration_estimated_runs"):
+        text += " (%d по событиям)" % spent["duration_estimated_runs"]
+    if spent.get("unmeasured_runs"):
+        text += " +%d без длительности" % spent["unmeasured_runs"]
     return text
 
 
@@ -157,10 +201,10 @@ def render_task(root, key, recent=10):
         lines.append("Ждёт: %s (%s)" % (describe_wait(wait), duration(wait["elapsed"])))
     spent = row["spent"]
     lines.append("Расход: %s, %s токенов, %s, %s работы моделей" % (
-        money(spent), tokens(spent["tokens"]), plural(spent["runs"], "запуск", "запуска", "запусков"), duration(spent["seconds"])))
+        money(spent), tokens(spent["tokens"]), plural(spent["runs"], "запуск", "запуска", "запусков"), work_time(spent)))
     for role, value in sorted(spent["by_role"].items(), key=lambda item: -item[1]["tokens"]):
         lines.append("  %s: %s, %s токенов, %s" % (ROLE_NAMES.get(role, role), plural(value["runs"], "запуск", "запуска", "запусков"),
-                                                tokens(value["tokens"]), money({"cost_usd": value["cost_usd"], "unpriced_runs": 0})))
+                                                tokens(value["tokens"]), money(value)))
     history = cards.events(root, key)[-recent:]
     if history:
         lines.append("Последние события:")

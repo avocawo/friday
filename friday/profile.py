@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from . import design, steps, stories
+from . import design, models, steps, stories
 from .errors import FridayError
 
 
@@ -26,6 +26,32 @@ def merge(base, override):
         else:
             result[key] = value
     return result
+
+
+def positive_integer(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def execution_limits(selected):
+    """Validate optional runtime and task limits without changing defaults of existing profiles."""
+    models.executor_tiers(selected)
+    if "max_parallel_milestones" in selected and not positive_integer(selected["max_parallel_milestones"]):
+        raise FridayError("invalid_profile", "max_parallel_milestones must be a positive integer.")
+    if "budget" in selected:
+        budget = selected["budget"]
+        if (not isinstance(budget, dict) or set(budget) - {"max_model_runs", "max_milestone_runs"}
+                or any(not positive_integer(value) for value in budget.values())):
+            raise FridayError("invalid_profile", "budget supports positive integer max_model_runs and max_milestone_runs.")
+    if "final_review_roles" in selected and selected["final_review_roles"] not in (
+            ["final-review"], list(models.FINAL_REVIEW_ROLES)):
+        raise FridayError("invalid_profile", "final_review_roles must be ['final-review'] or ['final-review', 'blind-code'].")
+    if "limits" in selected:
+        limits = selected["limits"]
+        if not isinstance(limits, dict):
+            raise FridayError("invalid_profile", "limits must be an object.")
+        for key in ("stage_files", "stage_lines", "task_milestones", "task_stages"):
+            if key in limits and not positive_integer(limits[key]):
+                raise FridayError("invalid_profile", "limits.%s must be a positive integer." % key)
 
 
 def read_layers(path, seen):
@@ -91,6 +117,7 @@ def load(path):
         raise FridayError("invalid_profile", "repo_map_mcp is a boolean and needs repo_map graphify.")
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
+    execution_limits(profile)
     design.validate(profile.get("design"))
     stories.validate(profile.get("stories"))
     steps.validate(profile.get("steps"))

@@ -104,6 +104,12 @@ class PlanTests(unittest.TestCase):
         (self.fake / "calls.json").write_text(json.dumps([{"session": session, "answer": answer} for session, answer in answers]))
         (self.fake / "counter").unlink(missing_ok=True)
 
+    def test_task_limits_bound_the_whole_plan(self):
+        self.assertFalse(plan.validate(PLAN, self.repo))
+        errors = plan.validate(PLAN, self.repo, {"task_milestones": 1, "task_stages": 1})
+        self.assertTrue(any("2 milestones" in error and "limit is 1" in error for error in errors), errors)
+        self.assertTrue(any("2 stages" in error and "limit is 1" in error for error in errors), errors)
+
     def call(self, index):
         return json.loads((self.fake / ("call-%d.json" % index)).read_text())
 

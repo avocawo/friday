@@ -209,6 +209,94 @@ class ParallelTests(unittest.TestCase):
         self.assertIn("T-1 M1.1: a", git("log", "--format=%s", cwd=self.worktree))
         self.assertEqual(git("worktree", "list", cwd=self.worktree).count("\n"), 2)
 
+    def test_failed_lane_keeps_its_committed_progress_while_the_good_one_lands(self):
+        self.profile["milestone_rounds"] = 1
+        self.answers(M1={"develop": [{"answer": DONE, "write": {"a.py": "a = 1\n"}, "commit": ["T-1 M1.1: a"]}],
+                         "review": [{"answer": PASS}]},
+                     M2={"develop": [{"answer": DONE, "write": {"b.py": "b = 1\n"}, "commit": ["T-1 M2.1: partial b"]}],
+                         "review": []})
+        review = milestone.review
+        def fail_second_review(root, key, profile, entry, worktree, document, item, *args):
+            if item["id"] == "M2":
+                raise milestone.FridayError("agent_failed", "reviewer failed after the executor committed")
+            return review(root, key, profile, entry, worktree, document, item, *args)
+        with patch("friday.milestone.review", side_effect=fail_second_review), self.assertRaises(milestone.FridayError):
+            milestone.run_task(self.root, "T-1", self.profile)
+        states = {item["id"]: item["state"] for item in card.read(self.root, "T-1")["milestones"]}
+        self.assertEqual((states["M1"], states["M2"]), ("done", "failed"))
+        self.assertTrue((Path(self.worktree) / "a.py").is_file())
+        self.assertFalse((Path(self.worktree) / "b.py").exists())
+        retained = Path(self.worktree + "--M2")
+        self.assertEqual((retained / "b.py").read_text(), "b = 1\n")
+        self.assertIn("T-1 M2.1: partial b", git("log", "--format=%s", cwd=retained))
+        with self.assertRaises(milestone.FridayError) as error:
+            milestone.resume(self.root, "T-1", self.profile)
+        self.assertEqual(error.exception.code, "parallel_recovery_required")
+        self.assertEqual((retained / "b.py").read_text(), "b = 1\n")
+
+    def test_partial_integration_marks_all_remaining_results_failed_and_keeps_their_lanes(self):
+        source = card.directory(self.root, "T-1") / "plan.json"
+        document = json.loads(source.read_text())
+        document["milestones"][2].update(parallel=True, depends_on=[], files=["c.py"],
+                                          stages=[stage("M3", [], ["c.py"])])
+        source.write_text(json.dumps(document))
+        card.update(self.root, "T-1", lambda value: value["milestones"][2].update(parallel=True, depends_on=[]))
+        self.answers(**{name: {"develop": [{"answer": DONE, "write": {path: "value = 1\n"},
+                                            "commit": ["T-1 %s.1: code" % name]}], "review": [{"answer": PASS}]}
+                        for name, path in (("M1", "a.py"), ("M2", "b.py"), ("M3", "c.py"))})
+        integrate = milestone.integrate
+        def fail_second(root, key, profile, name, main, lane):
+            if name == "M2":
+                raise milestone.FridayError("merge_conflict", "integration failed")
+            return integrate(root, key, profile, name, main, lane)
+        with patch("friday.milestone.integrate", side_effect=fail_second), self.assertRaises(milestone.FridayError):
+            milestone.run_parallel(self.root, "T-1", self.profile, ["M1", "M2", "M3"])
+        states = {item["id"]: item["state"] for item in card.read(self.root, "T-1")["milestones"]}
+        self.assertEqual(states, {"M1": "done", "M2": "failed", "M3": "failed"})
+        self.assertTrue((Path(self.worktree) / "a.py").is_file())
+        for name, path in (("M2", "b.py"), ("M3", "c.py")):
+            self.assertFalse((Path(self.worktree) / path).exists())
+            self.assertEqual((Path(self.worktree + "--" + name) / path).read_text(), "value = 1\n")
+
+    def test_parallel_capacity_limits_ready_milestones(self):
+        document = json.loads((card.directory(self.root, "T-1") / "plan.json").read_text())
+        document["milestones"][2].update(parallel=True, depends_on=[], files=["c.py"],
+                                          stages=[stage("M3", [], ["c.py"])])
+        (card.directory(self.root, "T-1") / "plan.json").write_text(json.dumps(document))
+        def ready_all(value):
+            value["milestones"][2].update(parallel=True, depends_on=[])
+        card.update(self.root, "T-1", ready_all)
+        self.profile["max_parallel_milestones"] = 2
+        self.answers(**{name: {"develop": [{"answer": DONE, "sleep": 1.2,
+                                            "write": {path: "value = 1\n"}, "commit": ["T-1 %s.1: code" % name]}],
+                               "review": [{"answer": PASS}]}
+                        for name, path in (("M1", "a.py"), ("M2", "b.py"), ("M3", "c.py"))})
+        milestone.run_task(self.root, "T-1", self.profile)
+        starts = sorted(row["start"] for row in self.log() if row["kind"] == "develop")
+        self.assertGreaterEqual(starts[2] - starts[0], 1.1)
+        self.assertTrue(all((Path(self.worktree) / name).is_file() for name in ("a.py", "b.py", "c.py")))
+
+    def test_declared_overlap_is_rejected_before_starting_agents(self):
+        source = card.directory(self.root, "T-1") / "plan.json"
+        document = json.loads(source.read_text())
+        document["milestones"][1]["files"].append("./a.py")
+        source.write_text(json.dumps(document))
+        with patch("friday.milestone.run") as agent, self.assertRaises(milestone.FridayError) as error:
+            milestone.run_parallel(self.root, "T-1", self.profile, ["M1", "M2"])
+        self.assertEqual(error.exception.code, "parallel_overlap")
+        agent.assert_not_called()
+
+    def test_actual_extra_file_overlap_preserves_lanes_before_any_integration(self):
+        self.answers(**{name: {"develop": [{"answer": DONE, "write": {path: "code\n", "shared.txt": "same\n"},
+                                            "commit": ["T-1 %s.1: code" % name]}], "review": [{"answer": PASS}]}
+                        for name, path in (("M1", "a.py"), ("M2", "b.py"))})
+        base = git("rev-parse", "HEAD", cwd=self.worktree)
+        with self.assertRaises(milestone.FridayError) as error:
+            milestone.run_parallel(self.root, "T-1", self.profile, ["M1", "M2"])
+        self.assertEqual(error.exception.code, "parallel_overlap")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.worktree), base)
+        self.assertEqual(git("worktree", "list", cwd=self.worktree).count("\n"), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
