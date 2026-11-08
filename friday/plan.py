@@ -372,21 +372,45 @@ def plan_review(root, key, profile, prompt):
         cards.record(root, key, "cast_note", note=note or "plan-review: замена после исчерпания квоты")
 
 
+def planning_rules(profile, card, docs, reading=""):
+    limits = profile.get("limits")
+    return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading)) + (
+        "\n" + design.PLAN_FIGMA if design.frames(card) else "") + (
+        stories.plan_text(profile) if stories.worktree(card) else "") + (
+        "\n\nWhole-task limits: " + json.dumps({field: limits[field] for field in ("task_milestones", "task_stages")
+                                             if field in limits}) + ". Split larger scope before implementation."
+        if limits and any(field in limits for field in ("task_milestones", "task_stages")) else "")
+
+
+def planning_identity(card, profile, ticket):
+    return PIPELINE + "\n\n" + planning_rules(profile, card, READ_DOCS) + "\n\nTask:\n" + context(card, profile, ticket)
+
+
+def restore_statement(root, key, profile, ticket):
+    """Recover a legacy card's original brief, never substitute a new approved scope."""
+    card = cards.read(root, key)
+    text = ticket_text(ticket)
+    if card["state"] not in ("failed", "stopped", "approved") or not card["plan"]["approved"]:
+        raise FridayError("invalid_state", "Restore a brief only on an approved inactive task.")
+    saved = card.get("task_statement")
+    if saved == text:
+        return
+    if saved is not None or not saved_draft(root, key, planning_identity(card, profile, ticket)):
+        raise FridayError("invalid_state", "The brief does not match the original planning input; replan changed requirements.")
+    cards.update(root, key, lambda value: value.update(task_statement=text))
+    cards.record(root, key, "task_statement_restored", sha256=hashlib.sha256(text.encode("utf-8")).hexdigest())
+
+
 def make(root, key, profile, ticket, use_design=True):
     """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval."""
     design.prepare(root, key, profile, ticket_text(ticket), enabled=use_design)
-    card = cards.read(root, key)
+    card = cards.update(root, key, lambda value: value.update(task_statement=ticket_text(ticket)))
     figma = bool(design.frames(card))
-    showcase = stories.worktree(card)
     limits = profile.get("limits")
     def rules(docs, reading=""):
-        return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading)) + (
-            "\n" + design.PLAN_FIGMA if figma else "") + (stories.plan_text(profile) if showcase else "") + (
-            "\n\nWhole-task limits: " + json.dumps({field: limits[field] for field in ("task_milestones", "task_stages")
-                                                     if field in limits}) + ". Split larger scope before implementation."
-            if limits and any(field in limits for field in ("task_milestones", "task_stages")) else "")
+        return planning_rules(profile, card, docs, reading)
     task = "\n\nTask:\n" + context(card, profile, ticket)
-    identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest or map caches
+    identity = planning_identity(card, profile, ticket)  # independent of digest and map caches
     saved = saved_draft(root, key, identity)
     layout, notes = models.cast(profile, models.availability(root), planner=saved and saved["planner"])
     cards.update(root, key, lambda value: value.update(cast=layout, state="planning"))

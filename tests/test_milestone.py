@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,6 +58,7 @@ PLAN = {"summary": "Приветствие.", "rules": ["Тесты рядом (
                          "criteria": [{"text": "app печатает", "check": "code"}]}]}]}
 DONE = {"summary": "Сделано.", "stages_done": [], "extra_files": [], "disputes": [], "checks": "passed", "checks_note": ""}
 PASS = {"verdict": "pass", "criteria_results": [{"criterion": "c", "status": "pass", "evidence": "f:1"}], "findings": []}
+STATEMENT = "Pinned public payload: sha256=ee845b8abcc5107441c452a5454a5711b1dabec34b64bc5f370688003d7bf2ff; https://example.test/base.qcow2"
 BLOCK = {"verdict": "fail", "criteria_results": [], "findings": [
     {"severity": "blocking", "file": "greet.py", "problem": "Нет обработки пустого имени.", "evidence": "greet.py:1"},
     {"severity": "minor", "file": "greet.py", "problem": "Имя переменной.", "evidence": "greet.py:1"}]}
@@ -99,7 +101,7 @@ class MilestoneTests(unittest.TestCase):
         card.create(self.root, "T-1", str(self.profile_path))
         self.worktree = workspace.create(self.root, "T-1", self.profile)
         self.calls(("p", None, PLAN), ("r", None, {"verdict": "ok", "findings": []}))
-        plan.make(self.root, "T-1", self.profile, "Приветствие")
+        plan.make(self.root, "T-1", self.profile, STATEMENT)
         plan.approve(self.root, "T-1")
 
     def calls(self, *entries):
@@ -110,6 +112,54 @@ class MilestoneTests(unittest.TestCase):
 
     def call(self, index):
         return json.loads((self.fake / ("call-%d.json" % index)).read_text())
+
+    def test_exact_task_statement_reaches_executor_and_reviewer(self):
+        self.assertEqual(card.read(self.root, "T-1").get("task_statement"), STATEMENT)
+        self.calls(("e1", {"write": {"greet.py": "def greet(n):\n    return n\n"}, "commit": ["T-1 M1.1: greet"]}, DONE),
+                   ("rev", None, PASS),
+                   ("e2", {"write": {"app.py": "print(1)\n"}, "commit": ["T-1 M2.1: print"]}, DONE),
+                   ("rev", None, PASS))
+        milestone.run_task(self.root, "T-1", self.profile)
+        for index in range(4):
+            self.assertIn(STATEMENT, self.call(index)["prompt"])
+
+    def test_legacy_statement_restore_requires_original_planning_identity(self):
+        card.update(self.root, "T-1", lambda value: value.pop("task_statement", None))
+        before = card.read(self.root, "T-1")
+        with self.assertRaises(FridayError):
+            plan.restore_statement(self.root, "T-1", self.profile, STATEMENT + " changed")
+        self.assertEqual(card.read(self.root, "T-1"), before)
+        plan.restore_statement(self.root, "T-1", self.profile, STATEMENT)
+        after = card.read(self.root, "T-1")
+        self.assertEqual(after["task_statement"], STATEMENT)
+        for name in ("state", "plan", "milestones", "budget_usage"):
+            self.assertEqual(after.get(name), before.get(name))
+        with self.assertRaises(FridayError):
+            plan.restore_statement(self.root, "T-1", self.profile, STATEMENT + " changed")
+
+    def test_resume_cli_restores_only_the_original_brief(self):
+        card.update(self.root, "T-1", lambda value: value.pop("task_statement", None))
+        brief = Path(self.directory.name) / "task.md"
+        cli = Path(__file__).resolve().parents[1] / "bin" / "friday"
+        script = ("import runpy,sys; from friday import milestone; "
+                  "milestone.resume=lambda *a:dict(completed=[],left=['M1']); "
+                  "sys.argv=['friday','resume','T-1','--brief',sys.argv[1]]; "
+                  "runpy.run_path(%r,run_name='__main__')") % str(cli)
+        environment = dict(os.environ, FRIDAY_HOME=str(self.root))
+        before = card.read(self.root, "T-1")
+        for text, code in ((STATEMENT + " changed", 1), (STATEMENT, 0)):
+            brief.write_text(text)
+            result = subprocess.run([sys.executable, "-c", script, str(brief)], env=environment,
+                                    capture_output=True, text=True, cwd=cli.parents[1])
+            self.assertEqual(result.returncode, code, result.stderr)
+            if code:
+                self.assertIn("does not match", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(card.read(self.root, "T-1"), before)
+            else:
+                self.assertIn("Вех готово: 0", result.stdout)
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(card.read(self.root, "T-1")["task_statement"], STATEMENT)
 
     def test_without_a_gate_a_finished_task_is_unverified_everywhere(self):
         from friday import final, journal, status

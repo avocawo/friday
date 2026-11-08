@@ -53,7 +53,7 @@ cp examples/models.json examples/project-profile.json profiles/
 | `approve KEY [--no-run]` | Утвердить план и запустить конвейер в фоне |
 | `status [KEY] [--json]` | Что делают задачи и сколько потрачено |
 | `decide KEY name "текст" [--reopen M2]` | Решение владельца; переоткрывает только названные вехи |
-| `run KEY` / `resume KEY` / `stop KEY` | Исполнить в этом терминале, продолжить, остановить |
+| `run KEY` / `resume KEY [--brief F]` / `stop KEY` | Исполнить в этом терминале, продолжить, остановить; `--brief` восстанавливает исходную постановку старой задачи по отпечатку планирования |
 | `archive KEY [--force]` | Убрать рабочую копию и карточку; ветка остаётся |
 | `journal KEY` | Обновить журналы задачи (Obsidian, jsonl) |
 | `doctor --profile P` | Готовность машины и профиля |

@@ -87,7 +87,7 @@ def review_snapshot(card, profile, document, schema, author):
     snapshot = {"version": 2, "base": card["base"],
                 "head": gate.git(card["worktree"], "rev-parse", "HEAD").decode().strip(),
                 "stories": card.get("stories"), "stories_head": stories.head(card),
-                "plan": document, "decisions": card["decisions"], "cast": card["cast"],
+                "plan": document, "task_statement": card.get("task_statement"), "decisions": card["decisions"], "cast": card["cast"],
                 "profile": review_profile, "schema": schema, "author": author}
     return clean, json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
 
@@ -130,7 +130,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
     showcase = stories.diff(card, (card.get("stories") or {}).get("base"))
     if showcase:
         diff += "\n\nDiff of the showcase repository (paths are %s…):\n%s" % (stories.PREFIX, showcase)
-    full = json.dumps({"summary": document["summary"], "project_rules": document["rules"],
+    full = json.dumps({"summary": document["summary"], "task_statement": card.get("task_statement"), "project_rules": document["rules"],
                        "milestones": [{k: m[k] for k in ("id", "title", "goal")} for m in document["milestones"]],
                        "criteria": criteria(document), "owner_decisions": card["decisions"],
                        **({"design_spec": document["design"]} if document.get("design") else {})}, ensure_ascii=False, indent=2)
@@ -138,7 +138,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
     guidance = design.guidance(profile, "final-review", document, ui) if "final-review" in roles else ""
     prompts = {"final-review": FINAL_RULES + guidance + "\n\n" + full +
                "\n\nDiff of the whole task:\n" + diff,
-               "blind-code": BLIND_RULES + "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
+               "blind-code": BLIND_RULES + "\n\nOriginal task statement:\n" + card.get("task_statement", "") + "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
                                                                               ensure_ascii=False, indent=2) + "\n\nDiff:\n" + diff}
     signatures = {role: review_signature(snapshot, role, prompts[role]) for role in roles}
     results, entries, errors = {}, {}, {}

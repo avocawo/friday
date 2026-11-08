@@ -43,7 +43,8 @@ REVIEW_SCHEMA = {
                                                                "evidence": {"type": "string"}}}}}}
 
 EXECUTOR_RULES = (
-    "You implement one milestone of an approved plan in this repository. Work through the stages in order. After each "
+    "You implement one milestone of an approved plan in this repository. Use the original task statement for exact "
+    "facts, while keeping the approved milestone scope. Work through the stages in order. After each "
     "stage run the checks available to you, fix what they report, then commit only that stage's files with "
     "git add <files> and git commit -m \"{key} <stage id>: <short summary>\". Follow the project rules below; they are "
     "a digest made for you, read the source only when a rule is unclear. Stay within the milestone's files; if you must "
@@ -97,9 +98,11 @@ def set_state(root, key, milestone_id, **changes):
     cards.update(root, key, change)
 
 
-def milestone_text(key, document, item, decisions):
+def milestone_text(key, document, item, decisions, statement=None):
     value = {"task": key, "summary": document["summary"], "milestone": {k: item[k] for k in ("id", "title", "goal", "files")},
              "stages": item["stages"], "project_rules": document["rules"], "assumptions": document["assumptions"]}
+    if statement is not None:
+        value["task_statement"] = statement
     if item.get("ui") and document.get("design"):
         value["design_spec"] = document["design"]
     if decisions:
@@ -152,7 +155,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                    "\n\nShell commands you may run, each starting exactly like one of "
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
                    "\n".join("- " + command for command in allowed) + "\n\n" +
-                   milestone_text(key, document, item, card["decisions"]))
+                   milestone_text(key, document, item, card["decisions"], card.get("task_statement")))
     if reopened:
         base_prompt += ("\n\nThis milestone was implemented before; the owner's latest decision changes it. Update the "
                         "existing implementation on this branch to match the decision instead of starting over.")
@@ -311,7 +314,7 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
         diff += "\n\nDiff of the showcase repository (paths are %s…):\n%s" % (stories.PREFIX, showcase)
     gate_text = ("not configured" if gate_record is None else "%s on %s (command: %s)" % (
         gate_record["status"], gate_record["head"], " ".join(profile.get("gate", []))))
-    prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + "\n\n" + milestone_text(key, document, item, cards.read(root, key)["decisions"]) +
+    prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + "\n\n" + milestone_text(key, document, item, card["decisions"], card.get("task_statement")) +
               "\n\nGate: " + gate_text + "\n\nDiff of this milestone:\n" + diff)
     if previous:
         prompt += "\n\nYour previous blocking findings, which the executor has now addressed:\n" + numbered(previous)
@@ -465,6 +468,7 @@ def finish(root, key, profile):
         allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile)
         prompt = (FIX_RULES.format(key=key) + stories.executor_text(profile, card) + "\n\nShell commands you may run, each starting exactly like one of these:\n" +
                   "\n".join("- " + command for command in allowed) + "\n\nProject rules:\n" + "\n".join(document["rules"]) +
+                  "\n\nOriginal task statement (context, not additional scope):\n" + card.get("task_statement", "") +
                   "\n\nFindings:\n" + numbered(blocking))
         result = run_role(root, key, profile, "develop", entry, worktree, prompt, EXECUTOR_SCHEMA, "final", write=True)
         disputes = []

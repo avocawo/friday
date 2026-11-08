@@ -28,7 +28,10 @@ def main(argv=None):
     start.add_argument("--no-design", action="store_true", help="планировать без макета Figma из профиля")
     for name, text in (("plan", "показать план задачи"), ("run", "исполнить утверждённый план в этом терминале"),
                        ("resume", "продолжить остановленную или упавшую задачу"), ("stop", "остановить идущую задачу")):
-        commands.add_parser(name, help=text).add_argument("key")
+        command = commands.add_parser(name, help=text)
+        command.add_argument("key")
+        if name == "resume":
+            command.add_argument("--brief", help="восстановить исходную постановку старой задачи по отпечатку планирования")
     approve = commands.add_parser("approve", help="утвердить план и запустить конвейер в фоне")
     approve.add_argument("key")
     approve.add_argument("--no-run", action="store_true", help="только утвердить, не запускать")
@@ -91,6 +94,8 @@ def dispatch(root, args):
             print("План %s утверждён, %s" % (args.key, launch(root, args.key)))
     elif args.command in ("run", "resume"):
         selected = task_profile(root, args.key)
+        if args.command == "resume" and args.brief:
+            plan.restore_statement(root, args.key, selected, Path(args.brief).read_text(encoding="utf-8"))
         result = (milestone.run_task if args.command == "run" else milestone.resume)(root, args.key, selected)
         delivery = result.get("delivery") or {}
         print("Вех готово: %d. Осталось: %s" % (len(result["completed"]), ", ".join(result["left"]) or "нет"))
