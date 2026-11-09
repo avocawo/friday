@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=9f95975c05a4 -->
+<!-- i18n: source=docs/guide.md sha256=9198a3cbcbff -->
 # Friday 가이드
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · **한국어** · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -33,6 +33,8 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 파이프라인이 멈추는 경우는 게이트를 한 번도 통과하지 못했을 때, 실행자가 아무것도 하지 않았을 때, 환경을 사용할 수 없을 때, 규칙이 허용하는 모델을 모두 소진했을 때뿐입니다. 리뷰에서 의견이 갈려도 멈추지 않습니다.
 
 `decide KEY name "text" --reopen M2`는 오너의 결정을 기록합니다. 지정한 마일스톤과 그에 의존하는 마일스톤만 다시 열립니다. `--reopen`이 없으면 이후의 마일스톤이 그 결정을 반영합니다. `resume`은 중지되었거나 실패한 작업을 이어서 진행합니다. `stop`은 실행 중인 작업을 중지하며, 에이전트는 자식 프로세스와 함께 종료됩니다.
+
+승인 전에 계획을 돌려보내려면 바꿀 내용을 `decide`로 기록하고 `replan KEY`를 실행합니다. 플래너는 대기 중인 계획을 새 세션에서 고치며, 그 계획 이후에 기록된 결정을 수정 이유로 삼습니다. 수정된 계획은 검사와 다른 벤더 모델의 리뷰를 다시 거친 뒤, `approval: auto`여도 여러분의 승인을 기다립니다. 작업의 카드, 이력, 비용은 그대로 남습니다. `decide` 자체는 모델을 실행하지 않으므로 여러 결정을 기록한 뒤 한 번만 다시 계획할 수 있습니다. 재계획이 실패해도 이전 계획이 계속 승인을 기다립니다. Friday가 작업 설명을 저장하기 전에 시작한 작업이라면 `--brief`로 작업 설명을 다시 전달합니다.
 
 ## 프로필
 

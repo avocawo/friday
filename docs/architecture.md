@@ -18,7 +18,7 @@ friday approve KEY ─► cli.launch ─► milestone.run_task (in the backgroun
                                     final.deliver ─► draft MR (vcs) or saved text
 ```
 
-The owner acts twice: approving the plan, and reading the draft MR with its disputes. `friday decide` records an owner decision and reopens only the milestones it names.
+The owner acts twice: approving the plan, and reading the draft MR with its disputes. `friday decide` records an owner decision and reopens only the milestones it names. Before approval, `friday replan` sends the waiting plan back: `plan.replan` runs `plan.make` again, and the planner revises the previous plan in a new session with the owner's new decisions, which then goes through review again and returns to `awaiting_approval`.
 
 ## Modules
 

@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=9f95975c05a4 -->
+<!-- i18n: source=docs/guide.md sha256=9198a3cbcbff -->
 # Friday ガイド
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · **日本語** · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -33,6 +33,8 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 パイプラインが止まるのは、ゲートが一度も通らなかったとき、エグゼキューターが何もしなかったとき、環境が利用できないとき、ルールで許可されたモデルを使い切ったときだけです。レビューでの意見の相違では止まりません。
 
 `decide KEY name "text" --reopen M2` は、あなたの決定を記録します。再開されるのは、指定したマイルストーンと、それに依存するマイルストーンだけです。`--reopen` を付けない場合は、以降のマイルストーンがその決定を考慮に入れます。`resume` は、停止したタスクや失敗したタスクを続行します。`stop` は実行中のタスクを停止します。エージェントは子プロセスとともに終了します。
+
+承認前に計画を差し戻すには、変更点を `decide` で記録してから `replan KEY` を実行します。プランナーは承認待ちの計画を新しいセッションで修正し、その計画より後に記録された決定を修正の理由とします。修正された計画は再び検査と別ベンダーのモデルによるレビューを通り、`approval: auto` であってもあなたの承認を待ちます。タスクのカード、履歴、コストはそのまま残ります。`decide` 自体はモデルを実行しないので、複数の決定を記録してから一度だけ計画し直せます。計画のやり直しが失敗しても、前の計画が引き続き承認を待ちます。Friday がタスク記述を保存するようになる前に開始したタスクでは、`--brief` でタスク記述をもう一度渡します。
 
 ## プロファイル
 

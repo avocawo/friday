@@ -413,5 +413,8 @@
  "worktree_setup must be a list of argument arrays.": "worktree_setup 必须是参数数组的列表。",
  "{items}: {value}": "{items}：{value}",
  "The recorded worktree is unavailable or conflicts with the profile.": "记录的工作树不可用或与配置档案冲突。",
- "Worktree path already exists: {target}": "工作树路径已存在：{target}"
+ "Worktree path already exists: {target}": "工作树路径已存在：{target}",
+ "send a plan waiting for approval back to the planner with your new decisions": "将等待批准的计划连同你的新决定退回给规划者",
+ "The plan waits for approval. To revise it with your decisions: friday replan {key}": "计划正在等待批准。要按你的决定修订它：friday replan {key}",
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "任务 {key} 没有新的决定；请先记录一个：friday decide {key} NAME TEXT"
 }

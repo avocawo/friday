@@ -4,6 +4,10 @@ All notable changes to Friday are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Added
+
+- `friday replan KEY` sends a plan that waits for approval back to the planner with the owner's new decisions, without archiving the task: a new planner session revises the previous plan, it is reviewed again and waits for approval; the card, history and costs stay. `decide` on a waiting plan points to it.
+
 ## [0.3.0] - unreleased
 
 ### Added

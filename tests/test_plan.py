@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from friday import models, card, plan, workspace
+from friday import models, card, milestone, plan, workspace
 from friday.errors import FridayError
 
 CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
@@ -163,6 +163,63 @@ class PlanTests(unittest.TestCase):
         plan.make(self.root, "T-1", self.profile, "Сделать приветствие для пользователя.")  # the rerun does not plan again
         self.assertIn("plan_reused", [event["type"] for event in card.events(self.root, "T-1")])
 
+    def test_owner_sends_a_waiting_plan_back_with_a_decision(self):
+        clean = {"verdict": "ok", "findings": []}
+        self.calls(("planner", PLAN), ("reviewer", clean))
+        self.start()
+        with self.assertRaises(FridayError) as error:
+            plan.replan(self.root, "T-1", self.profile)  # nothing new to plan from
+        self.assertEqual(error.exception.code, "invalid_state")
+        self.profile["approval"] = "auto"  # the owner looks at a revised plan even when the first one needed nobody
+        milestone.decide(self.root, "T-1", "scope", "Drop the page milestone; the brief asks for the function only.")
+        smaller = copy.deepcopy(PLAN)
+        smaller["milestones"] = smaller["milestones"][:1]
+        self.calls(("planner-2", smaller), ("reviewer-2", clean))
+        document = plan.replan(self.root, "T-1", self.profile)
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["plan"]["approved"], value["plan"]["revision"]), ("awaiting_approval", False, 2))
+        self.assertEqual([item["id"] for item in document["milestones"]], ["M1"])
+        self.assertEqual([item["id"] for item in value["milestones"]], ["M1"])
+        self.assertEqual([item["name"] for item in value["decisions"]], ["scope"])
+        planner, reviewer = self.call(0), self.call(1)
+        self.assertNotIn("--resume", planner["argv"])
+        self.assertEqual(planner["argv"][planner["argv"].index("--model") + 1], "big-1")
+        for expected in ("Your plan:", "Вывести на страницу", "sent it back", "- scope: Drop the page milestone", "Сделать приветствие"):
+            self.assertIn(expected, planner["prompt"])
+        self.assertEqual(reviewer["argv"][reviewer["argv"].index("--model") + 1], "rival-1")
+        self.assertIn("Drop the page milestone", reviewer["prompt"])
+        types = [event["type"] for event in card.events(self.root, "T-1")]
+        self.assertEqual(types.count("plan_ready"), 2)
+        self.assertEqual(types.count("run_finished"), 4)  # the first plan's runs and costs are kept
+        self.assertLess(types.index("replan_started"), len(types) - 1 - types[::-1].index("plan_ready"))
+        started = next(event for event in card.events(self.root, "T-1") if event["type"] == "replan_started")
+        self.assertEqual((started["revision"], started["decisions"]), (1, ["scope"]))
+        with self.assertRaises(FridayError):
+            plan.replan(self.root, "T-1", self.profile)  # the decision is in the plan now
+        plan.approve(self.root, "T-1")
+        with self.assertRaises(FridayError) as error:
+            plan.replan(self.root, "T-1", self.profile)
+        self.assertEqual(error.exception.code, "invalid_state")
+
+    def test_failed_replan_keeps_the_waiting_plan(self):
+        self.calls(("planner", PLAN), ("reviewer", {"verdict": "ok", "findings": []}))
+        self.start()
+        before = (Path(card.directory(self.root, "T-1")) / "plan.json").read_text()
+        milestone.decide(self.root, "T-1", "size", "Keep every stage under 100 lines.")
+        broken = copy.deepcopy(PLAN)
+        broken["milestones"][0]["stages"][0]["files"].append("missing.py")
+        self.calls(("p", broken), ("p", broken))
+        with self.assertRaises(FridayError) as error:
+            plan.replan(self.root, "T-1", self.profile)
+        self.assertEqual(error.exception.code, "plan_invalid")
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["plan"]["revision"]), ("awaiting_approval", 1))
+        self.assertEqual((Path(card.directory(self.root, "T-1")) / "plan.json").read_text(), before)
+        self.assertEqual(card.events(self.root, "T-1")[-1]["type"], "replan_failed")
+        self.calls(("p", PLAN), ("r", {"verdict": "ok", "findings": []}))
+        plan.replan(self.root, "T-1", self.profile)  # the decision still counts as new
+        self.assertEqual(card.read(self.root, "T-1")["plan"]["revision"], 2)
+
     def test_infeasible_plan_goes_back_to_the_planner_once(self):
         broken = copy.deepcopy(PLAN)
         broken["milestones"][0]["stages"][0]["criteria"].append({"text": "Видно в браузере", "check": "behavior"})
@@ -316,6 +373,31 @@ class PlanTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(CLI), "approve", "T-9", "--no-run"], capture_output=True, text=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(card.read(self.root, "T-9")["state"], "approved")
+
+    def test_decide_and_replan_commands_revise_a_waiting_plan(self):
+        clean = {"verdict": "ok", "findings": []}
+        self.calls(("p", PLAN), ("r", clean))
+        self.start("T-7")
+        environment = dict(os.environ, FRIDAY_HOME=str(self.root), FRIDAY_LANG="en")
+        def friday(*argv):
+            script = ("import sys, runpy; from unittest.mock import patch; "
+                      "patch('friday.models.environment', return_value={'FAKE_DIR': %r}).start(); "
+                      "sys.argv = ['friday', *%r]; runpy.run_path(%r, run_name='__main__')") % (str(self.fake), list(argv), str(CLI))
+            return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=environment,
+                                  cwd=str(Path(__file__).resolve().parents[1]))
+        result = friday("decide", "T-7", "scope", "Drop the page milestone.")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("friday replan T-7", result.stdout)
+        self.calls(("p2", dict(copy.deepcopy(PLAN), summary="Greeting function only.")), ("r2", clean))
+        result = friday("replan", "T-7")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("# Plan T-7", result.stdout)
+        self.assertIn("Greeting function only.", result.stdout)
+        self.assertIn("friday approve T-7", result.stdout)
+        self.assertEqual(card.read(self.root, "T-7")["state"], "awaiting_approval")
+        result = friday("replan", "T-7")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no new decisions", result.stderr)
 
     def test_auto_approval_skips_the_owner(self):
         self.calls(("p", PLAN), ("r", {"verdict": "ok", "findings": []}))

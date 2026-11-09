@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=9ddeae110640 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — ネオンロゴ" width="900">
 </p>
@@ -59,6 +59,7 @@ Friday は 10 言語に対応しています。`friday --lang ru …`、`FRIDAY_
 | `approve KEY [--no-run]` | 計画を承認し、バックグラウンドでパイプラインを開始します |
 | `status [KEY] [--json]` | タスクの進行状況とコストを表示します |
 | `decide KEY name "text" [--reopen M2]` | オーナーの決定を記録します。指定したマイルストーンだけを再開します |
+| `replan KEY [--brief F]` | 承認待ちの計画を、新しい決定とともにプランナーへ差し戻します |
 | `run KEY` / `resume KEY` / `stop KEY` | このターミナルで実行、続行、停止します |
 | `archive KEY [--force]` | ワークツリーとカードを削除します。ブランチは残ります |
 | `journal KEY` | タスクのジャーナル (Obsidian、jsonl) を更新します |

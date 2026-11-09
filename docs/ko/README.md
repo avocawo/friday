@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=9ddeae110640 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — 네온 로고" width="900">
 </p>
@@ -59,6 +59,7 @@ Friday는 10개 언어를 지원합니다. `friday --lang ru …`, `FRIDAY_LANG=
 | `approve KEY [--no-run]` | 계획을 승인하고 파이프라인을 백그라운드에서 시작합니다 |
 | `status [KEY] [--json]` | 각 작업이 무엇을 하고 있는지, 비용이 얼마나 들었는지 보여 줍니다 |
 | `decide KEY name "text" [--reopen M2]` | 오너의 결정을 기록합니다. 지정한 마일스톤만 다시 엽니다 |
+| `replan KEY [--brief F]` | 승인을 기다리는 계획을 새 결정과 함께 플래너에게 돌려보냅니다 |
 | `run KEY` / `resume KEY` / `stop KEY` | 이 터미널에서 실행, 이어서 실행, 중지 |
 | `archive KEY [--force]` | 워크트리와 카드를 삭제합니다. 브랜치는 남습니다 |
 | `journal KEY` | 작업 저널(Obsidian, jsonl)을 갱신합니다 |

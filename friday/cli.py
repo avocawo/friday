@@ -57,6 +57,9 @@ def parser():
     decide.add_argument("name")
     decide.add_argument("text")
     decide.add_argument("--reopen", default="", help=_("milestones the decision changes, comma-separated"))
+    replan = commands.add_parser("replan", help=_("send a plan waiting for approval back to the planner with your new decisions"))
+    replan.add_argument("key")
+    replan.add_argument("--brief", help=_("a file with the task statement when the task is not in a tracker"))
     archive = commands.add_parser("archive", help=_("remove the worktree and the card to start the task over"))
     archive.add_argument("key")
     archive.add_argument("--force", action="store_true", help=_("also remove uncommitted changes"))
@@ -130,6 +133,14 @@ def dispatch(root, args):
         reopened = milestone.decide(root, args.key, args.name, args.text, [x for x in args.reopen.split(",") if x],
                                     profile=task_profile(root, args.key))
         print(_("Decision recorded. Reopened: {milestones}", milestones=", ".join(reopened) or _("nothing")))
+        if card.read(root, args.key)["state"] == "awaiting_approval":
+            print(_("The plan waits for approval. To revise it with your decisions: friday replan {key}", key=args.key))
+    elif args.command == "replan":
+        selected = task_profile(root, args.key)
+        ticket = Path(args.brief).read_text(encoding="utf-8") if args.brief else None
+        plan.replan(root, args.key, selected, ticket)
+        print(plan.render(root, args.key, selected))
+        print("\n" + _("To approve and run: friday approve {key}", key=args.key))
     elif args.command == "archive":
         result = tasks.archive(root, args.key, task_profile(root, args.key), force=args.force)
         print(_("Task archived: {archive}. Branch {branch} is kept.", archive=result["archive"], branch=result["branch"]))

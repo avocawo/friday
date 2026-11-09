@@ -413,5 +413,8 @@
  "worktree_setup must be a list of argument arrays.": "worktree_setup は引数配列のリストでなければなりません。",
  "{items}: {value}": "{items}: {value}",
  "The recorded worktree is unavailable or conflicts with the profile.": "記録されているワークツリーが利用できないか、プロファイルと競合しています。",
- "Worktree path already exists: {target}": "ワークツリーのパスはすでに存在します: {target}"
+ "Worktree path already exists: {target}": "ワークツリーのパスはすでに存在します: {target}",
+ "send a plan waiting for approval back to the planner with your new decisions": "承認待ちの計画を新しい決定とともにプランナーへ差し戻す",
+ "The plan waits for approval. To revise it with your decisions: friday replan {key}": "計画は承認待ちです。決定に沿って作り直すには: friday replan {key}",
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "タスク {key} に新しい決定がありません。先に記録してください: friday decide {key} NAME TEXT"
 }

@@ -31,6 +31,8 @@ The pipeline stops only when the gate never passed, the executor did nothing, th
 
 `decide KEY name "text" --reopen M2` records your decision. Only the named milestones and the milestones that depend on them are reopened. Without `--reopen`, the following milestones take the decision into account. `resume` continues a stopped or failed task. `stop` stops a running task: the agents end together with their child processes.
 
+To send a plan back before approving it, record what to change with `decide` and run `replan KEY`. The planner revises the waiting plan in a new session, with your decisions recorded since that plan as the reason. The revised plan goes through the checks and the review by another vendor again, and then waits for your approval, even with `approval: auto`. The task keeps its card, history and costs. `decide` itself never runs a model, so you can record several decisions and re-plan once. If the re-plan fails, the previous plan still waits for approval. `--brief` gives the task statement again for a task started before Friday kept it.
+
 ## Profile
 
 A profile is a JSON file. The `extends` key includes another profile (for example, a shared model catalog); paths are relative to the profile file.

@@ -415,5 +415,8 @@
  "worktree_setup must be a list of argument arrays.": "worktree_setup muss eine Liste von Argument-Arrays sein.",
  "{items}: {value}": "{items}: {value}",
  "The recorded worktree is unavailable or conflicts with the profile.": "Der erfasste Worktree ist nicht verfügbar oder steht im Konflikt mit dem Profil.",
- "Worktree path already exists: {target}": "Worktree-Pfad existiert bereits: {target}"
+ "Worktree path already exists: {target}": "Worktree-Pfad existiert bereits: {target}",
+ "send a plan waiting for approval back to the planner with your new decisions": "einen Plan, der auf Freigabe wartet, mit deinen neuen Entscheidungen an den Planer zurückgeben",
+ "The plan waits for approval. To revise it with your decisions: friday replan {key}": "Der Plan wartet auf Freigabe. Um ihn nach deinen Entscheidungen zu überarbeiten: friday replan {key}",
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "Aufgabe {key} hat keine neuen Entscheidungen; halte zuerst eine fest: friday decide {key} NAME TEXT"
 }

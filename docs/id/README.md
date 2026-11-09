@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=9ddeae110640 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo neon" width="900">
 </p>
@@ -59,6 +59,7 @@ Friday berbicara dalam sepuluh bahasa: `friday --lang ru …`, `FRIDAY_LANG=ru`,
 | `approve KEY [--no-run]` | Menyetujui rencana dan menjalankan pipeline di latar belakang |
 | `status [KEY] [--json]` | Menampilkan apa yang sedang dikerjakan tugas dan berapa pengeluarannya |
 | `decide KEY name "text" [--reopen M2]` | Mencatat keputusan pemilik; hanya membuka kembali milestone yang disebutkan |
+| `replan KEY [--brief F]` | Mengembalikan rencana yang menunggu persetujuan ke perencana dengan keputusan baru Anda |
 | `run KEY` / `resume KEY` / `stop KEY` | Menjalankan di terminal ini, melanjutkan, menghentikan |
 | `archive KEY [--force]` | Menghapus worktree dan kartu; branch tetap ada |
 | `journal KEY` | Memperbarui jurnal tugas (Obsidian, jsonl) |

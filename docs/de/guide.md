@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=9f95975c05a4 -->
+<!-- i18n: source=docs/guide.md sha256=9198a3cbcbff -->
 # Friday-Guide
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · **Deutsch** · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -33,6 +33,8 @@ Das Plugin bringt dem Agenten bei, `status` und `plan` zu lesen. Eine Aufgabe zu
 Die Pipeline hält nur an, wenn das Gate nie bestanden wurde, der Executor nichts getan hat, die Umgebung nicht verfügbar ist oder die nach den Regeln erlaubten Modelle aufgebraucht sind. Meinungsverschiedenheiten im Review halten sie nicht auf.
 
 `decide KEY name "text" --reopen M2` hält deine Entscheidung fest. Nur die genannten Meilensteine und die Meilensteine, die von ihnen abhängen, werden erneut geöffnet. Ohne `--reopen` berücksichtigen die folgenden Meilensteine die Entscheidung. `resume` setzt eine angehaltene oder fehlgeschlagene Aufgabe fort. `stop` hält eine laufende Aufgabe an: Die Agenten werden samt ihren Kindprozessen beendet.
+
+Um einen Plan vor der Freigabe zurückzugeben, halte mit `decide` fest, was sich ändern soll, und führe `replan KEY` aus. Der Planer überarbeitet den wartenden Plan in einer neuen Sitzung; Anlass sind die Entscheidungen, die du nach diesem Plan festgehalten hast. Der überarbeitete Plan durchläuft erneut die Prüfungen und das Review eines anderen Anbieters und wartet dann auf deine Freigabe, auch mit `approval: auto`. Die Aufgabe behält ihre Karte, ihren Verlauf und ihre Kosten. `decide` selbst startet nie ein Modell, du kannst also mehrere Entscheidungen festhalten und einmal neu planen. Schlägt die Neuplanung fehl, wartet der vorherige Plan weiter auf Freigabe. `--brief` übergibt die Aufgabenbeschreibung erneut, wenn die Aufgabe begonnen wurde, bevor Friday sie gespeichert hat.
 
 ## Profil
 

@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=9ddeae110640 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — 霓虹标志" width="900">
 </p>
@@ -59,6 +59,7 @@ Friday 支持十种语言：`friday --lang ru …`、`FRIDAY_LANG=ru`，或 `fri
 | `approve KEY [--no-run]` | 批准计划，并在后台启动流水线 |
 | `status [KEY] [--json]` | 显示各任务的进展和已花费的金额 |
 | `decide KEY name "text" [--reopen M2]` | 记录负责人的决定；只重新打开指定的里程碑 |
+| `replan KEY [--brief F]` | 把等待批准的计划连同你的新决定退回给规划模型 |
 | `run KEY` / `resume KEY` / `stop KEY` | 在当前终端中运行、继续、停止 |
 | `archive KEY [--force]` | 删除 worktree 和任务卡；分支保留 |
 | `journal KEY` | 更新任务日志（Obsidian、jsonl） |
