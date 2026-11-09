@@ -482,6 +482,7 @@ def finish(root, key, profile):
         prompt = (FIX_RULES.format(key=key) + stories.executor_text(profile, card) + "\n\nShell commands you may run, each starting exactly like one of these:\n" +
                   "\n".join("- " + command for command in allowed) + "\n\nProject rules:\n" + "\n".join(document["rules"]) +
                   "\n\nOriginal task statement (context, not additional scope):\n" + card.get("task_statement", "") +
+                  "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +
                   "\n\nFindings:\n" + numbered(blocking))
         result = run_role(root, key, profile, "develop", entry, worktree, prompt, EXECUTOR_SCHEMA, "final", write=True)
         disputes = []

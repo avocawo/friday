@@ -31,8 +31,8 @@ FINAL_RULES = (
     "defect in one pass: blocking for wrong behaviour or broken criteria, minor otherwise. verdict is pass when no blocking "
     "finding remains. Do not edit files. Write in the task's language.")
 BLIND_RULES = (
-    "You check a change blind: you get only its acceptance criteria and its diff, nothing else, and you must not look for "
-    "more. Judge each criterion from the diff alone: pass, fail, or unverifiable when the diff cannot show it (that is not a "
+    "You check a change blind: you get the task statement, owner decisions, acceptance criteria and diff; do not look for "
+    "more. Refine criteria using owner decisions, then judge from the diff: pass, fail, or unverifiable when it cannot show it (not a "
     "defect). Report as blocking only defects the diff itself proves. Do not edit files. Write in the task's language.")
 
 
@@ -138,7 +138,9 @@ def final_review(root, key, profile, run_role, schema, roles=None):
     guidance = design.guidance(profile, "final-review", document, ui) if "final-review" in roles else ""
     prompts = {"final-review": FINAL_RULES + guidance + "\n\n" + full +
                "\n\nDiff of the whole task:\n" + diff,
-               "blind-code": BLIND_RULES + "\n\nOriginal task statement:\n" + card.get("task_statement", "") + "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
+               "blind-code": BLIND_RULES + "\n\nOriginal task statement:\n" + card.get("task_statement", "") +
+               "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +
+               "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
                                                                               ensure_ascii=False, indent=2) + "\n\nDiff:\n" + diff}
     signatures = {role: review_signature(snapshot, role, prompts[role]) for role in roles}
     results, entries, errors = {}, {}, {}

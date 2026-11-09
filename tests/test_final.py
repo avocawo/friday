@@ -181,6 +181,21 @@ class FinalTests(unittest.TestCase):
         final.final_review(self.root, "T-1", self.profile, review, changed_schema)
         self.assertEqual(len(calls), 12)
 
+    def test_owner_decisions_reach_each_independent_final_reviewer(self):
+        self.commit_work()
+        decision = 'Use the approved runtime choice instead of the original literal setting.'
+        card.update(self.root, 'T-1', lambda value: value['decisions'].append(
+            dict(name='runtime', text=decision, reopen=[])))
+        prompts = {}
+        def review(root, key, profile, role, entry, worktree, prompt, *args):
+            prompts[role] = prompt
+            return runner.Result('ok', structured=PASS)
+        final.final_review(self.root, 'T-1', self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertEqual(set(prompts), {'final-review', 'blind-code'})
+        for role, prompt in prompts.items():
+            with self.subTest(role=role):
+                self.assertIn(decision, prompt)
+
     def test_dirty_tracked_or_untracked_files_reject_review_before_agent_calls(self):
         self.commit_work()
         calls = []
