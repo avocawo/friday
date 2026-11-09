@@ -206,6 +206,8 @@ class PlanTests(unittest.TestCase):
         self.start()
         before = (Path(card.directory(self.root, "T-1")) / "plan.json").read_text()
         milestone.decide(self.root, "T-1", "size", "Keep every stage under 100 lines.")
+        cast = card.read(self.root, "T-1")["cast"]
+        self.profile["roles"] = dict(self.profile["roles"], develop=["big"])  # the re-plan casts other models
         broken = copy.deepcopy(PLAN)
         broken["milestones"][0]["stages"][0]["files"].append("missing.py")
         self.calls(("p", broken), ("p", broken))
@@ -216,6 +218,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual((value["state"], value["plan"]["revision"]), ("awaiting_approval", 1))
         self.assertEqual((Path(card.directory(self.root, "T-1")) / "plan.json").read_text(), before)
         self.assertEqual(card.events(self.root, "T-1")[-1]["type"], "replan_failed")
+        self.assertEqual(value["cast"], cast)
         self.calls(("p", PLAN), ("r", {"verdict": "ok", "findings": []}))
         plan.replan(self.root, "T-1", self.profile)  # the decision still counts as new
         self.assertEqual(card.read(self.root, "T-1")["plan"]["revision"], 2)

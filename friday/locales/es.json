@@ -418,5 +418,7 @@
  "Worktree path already exists: {target}": "La ruta de la worktree ya existe: {target}",
  "send a plan waiting for approval back to the planner with your new decisions": "devuelve al planificador un plan que espera aprobación, con tus nuevas decisiones",
  "The plan waits for approval. To revise it with your decisions: friday replan {key}": "El plan espera aprobación. Para revisarlo con tus decisiones: friday replan {key}",
- "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "La tarea {key} no tiene decisiones nuevas; registra una primero: friday decide {key} NAME TEXT"
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "La tarea {key} no tiene decisiones nuevas; registra una primero: friday decide {key} NAME TEXT",
+ "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "Plan {revision} devuelto al planificador con las decisiones del responsable: {decisions}.",
+ "Re-planning failed, the previous plan still waits for approval: {error}": "La replanificación falló; el plan anterior sigue esperando aprobación: {error}"
 }

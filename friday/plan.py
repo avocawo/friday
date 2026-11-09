@@ -414,7 +414,7 @@ def replan(root, key, profile, ticket=None):
             raise FridayError("invalid_state", "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT",
                               key=key)
         value["state"] = "planning"
-        return value["plan"]["revision"], fresh
+        return value["plan"]["revision"], fresh, value["cast"]
     source = cards.directory(root, key) / "plan.json"
     if not source.is_file():
         raise FridayError("not_found", "Task {key} has no plan yet.", key=key)
@@ -426,14 +426,14 @@ def replan(root, key, profile, ticket=None):
     if ticket is None:
         raise FridayError("ticket_missing", "The profile has no tracker; pass --brief with the task statement.")
     previous = json.loads(source.read_text(encoding="utf-8"))
-    revision, fresh = cards.update(root, key, begin)
+    revision, fresh, cast = cards.update(root, key, begin)
     cards.record(root, key, "replan_started", revision=revision, decisions=[item["name"] for item in fresh])
     instruction = REPLAN + "\n- ".join("%s: %s" % (item["name"], item.get("text_en", item["text"])) for item in fresh)
     try:
         return make(root, key, profile, ticket, previous=(dict(previous, responses=[]), instruction))
     except BaseException as exc:
-        # the previous plan is still on disk and unchanged: it waits for the owner again
-        cards.update(root, key, lambda value: value.update(state="awaiting_approval"))
+        # the previous plan is still on disk and unchanged: it waits for the owner again, with the models it was made for
+        cards.update(root, key, lambda value: value.update(state="awaiting_approval", cast=cast))
         cards.record(root, key, "replan_failed", error=str(exc) or type(exc).__name__)
         raise
 

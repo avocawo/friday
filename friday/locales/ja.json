@@ -416,5 +416,7 @@
  "Worktree path already exists: {target}": "ワークツリーのパスはすでに存在します: {target}",
  "send a plan waiting for approval back to the planner with your new decisions": "承認待ちの計画を新しい決定とともにプランナーへ差し戻す",
  "The plan waits for approval. To revise it with your decisions: friday replan {key}": "計画は承認待ちです。決定に沿って作り直すには: friday replan {key}",
- "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "タスク {key} に新しい決定がありません。先に記録してください: friday decide {key} NAME TEXT"
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "タスク {key} に新しい決定がありません。先に記録してください: friday decide {key} NAME TEXT",
+ "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "計画 {revision} をオーナーの決定とともにプランナーへ差し戻しました: {decisions}。",
+ "Re-planning failed, the previous plan still waits for approval: {error}": "計画のやり直しに失敗しました。前の計画が引き続き承認を待っています: {error}"
 }

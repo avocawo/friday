@@ -416,5 +416,7 @@
  "Worktree path already exists: {target}": "Path worktree sudah ada: {target}",
  "send a plan waiting for approval back to the planner with your new decisions": "kembalikan rencana yang menunggu persetujuan ke perencana dengan keputusan baru Anda",
  "The plan waits for approval. To revise it with your decisions: friday replan {key}": "Rencana menunggu persetujuan. Untuk merevisinya sesuai keputusan Anda: friday replan {key}",
- "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "Tugas {key} tidak punya keputusan baru; catat dulu satu: friday decide {key} NAME TEXT"
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "Tugas {key} tidak punya keputusan baru; catat dulu satu: friday decide {key} NAME TEXT",
+ "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "Rencana {revision} dikembalikan ke perencana dengan keputusan pemilik: {decisions}.",
+ "Re-planning failed, the previous plan still waits for approval: {error}": "Perencanaan ulang gagal, rencana sebelumnya tetap menunggu persetujuan: {error}"
 }

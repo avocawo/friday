@@ -420,5 +420,7 @@
  "Worktree path already exists: {target}": "Путь рабочей копии уже существует: {target}",
  "send a plan waiting for approval back to the planner with your new decisions": "вернуть план, ждущий одобрения, планировщику с вашими новыми решениями",
  "The plan waits for approval. To revise it with your decisions: friday replan {key}": "План ждёт одобрения. Чтобы переделать его с учётом ваших решений: friday replan {key}",
- "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "У задачи {key} нет новых решений; сначала запишите решение: friday decide {key} NAME TEXT"
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "У задачи {key} нет новых решений; сначала запишите решение: friday decide {key} NAME TEXT",
+ "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "План {revision} возвращён планировщику с решениями владельца: {decisions}.",
+ "Re-planning failed, the previous plan still waits for approval: {error}": "Перепланирование не удалось, прежний план по-прежнему ждёт одобрения: {error}"
 }
