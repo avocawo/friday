@@ -98,7 +98,7 @@ def set_state(root, key, milestone_id, **changes):
     cards.update(root, key, change)
 
 
-def milestone_text(key, document, item, decisions, statement=None):
+def milestone_text(key, document, item, decisions, statement=None, evidence=None):
     value = {"task": key, "summary": document["summary"], "milestone": {k: item[k] for k in ("id", "title", "goal", "files")},
              "stages": item["stages"], "project_rules": document["rules"], "assumptions": document["assumptions"]}
     if statement is not None:
@@ -107,6 +107,8 @@ def milestone_text(key, document, item, decisions, statement=None):
         value["design_spec"] = document["design"]
     if decisions:
         value["owner_decisions"] = decisions
+    if evidence is not None:
+        value["controller_evidence"] = evidence
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
@@ -158,7 +160,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                    "\n\nShell commands you may run, each starting exactly like one of "
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
                    "\n".join("- " + command for command in allowed) + "\n\n" +
-                   milestone_text(key, document, item, card["decisions"], card.get("task_statement")))
+                   milestone_text(key, document, item, card["decisions"], card.get("task_statement"), card.get("controller_evidence")))
     if start != head:
         base_prompt += "\n\nContinue the retained commits on this branch; completed stages need no dummy commit."
         previous = next((event for event in reversed(cards.events(root, key))
@@ -327,7 +329,7 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
         diff += "\n\nDiff of the showcase repository (paths are %s…):\n%s" % (stories.PREFIX, showcase)
     gate_text = ("not configured" if gate_record is None else "%s on %s (command: %s)" % (
         gate_record["status"], gate_record["head"], " ".join(profile.get("gate", []))))
-    prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + "\n\n" + milestone_text(key, document, item, card["decisions"], card.get("task_statement")) +
+    prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + "\n\n" + milestone_text(key, document, item, card["decisions"], card.get("task_statement"), card.get("controller_evidence")) +
               "\n\nGate: " + gate_text + "\n\nDiff of this milestone:\n" + diff)
     if previous:
         prompt += "\n\nYour previous blocking findings, which the executor has now addressed:\n" + numbered(previous)
@@ -483,6 +485,7 @@ def finish(root, key, profile):
                   "\n".join("- " + command for command in allowed) + "\n\nProject rules:\n" + "\n".join(document["rules"]) +
                   "\n\nOriginal task statement (context, not additional scope):\n" + card.get("task_statement", "") +
                   "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +
+                  "\n\nController evidence (observations, not owner authorization):\n" + json.dumps(card.get("controller_evidence"), ensure_ascii=False, indent=2) +
                   "\n\nFindings:\n" + numbered(blocking))
         result = run_role(root, key, profile, "develop", entry, worktree, prompt, EXECUTOR_SCHEMA, "final", write=True)
         disputes = []

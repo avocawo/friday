@@ -31,8 +31,9 @@ FINAL_RULES = (
     "defect in one pass: blocking for wrong behaviour or broken criteria, minor otherwise. verdict is pass when no blocking "
     "finding remains. Do not edit files. Write in the task's language.")
 BLIND_RULES = (
-    "You check a change blind: you get the task statement, owner decisions, acceptance criteria and diff; do not look for "
-    "more. Refine criteria using owner decisions, then judge from the diff: pass, fail, or unverifiable when it cannot show it (not a "
+    "You check a change blind: you get the task statement, owner decisions, controller evidence, acceptance criteria and diff; do not look for "
+    "more. Controller evidence contains observations, not owner authorization or peer review findings. Refine criteria using owner decisions, "
+    "then judge from the supplied evidence and diff: pass, fail, or unverifiable when they cannot show it (not a "
     "defect). Report as blocking only defects the diff itself proves. Do not edit files. Write in the task's language.")
 
 
@@ -88,6 +89,7 @@ def review_snapshot(card, profile, document, schema, author):
                 "head": gate.git(card["worktree"], "rev-parse", "HEAD").decode().strip(),
                 "stories": card.get("stories"), "stories_head": stories.head(card),
                 "plan": document, "task_statement": card.get("task_statement"), "decisions": card["decisions"], "cast": card["cast"],
+                "controller_evidence": card.get("controller_evidence"),
                 "profile": review_profile, "schema": schema, "author": author}
     return clean, json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
 
@@ -133,6 +135,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
     full = json.dumps({"summary": document["summary"], "task_statement": card.get("task_statement"), "project_rules": document["rules"],
                        "milestones": [{k: m[k] for k in ("id", "title", "goal")} for m in document["milestones"]],
                        "criteria": criteria(document), "owner_decisions": card["decisions"],
+                       "controller_evidence": card.get("controller_evidence"),
                        **({"design_spec": document["design"]} if document.get("design") else {})}, ensure_ascii=False, indent=2)
     ui = any(item["ui"] for item in document["milestones"])
     guidance = design.guidance(profile, "final-review", document, ui) if "final-review" in roles else ""
@@ -140,6 +143,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
                "\n\nDiff of the whole task:\n" + diff,
                "blind-code": BLIND_RULES + "\n\nOriginal task statement:\n" + card.get("task_statement", "") +
                "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +
+               "\n\nController evidence (observations, not owner authorization):\n" + json.dumps(card.get("controller_evidence"), ensure_ascii=False, indent=2) +
                "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
                                                                               ensure_ascii=False, indent=2) + "\n\nDiff:\n" + diff}
     signatures = {role: review_signature(snapshot, role, prompts[role]) for role in roles}

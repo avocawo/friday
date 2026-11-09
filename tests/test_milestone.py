@@ -245,8 +245,10 @@ class MilestoneTests(unittest.TestCase):
 
     def test_final_fix_replaces_a_stale_frontier_cast_before_the_write_agent_runs(self):
         decision = 'Keep the approved runtime choice when fixing the final findings.'
+        evidence = 'The controller observed the isolated gate pass on the recorded source.'
         card.update(self.root, 'T-1', lambda value: value['decisions'].append(
             dict(name='runtime', text=decision, reopen=[])))
+        card.update(self.root, 'T-1', lambda value: value.update(controller_evidence={'summary': evidence}))
         self.profile["executor_tiers"] = ["strong", "efficient"]
         stale = models.public(dict(MODELS["big"], name="big"))
         card.update(self.root, "T-1", lambda value: value["cast"].update(develop=stale))
@@ -263,6 +265,7 @@ class MilestoneTests(unittest.TestCase):
         self.assertEqual(invoked["argv"][invoked["argv"].index("--model") + 1], "worker-1")
         self.assertIn("The final review of the whole task found blocking problems", invoked["prompt"])
         self.assertIn(decision, invoked['prompt'])
+        self.assertIn(evidence, invoked['prompt'])
         writes = [event for event in card.events(self.root, "T-1")
                   if event["type"] == "run_finished" and event.get("role") == "develop"]
         self.assertEqual([(event["model"], event["tier"]) for event in writes], [("worker-1", "strong")])

@@ -184,8 +184,10 @@ class FinalTests(unittest.TestCase):
     def test_owner_decisions_reach_each_independent_final_reviewer(self):
         self.commit_work()
         decision = 'Use the approved runtime choice instead of the original literal setting.'
+        evidence = 'Controller gate: 553 engine tests and 816 repository tests passed on the recorded source.'
         card.update(self.root, 'T-1', lambda value: value['decisions'].append(
             dict(name='runtime', text=decision, reopen=[])))
+        card.update(self.root, 'T-1', lambda value: value.update(controller_evidence={'summary': evidence}))
         prompts = {}
         def review(root, key, profile, role, entry, worktree, prompt, *args):
             prompts[role] = prompt
@@ -195,6 +197,18 @@ class FinalTests(unittest.TestCase):
         for role, prompt in prompts.items():
             with self.subTest(role=role):
                 self.assertIn(decision, prompt)
+                self.assertIn(evidence, prompt)
+
+    def test_controller_evidence_drift_rejects_a_completed_review(self):
+        self.commit_work()
+        card.update(self.root, 'T-1', lambda value: value.update(controller_evidence={'digest': 'before'}))
+        def review(*args):
+            card.update(self.root, 'T-1', lambda value: value.update(controller_evidence={'digest': 'after'}))
+            return runner.Result('ok', structured=PASS)
+        with self.assertRaises(FridayError) as error:
+            final.final_review(self.root, 'T-1', self.profile, review, milestone.REVIEW_SCHEMA, roles=('final-review',))
+        self.assertEqual(error.exception.code, 'stale_evidence')
+        self.assertFalse(card.read(self.root, 'T-1').get('final_reviews'))
 
     def test_dirty_tracked_or_untracked_files_reject_review_before_agent_calls(self):
         self.commit_work()
