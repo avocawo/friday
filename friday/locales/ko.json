@@ -413,5 +413,11 @@
  "worktree_setup must be a list of argument arrays.": "worktree_setup은 인자 배열의 목록이어야 합니다.",
  "{items}: {value}": "{items}: {value}",
  "The recorded worktree is unavailable or conflicts with the profile.": "기록된 작업 트리를 사용할 수 없거나 프로필과 충돌합니다.",
- "Worktree path already exists: {target}": "작업 트리 경로가 이미 존재합니다: {target}"
+ "Worktree path already exists: {target}": "작업 트리 경로가 이미 존재합니다: {target}",
+ "send a plan waiting for approval back to the planner with your new decisions": "승인을 기다리는 계획을 새 결정과 함께 플래너에게 돌려보냅니다",
+ "The plan waits for approval. To revise it with your decisions: friday replan {key}": "계획이 승인을 기다리고 있습니다. 결정에 맞게 고치려면: friday replan {key}",
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "작업 {key}에 새 결정이 없습니다. 먼저 기록하세요: friday decide {key} NAME TEXT",
+ "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "계획 {revision}을(를) 소유자의 결정과 함께 플래너에게 돌려보냈습니다: {decisions}.",
+ "Re-planning failed, the previous plan still waits for approval: {error}": "재계획에 실패했습니다. 이전 계획이 계속 승인을 기다립니다: {error}",
+ "Branch {branch} already exists with {count} commits that are not in origin/{base}. To keep that work, rename the branch (git branch -m {branch} NEW); to drop it, delete it (git branch -D {branch}); then run start again.": "브랜치 {branch}이(가) 이미 있으며 origin/{base}에 없는 커밋이 {count}개 있습니다. 그 작업을 남기려면 브랜치 이름을 바꾸고(git branch -m {branch} NEW), 버리려면 브랜치를 삭제한 뒤(git branch -D {branch}) start를 다시 실행하세요."
 }

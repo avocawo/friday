@@ -34,7 +34,11 @@ def archive(root, key, profile, force=False):
         if result.returncode:
             raise FridayError("git_error", result.stderr.strip())
     resources.release_port(root, key)
-    target = Path(root) / "archived-cards" / ("%s-%s" % (key, time.strftime("%Y%m%d-%H%M%S")))
+    stamp = Path(root) / "archived-cards" / ("%s-%s" % (key, time.strftime("%Y%m%d-%H%M%S")))
+    target, number = stamp, 1
+    while target.exists():  # archived twice within a second
+        number += 1
+        target = stamp.with_name("%s-%d" % (stamp.name, number))
     target.parent.mkdir(parents=True, exist_ok=True)
     cards.directory(root, key).rename(target)
     return {"archive": str(target), "branch": value.get("branch")}

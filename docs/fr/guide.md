@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=9f95975c05a4 -->
+<!-- i18n: source=docs/guide.md sha256=9198a3cbcbff -->
 # Guide de Friday
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · **Français** · [Bahasa Indonesia](../id/guide.md)
@@ -33,6 +33,8 @@ Le plugin apprend à l'agent à lire `status` et `plan`. Le lancement d'une tâc
 Le pipeline ne s'arrête que si le gate n'a jamais réussi, si l'exécutant n'a rien fait, si l'environnement est indisponible ou si les modèles autorisés par les règles sont épuisés. Les désaccords en revue ne l'arrêtent pas.
 
 `decide KEY name "text" --reopen M2` enregistre votre décision. Seuls les jalons indiqués et ceux qui en dépendent sont rouverts. Sans `--reopen`, les jalons suivants tiennent compte de la décision. `resume` reprend une tâche arrêtée ou en échec. `stop` arrête une tâche en cours : les agents se terminent avec leurs processus enfants.
+
+Pour renvoyer un plan avant de l'approuver, enregistrez ce qu'il faut changer avec `decide` puis lancez `replan KEY`. Le planificateur révise le plan en attente dans une nouvelle session, avec pour motif les décisions enregistrées après ce plan. Le plan révisé repasse les vérifications et la relecture par un autre fournisseur, puis attend votre approbation, même avec `approval: auto`. La tâche garde sa carte, son historique et ses coûts. `decide` seul ne lance jamais de modèle : vous pouvez donc enregistrer plusieurs décisions et replanifier une seule fois. Si la replanification échoue, le plan précédent attend toujours l'approbation. `--brief` redonne l'énoncé de la tâche pour une tâche commencée avant que Friday ne le conserve.
 
 ## Profil
 

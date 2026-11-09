@@ -415,5 +415,11 @@
  "worktree_setup must be a list of argument arrays.": "worktree_setup deve ser uma lista de listas de argumentos.",
  "{items}: {value}": "{items}: {value}",
  "The recorded worktree is unavailable or conflicts with the profile.": "A worktree registrada está indisponível ou conflita com o perfil.",
- "Worktree path already exists: {target}": "O caminho da worktree já existe: {target}"
+ "Worktree path already exists: {target}": "O caminho da worktree já existe: {target}",
+ "send a plan waiting for approval back to the planner with your new decisions": "devolve ao planejador um plano que aguarda aprovação, com suas novas decisões",
+ "The plan waits for approval. To revise it with your decisions: friday replan {key}": "O plano aguarda aprovação. Para revisá-lo com suas decisões: friday replan {key}",
+ "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "A tarefa {key} não tem decisões novas; registre uma antes: friday decide {key} NAME TEXT",
+ "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "Plano {revision} devolvido ao planejador com as decisões do responsável: {decisions}.",
+ "Re-planning failed, the previous plan still waits for approval: {error}": "O replanejamento falhou; o plano anterior continua aguardando aprovação: {error}",
+ "Branch {branch} already exists with {count} commits that are not in origin/{base}. To keep that work, rename the branch (git branch -m {branch} NEW); to drop it, delete it (git branch -D {branch}); then run start again.": "A branch {branch} já existe com {count} commits que não estão em origin/{base}. Para manter esse trabalho, renomeie a branch (git branch -m {branch} NEW); para descartá-lo, apague a branch (git branch -D {branch}); depois execute start de novo."
 }

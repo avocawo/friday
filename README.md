@@ -56,6 +56,7 @@ Friday speaks ten languages: `friday --lang ru …`, `FRIDAY_LANG=ru`, or `frida
 | `approve KEY [--no-run]` | Approves the plan and starts the pipeline in the background |
 | `status [KEY] [--json]` | Shows what the tasks are doing and how much has been spent |
 | `decide KEY name "text" [--reopen M2]` | Records an owner decision; reopens only the named milestones |
+| `replan KEY [--brief F]` | Sends a plan that waits for approval back to the planner with your new decisions |
 | `run KEY` / `resume KEY` / `stop KEY` | Runs in this terminal, continues, stops |
 | `archive KEY [--force]` | Removes the worktree and the card; the branch stays |
 | `journal KEY` | Updates the task journals (Obsidian, jsonl) |

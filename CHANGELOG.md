@@ -4,6 +4,15 @@ All notable changes to Friday are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Added
+
+- `friday replan KEY` sends a plan that waits for approval back to the planner with the owner's new decisions, without archiving the task: a new planner session revises the previous plan, it is reviewed again and waits for approval; the card, history and costs stay. `decide` on a waiting plan points to it.
+
+### Fixed
+
+- `start` after `archive` no longer fails on the kept branch: a branch with no commits of its own is cut again from the fresh base, and one with commits stops the start with a message naming the branch and how to keep or drop the work.
+- Archiving the same task twice within a second no longer fails on the archive folder name.
+
 ## [0.3.0] - unreleased
 
 ### Added

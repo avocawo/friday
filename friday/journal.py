@@ -22,7 +22,8 @@ FIELD = "friday_generated: %s"
 NOTES = re.compile(r"<!-- friday:notes -->\n(.*?)<!-- /friday:notes -->", re.S)
 # Events that change what the journal shows; anything else waits for the next of these.
 SIGNIFICANT = {"plan_ready", "plan_approved", "milestone_done", "milestone_failed", "decision", "final_reviewed",
-               "draft_opened", "delivery_skipped", "run_task_finished", "stopped", "start_failed", "resumed"}
+               "draft_opened", "delivery_skipped", "run_task_finished", "stopped", "start_failed", "resumed",
+               "replan_started", "replan_failed"}
 STATES = {"planning": N_("Planning"), "awaiting_approval": N_("Plan awaiting approval"), "approved": N_("Plan approved"),
           "running": N_("Running"), "stopped": N_("Stopped"), "done": N_("Done"), "failed": N_("Failed")}
 MILESTONE_STATES = {"pending": N_("ahead"), "running": N_("running"), "done": N_("done"), "failed": N_("failed"),
@@ -131,6 +132,10 @@ def describe(event, lang="en", t=lambda text: text):
         "stopped": lambda: say("Stopped."),
         "resumed": lambda: say("Resumed."),
         "start_failed": lambda: say("Preparation failed: {error}", error=t(event.get("error", ""))),
+        "replan_started": lambda: say("Plan {revision} sent back to the planner with the owner's decisions: {decisions}.",
+                                      revision=event.get("revision"), decisions=", ".join(event.get("decisions", []))),
+        "replan_failed": lambda: say("Re-planning failed, the previous plan still waits for approval: {error}",
+                                     error=t(event.get("error", ""))),
     }
     if kind == "run_finished" and event.get("status") not in ("ok", None):
         return "%s %s (%s): %s %s" % (milestone, event.get("role"), event.get("model"), event.get("status"), t((event.get("error") or "")[:160]))

@@ -328,16 +328,18 @@ def plan_review(root, key, profile, prompt):
         cards.record(root, key, "cast_note", note=note or "plan-review: replaced after its quota ran out")
 
 
-def make(root, key, profile, ticket):
-    """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval."""
-    card = cards.read(root, key)
+def make(root, key, profile, ticket, previous=None):
+    """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval.
+    previous is (plan, instruction) when the owner sends a waiting plan back: the planner revises it in a new session."""
+    card = cards.update(root, key, lambda value: value.update(task_statement=ticket_text(ticket)))  # a re-plan reads it again
     limits = profile.get("limits")
     def rules(docs, reading=""):
         return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading))
     task = "\n\nTask:\n" + context(card, profile, ticket)
     identity = PIPELINE + "\n\n" + rules(READ_DOCS) + task  # the draft key does not depend on the digest or map caches
     saved = saved_draft(root, key, identity)
-    layout, notes = models.cast(profile, models.availability(root), planner=saved and saved["planner"])
+    author = saved["planner"] if saved else previous and card["cast"].get("plan", {}).get("name")
+    layout, notes = models.cast(profile, models.availability(root), planner=author)
     cards.update(root, key, lambda value: value.update(cast=layout, state="planning"))
     for note in notes:
         cards.record(root, key, "cast_note", note=note)
@@ -350,8 +352,8 @@ def make(root, key, profile, ticket):
         planned = SimpleNamespace(structured=saved["plan"], session=saved["session"])
         cards.record(root, key, "plan_reused", reason="the checked plan of the failed start")
     else:
-        planned = save_draft(root, key, identity, layout["plan"]["name"],
-                             checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, PLAN_SCHEMA), limits, prompt))
+        first = revise(root, key, profile, prompt, *previous) if previous else agent(root, key, profile, "plan", prompt, PLAN_SCHEMA)
+        planned = save_draft(root, key, identity, layout["plan"]["name"], checked(root, key, profile, worktree, first, limits, prompt))
     review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + task + project +
                      "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2) +
                      "\n\nFiles the plan changes:\n" + plan_sources(worktree, planned.structured))
@@ -382,12 +384,53 @@ def make(root, key, profile, ticket):
                  "stages": [{"id": stage["id"], "commit": None} for stage in item["stages"]]} for item in document["milestones"]]
     def ready(value):
         value["plan"] = {"revision": value["plan"]["revision"] + 1, "approved": False, "review_notes": open_notes,
-                         "overlaps": warnings, "questions": document["questions"]}
+                         "overlaps": warnings, "questions": document["questions"], "decisions": len(value["decisions"])}
         value["milestones"] = skeleton
         value["state"] = "awaiting_approval"
     cards.update(root, key, ready)
     cards.record(root, key, "plan_ready", milestones=len(skeleton), open_notes=len(open_notes), overlaps=len(warnings))
     return document
+
+
+REPLAN = (
+    "The owner read this plan before approving it and sent it back with the decisions below. Revise the plan to follow "
+    "them; they override earlier choices of the plan and the reviewer. Return the whole plan with the same schema and "
+    "empty responses.\n- ")
+
+
+def replan(root, key, profile, ticket=None):
+    """Send a plan that waits for approval back to the planner with the owner's new decisions, in a new session; the
+    card, its events and its costs stay. The plan goes through review again and waits for the owner, never auto-approved."""
+    def begin(value):
+        if value["state"] != "awaiting_approval":
+            raise FridayError("invalid_state", "Task {key} has no plan waiting for approval.", key=key)
+        fresh = value["decisions"][value["plan"].get("decisions", 0):]
+        if not fresh:
+            raise FridayError("invalid_state", "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT",
+                              key=key)
+        value["state"] = "planning"
+        return value["plan"]["revision"], fresh, value["cast"]
+    source = cards.directory(root, key) / "plan.json"
+    if not source.is_file():
+        raise FridayError("not_found", "Task {key} has no plan yet.", key=key)
+    if ticket is None:
+        ticket = cards.read(root, key).get("task_statement")
+    if ticket is None:
+        from . import tracker
+        ticket = tracker.ticket(profile, key)
+    if ticket is None:
+        raise FridayError("ticket_missing", "The profile has no tracker; pass --brief with the task statement.")
+    previous = json.loads(source.read_text(encoding="utf-8"))
+    revision, fresh, cast = cards.update(root, key, begin)
+    cards.record(root, key, "replan_started", revision=revision, decisions=[item["name"] for item in fresh])
+    instruction = REPLAN + "\n- ".join("%s: %s" % (item["name"], item.get("text_en", item["text"])) for item in fresh)
+    try:
+        return make(root, key, profile, ticket, previous=(dict(previous, responses=[]), instruction))
+    except BaseException as exc:
+        # the previous plan is still on disk and unchanged: it waits for the owner again, with the models it was made for
+        cards.update(root, key, lambda value: value.update(state="awaiting_approval", cast=cast))
+        cards.record(root, key, "replan_failed", error=str(exc) or type(exc).__name__)
+        raise
 
 
 def approve(root, key, by="owner"):

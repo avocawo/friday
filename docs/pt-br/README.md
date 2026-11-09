@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=9ddeae110640 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo em neon" width="900">
 </p>
@@ -59,6 +59,7 @@ O Friday fala dez idiomas: `friday --lang ru …`, `FRIDAY_LANG=ru` ou `friday c
 | `approve KEY [--no-run]` | Aprova o plano e inicia o pipeline em segundo plano |
 | `status [KEY] [--json]` | Mostra o que as tarefas estão fazendo e quanto foi gasto |
 | `decide KEY name "text" [--reopen M2]` | Registra uma decisão do dono; reabre apenas os marcos indicados |
+| `replan KEY [--brief F]` | Devolve ao planejador um plano que aguarda aprovação, com suas novas decisões |
 | `run KEY` / `resume KEY` / `stop KEY` | Executa neste terminal, continua, interrompe |
 | `archive KEY [--force]` | Remove o worktree e o card; a branch permanece |
 | `journal KEY` | Atualiza os diários das tarefas (Obsidian, jsonl) |

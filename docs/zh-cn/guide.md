@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=9f95975c05a4 -->
+<!-- i18n: source=docs/guide.md sha256=9198a3cbcbff -->
 # Friday 指南
 
 [English](../guide.md) · [Русский](../ru/guide.md) · **简体中文** · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -33,6 +33,8 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 只有在以下情况流水线才会停止：关卡从未通过、执行模型什么都没做、环境不可用，或者规则允许使用的模型已用尽。评审中的分歧不会让它停下。
 
 `decide KEY name "text" --reopen M2` 会记录你的决定。只有指定的里程碑以及依赖它们的里程碑会被重新打开。不带 `--reopen` 时，后续的里程碑会参考该决定。`resume` 会继续已停止或已失败的任务。`stop` 会停止正在运行的任务：代理连同其子进程一起结束。
+
+要在批准前退回计划，先用 `decide` 记录要改什么，再运行 `replan KEY`。规划模型会在新会话中修订这份等待中的计划，修订理由是该计划之后你记录的决定。修订后的计划会再次经过检查和另一家厂商模型的评审，然后等待你批准，即使设置了 `approval: auto` 也是如此。任务保留其卡片、历史和费用。`decide` 本身从不运行模型，所以你可以记录多个决定后只重新规划一次。如果重新规划失败，之前的计划仍在等待批准。对于在 Friday 开始保存任务描述之前启动的任务，可用 `--brief` 再次提供任务描述。
 
 ## 配置文件
 

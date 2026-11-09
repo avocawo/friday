@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=9f95975c05a4 -->
+<!-- i18n: source=docs/guide.md sha256=9198a3cbcbff -->
 # Guía de Friday
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · **Español** · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -33,6 +33,8 @@ El plugin enseña al agente a leer `status` y `plan`. Iniciar una tarea, aprobar
 El pipeline se detiene solo cuando el gate nunca pasó, el ejecutor no hizo nada, el entorno no está disponible o se agotaron los modelos que permiten las reglas. Los desacuerdos en la revisión no lo detienen.
 
 `decide KEY name "text" --reopen M2` registra tu decisión. Solo se reabren los hitos indicados y los que dependen de ellos. Sin `--reopen`, los hitos siguientes tienen en cuenta la decisión. `resume` continúa una tarea detenida o fallida. `stop` detiene una tarea en ejecución: los agentes terminan junto con sus procesos hijos.
+
+Para devolver un plan antes de aprobarlo, registra qué cambiar con `decide` y ejecuta `replan KEY`. El planificador revisa el plan en espera en una sesión nueva, con las decisiones que registraste después de ese plan como motivo. El plan revisado vuelve a pasar las comprobaciones y la revisión de otro proveedor y luego espera tu aprobación, incluso con `approval: auto`. La tarea conserva su tarjeta, su historial y sus costes. `decide` por sí solo nunca ejecuta un modelo, así que puedes registrar varias decisiones y replanificar una vez. Si la replanificación falla, el plan anterior sigue esperando aprobación. `--brief` vuelve a dar el enunciado de la tarea para una tarea iniciada antes de que Friday lo guardara.
 
 ## Perfil
 

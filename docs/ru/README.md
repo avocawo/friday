@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=9ddeae110640 -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — неоновый логотип" width="900">
 </p>
@@ -59,6 +59,7 @@ Friday говорит на десяти языках: `friday --lang ru …`, `F
 | `approve KEY [--no-run]` | Утверждает план и запускает конвейер в фоне |
 | `status [KEY] [--json]` | Показывает, что делают задачи и сколько потрачено |
 | `decide KEY name "text" [--reopen M2]` | Записывает решение владельца; переоткрывает только названные вехи |
+| `replan KEY [--brief F]` | Возвращает планировщику план, ждущий одобрения, с вашими новыми решениями |
 | `run KEY` / `resume KEY` / `stop KEY` | Исполняет в этом терминале, продолжает, останавливает |
 | `archive KEY [--force]` | Убирает рабочую копию и карточку; ветка остаётся |
 | `journal KEY` | Обновляет журналы задачи (Obsidian, jsonl) |

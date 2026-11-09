@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=9f95975c05a4 -->
+<!-- i18n: source=docs/guide.md sha256=9198a3cbcbff -->
 # Panduan Friday
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · **Bahasa Indonesia**
@@ -33,6 +33,8 @@ Plugin ini mengajari agen membaca `status` dan `plan`. Memulai tugas, menyetujui
 Pipeline hanya berhenti jika gate tidak pernah lulus, eksekutor tidak melakukan apa pun, lingkungan tidak tersedia, atau model yang diizinkan oleh aturan sudah habis. Perbedaan pendapat dalam review tidak menghentikannya.
 
 `decide KEY name "text" --reopen M2` mencatat keputusan Anda. Hanya milestone yang disebutkan dan milestone yang bergantung padanya yang dibuka kembali. Tanpa `--reopen`, milestone berikutnya memperhitungkan keputusan tersebut. `resume` melanjutkan tugas yang berhenti atau gagal. `stop` menghentikan tugas yang sedang berjalan: agen berakhir bersama proses anaknya.
+
+Untuk mengembalikan rencana sebelum menyetujuinya, catat apa yang perlu diubah dengan `decide` lalu jalankan `replan KEY`. Perencana merevisi rencana yang menunggu itu dalam sesi baru, dengan keputusan yang Anda catat setelah rencana itu sebagai alasannya. Rencana hasil revisi kembali melewati pemeriksaan dan review oleh vendor lain, lalu menunggu persetujuan Anda, bahkan dengan `approval: auto`. Tugas tetap menyimpan kartu, riwayat, dan biayanya. `decide` sendiri tidak pernah menjalankan model, jadi Anda bisa mencatat beberapa keputusan lalu merencanakan ulang sekali. Jika perencanaan ulang gagal, rencana sebelumnya tetap menunggu persetujuan. `--brief` memberikan lagi deskripsi tugas untuk tugas yang dimulai sebelum Friday menyimpannya.
 
 ## Profil
 
