@@ -328,15 +328,10 @@ def plan_review(root, key, profile, prompt):
         cards.record(root, key, "cast_note", note=note or "plan-review: replaced after its quota ran out")
 
 
-def ticket_path(root, key):
-    return cards.directory(root, key) / "ticket.md"
-
-
 def make(root, key, profile, ticket, previous=None):
     """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval.
     previous is (plan, instruction) when the owner sends a waiting plan back: the planner revises it in a new session."""
-    card = cards.read(root, key)
-    ticket_path(root, key).write_text(ticket_text(ticket), encoding="utf-8")  # a re-plan reads the same statement
+    card = cards.update(root, key, lambda value: value.update(task_statement=ticket_text(ticket)))  # a re-plan reads it again
     limits = profile.get("limits")
     def rules(docs, reading=""):
         return PLAN_RULES.format(**dict(LIMITS, **(limits or {}), docs=docs, reading=reading))
@@ -418,8 +413,8 @@ def replan(root, key, profile, ticket=None):
     source = cards.directory(root, key) / "plan.json"
     if not source.is_file():
         raise FridayError("not_found", "Task {key} has no plan yet.", key=key)
-    if ticket is None and ticket_path(root, key).is_file():
-        ticket = ticket_path(root, key).read_text(encoding="utf-8")
+    if ticket is None:
+        ticket = cards.read(root, key).get("task_statement")
     if ticket is None:
         from . import tracker
         ticket = tracker.ticket(profile, key)

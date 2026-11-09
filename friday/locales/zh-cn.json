@@ -418,5 +418,6 @@
  "The plan waits for approval. To revise it with your decisions: friday replan {key}": "计划正在等待批准。要按你的决定修订它：friday replan {key}",
  "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "任务 {key} 没有新的决定；请先记录一个：friday decide {key} NAME TEXT",
  "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "计划 {revision} 已连同负责人的决定退回给规划模型：{decisions}。",
- "Re-planning failed, the previous plan still waits for approval: {error}": "重新规划失败，之前的计划仍在等待批准：{error}"
+ "Re-planning failed, the previous plan still waits for approval: {error}": "重新规划失败，之前的计划仍在等待批准：{error}",
+ "Branch {branch} already exists with {count} commits that are not in origin/{base}. To keep that work, rename the branch (git branch -m {branch} NEW); to drop it, delete it (git branch -D {branch}); then run start again.": "分支 {branch} 已存在，其中有 {count} 个不在 origin/{base} 中的提交。要保留这些工作，请重命名该分支（git branch -m {branch} NEW）；要放弃它们，请删除该分支（git branch -D {branch}）；然后再次运行 start。"
 }

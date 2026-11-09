@@ -418,5 +418,6 @@
  "The plan waits for approval. To revise it with your decisions: friday replan {key}": "計画は承認待ちです。決定に沿って作り直すには: friday replan {key}",
  "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "タスク {key} に新しい決定がありません。先に記録してください: friday decide {key} NAME TEXT",
  "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "計画 {revision} をオーナーの決定とともにプランナーへ差し戻しました: {decisions}。",
- "Re-planning failed, the previous plan still waits for approval: {error}": "計画のやり直しに失敗しました。前の計画が引き続き承認を待っています: {error}"
+ "Re-planning failed, the previous plan still waits for approval: {error}": "計画のやり直しに失敗しました。前の計画が引き続き承認を待っています: {error}",
+ "Branch {branch} already exists with {count} commits that are not in origin/{base}. To keep that work, rename the branch (git branch -m {branch} NEW); to drop it, delete it (git branch -D {branch}); then run start again.": "ブランチ {branch} はすでに存在し、origin/{base} にないコミットが {count} 件あります。その作業を残すにはブランチ名を変更し (git branch -m {branch} NEW)、捨てるにはブランチを削除してから (git branch -D {branch})、もう一度 start を実行してください。"
 }

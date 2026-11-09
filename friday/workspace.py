@@ -27,6 +27,20 @@ def registered(repo, target, branch):
     return any("worktree " + str(target) in record and "branch refs/heads/" + branch in record for record in records)
 
 
+def kept(repo, branch, base, base_commit):
+    """Whether the task branch is left from an archived start; it is cut again only when it holds no work of its own."""
+    try:
+        git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch)
+    except FridayError:
+        return False
+    ahead = int(git(repo, "rev-list", "--count", base_commit + "..refs/heads/" + branch))
+    if ahead:
+        raise FridayError("branch_exists", "Branch {branch} already exists with {count} commits that are not in origin/{base}. "
+                          "To keep that work, rename the branch (git branch -m {branch} NEW); to drop it, delete it "
+                          "(git branch -D {branch}); then run start again.", branch=branch, count=ahead, base=base)
+    return True
+
+
 def prepare(profile, worktree):
     """Run the profile's worktree_setup commands (dependencies and the like) in a worktree new to this task."""
     for command in profile.get("worktree_setup") or []:
@@ -65,7 +79,7 @@ def create(root, key, profile):
             git(repo, "fetch", "--no-tags", "origin", base)
             base_commit = git(repo, "rev-parse", "FETCH_HEAD^{commit}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            git(repo, "worktree", "add", "-b", branch, str(target), base_commit)
+            git(repo, "worktree", "add", "-B" if kept(repo, branch, base, base_commit) else "-b", branch, str(target), base_commit)
     prepare(profile, str(target))  # also on a rerun after a failed setup, so commands must be repeatable
     cards.update(root, key, lambda value: value.update(branch=branch, worktree=str(target), base=base_commit))
     cards.record(root, key, "worktree_created", branch=branch, worktree=str(target), base=base_commit)

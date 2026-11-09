@@ -420,5 +420,6 @@
  "The plan waits for approval. To revise it with your decisions: friday replan {key}": "El plan espera aprobación. Para revisarlo con tus decisiones: friday replan {key}",
  "Task {key} has no new decisions; record one first: friday decide {key} NAME TEXT": "La tarea {key} no tiene decisiones nuevas; registra una primero: friday decide {key} NAME TEXT",
  "Plan {revision} sent back to the planner with the owner's decisions: {decisions}.": "Plan {revision} devuelto al planificador con las decisiones del responsable: {decisions}.",
- "Re-planning failed, the previous plan still waits for approval: {error}": "La replanificación falló; el plan anterior sigue esperando aprobación: {error}"
+ "Re-planning failed, the previous plan still waits for approval: {error}": "La replanificación falló; el plan anterior sigue esperando aprobación: {error}",
+ "Branch {branch} already exists with {count} commits that are not in origin/{base}. To keep that work, rename the branch (git branch -m {branch} NEW); to drop it, delete it (git branch -D {branch}); then run start again.": "La rama {branch} ya existe con {count} commits que no están en origin/{base}. Para conservar ese trabajo, renombra la rama (git branch -m {branch} NEW); para descartarlo, bórrala (git branch -D {branch}); después vuelve a ejecutar start."
 }

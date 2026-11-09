@@ -50,6 +50,24 @@ class TaskCommandTests(unittest.TestCase):
         card.create(self.root, "T-1", str(self.profile_path))  # the key can start again
         self.assertEqual(resources.port(self.root, "T-1"), port)
 
+    def test_start_after_archive_cuts_an_empty_branch_again_and_refuses_one_with_work(self):
+        tasks.archive(self.root, "T-1", self.profile)
+        (self.repo / "app.py").write_text("print('base moved')\n")
+        git("commit", "-qam", "base moved", cwd=self.repo)
+        git("push", "-q", "origin", "HEAD:main", cwd=self.repo)
+        card.create(self.root, "T-1", str(self.profile_path))
+        worktree = workspace.create(self.root, "T-1", self.profile)  # the kept branch had nothing of its own
+        self.assertEqual(git("rev-parse", "HEAD", cwd=worktree), git("rev-parse", "origin/main", cwd=self.repo))
+        (Path(worktree) / "app.py").write_text("work\n")
+        git("commit", "-qam", "work", cwd=worktree)
+        tasks.archive(self.root, "T-1", self.profile)
+        card.create(self.root, "T-1", str(self.profile_path))
+        with self.assertRaises(FridayError) as error:
+            workspace.create(self.root, "T-1", self.profile)
+        self.assertEqual(error.exception.code, "branch_exists")
+        self.assertIn("Branch friday/T-1 already exists with 1 commits", str(error.exception))
+        self.assertIn("work", git("log", "-1", "--format=%s", "friday/T-1", cwd=self.repo))  # the work is untouched
+
     def test_stop_signals_the_running_process_and_refuses_otherwise(self):
         with self.assertRaises(FridayError):
             tasks.stop(self.root, "T-1")
