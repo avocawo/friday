@@ -51,6 +51,15 @@ class ProfileTests(unittest.TestCase):
                     profile.load(path)
                 self.assertEqual(error.exception.code, "invalid_profile")
 
+    def test_project_lessons_require_non_empty_strings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            for value in ("lesson", [""], [" "], [1]):
+                path.write_text(json.dumps({"name": "test", "repository": ".", "project_lessons": value}))
+                with self.assertRaises(FridayError) as error:
+                    profile.load(path)
+                self.assertEqual(error.exception.code, "invalid_profile")
+
     def test_rules_docs_stay_inside_the_repository(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "profile.json"

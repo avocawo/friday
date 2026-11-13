@@ -66,7 +66,8 @@ READ_DOCS = (
 USE_DIGEST = (
     "The project's rules digest below was made from its agent instructions and documents. Put the rules that apply to "
     "this task into rules, each ending with its source path. Do not read those documents whole: when the digest is not "
-    "enough, Grep the document the map names for the section you need. Executors do not reread those documents.\n")
+    "enough, Grep the document the map names for the section you need. Executors and reviewers get the rules you choose "
+    "and the document map, so end every rule with the document and section it comes from.\n")
 PLAN_RULES = (
     "Write brief, steps, criteria, goal, title, summary, rules, assumptions and questions in the task's language; in "
     "Russian call a milestone «веха» and a stage «этап».\n"
@@ -418,6 +419,7 @@ def make(root, key, profile, ticket, use_design=True):
         cards.record(root, key, "cast_note", note=note)
     worktree = card["worktree"]
     digest = rules_digest(root, key, profile, worktree)
+    cards.update(root, key, lambda value: value.update(doc_map=digest["documents"] if digest else []))
     repo_map = repomap.make(root, key, profile, worktree)
     project = ("\n\n" + digest_text(digest) if digest else "") + ("\n\n" + repo_map if repo_map else "")
     prompt = PIPELINE + "\n\n" + rules(USE_DIGEST if digest else READ_DOCS, USE_MAP if repo_map else "") + task + project

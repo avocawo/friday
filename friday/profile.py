@@ -104,6 +104,9 @@ def load(path):
     policy = profile.get("engineering_policy", [])
     if not isinstance(policy, list) or any(not isinstance(item, str) or not item.strip() for item in policy):
         raise FridayError("invalid_profile", "engineering_policy must be an array of non-empty instructions.")
+    lessons = profile.get("project_lessons", [])
+    if not isinstance(lessons, list) or any(not isinstance(item, str) or not item.strip() for item in lessons):
+        raise FridayError("invalid_profile", "project_lessons must be an array of non-empty instructions.")
     docs = profile.get("rules_docs", [])
     if not isinstance(docs, list) or any(not isinstance(item, str) or not item or item.startswith("/") or ".." in item.split("/")
                                          for item in docs):

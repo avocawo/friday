@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import card as cards
 from . import design, gate, models, resources, stories
+from . import guidance as project_guidance
 from .errors import FridayError
 
 ADAPTERS = Path(__file__).resolve().parent.parent / "adapters"
@@ -25,9 +26,10 @@ BROWSER_RULES = (
     "not infer a defect. Report a blocking finding only for behaviour you saw fail. Write in the task's language.")
 FINAL_RULES = (
     "You do the final review of a whole task before its draft merge request. You get the plan summary, every milestone "
-    "with its criteria, the project rules digest and the diff of the whole task against its base. Look for what milestone "
-    "reviews miss: inconsistencies between milestones, criteria that no longer hold after later changes, dead code left "
-    "behind, missing tests across the feature, breaches of project rules. Judge every criterion. Report every actionable "
+    "with its criteria, the project rules the plan chose, the project guidance and the diff of the whole task against its "
+    "base. You may read the repository: check the diff against the project document sections and the base revision's "
+    "precedents its decisions touch. Look for what milestone reviews miss: inconsistencies between milestones, criteria "
+    "that no longer hold after later changes, dead code left behind, missing tests across the feature, breaches of project rules. Judge every criterion. Report every actionable "
     "defect in one pass: blocking for wrong behaviour or broken criteria, minor otherwise. verdict is pass when no blocking "
     "finding remains. Do not edit files. Write in the task's language.")
 BLIND_RULES = (
@@ -139,7 +141,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
                        **({"design_spec": document["design"]} if document.get("design") else {})}, ensure_ascii=False, indent=2)
     ui = any(item["ui"] for item in document["milestones"])
     guidance = design.guidance(profile, "final-review", document, ui) if "final-review" in roles else ""
-    prompts = {"final-review": FINAL_RULES + guidance + "\n\n" + full +
+    prompts = {"final-review": FINAL_RULES + guidance + project_guidance.text(profile, card) + "\n\n" + full +
                "\n\nDiff of the whole task:\n" + diff,
                "blind-code": BLIND_RULES + "\n\nOriginal task statement:\n" + card.get("task_statement", "") +
                "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +

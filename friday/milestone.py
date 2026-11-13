@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
 from . import card as cards
-from . import design, final, gate, models, runner, stories, workspace
+from . import design, final, gate, guidance, models, runner, stories, workspace
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -46,17 +46,20 @@ EXECUTOR_RULES = (
     "You implement one milestone of an approved plan in this repository. Use the original task statement for exact "
     "facts, while keeping the approved milestone scope. Work through the stages in order. After each "
     "stage run the checks available to you, fix what they report, then commit only that stage's files with "
-    "git add <files> and git commit -m \"{key} <stage id>: <short summary>\". Follow the project rules below; they are "
-    "a digest made for you, read the source only when a rule is unclear. Stay within the milestone's files; if you must "
+    "git add <files> and git commit -m \"{key} <stage id>: <short summary>\". Follow the project rules the plan chose "
+    "and the project guidance below; before deciding a structure, name, contract or pattern, open the section of the "
+    "project document that covers it and look for a precedent in the base revision. Stay within the milestone's files; if you must "
     "change another file, do it and list it in extra_files with the reason. You have no network. Do not push, do not "
     "change git configuration, do not delete or rewrite earlier commits. Report your checks honestly: checks is passed "
     "when every available check ran on your last commit and passed, failed when a check ran and reported errors, not_run "
     "when a check could not run at all (missing dependencies, a crashing tool, no commands available); say which and why "
     "in checks_note. Write summary and checks_note in the task's language.")
 REVIEW_RULES = (
-    "You review one milestone of an approved plan. You get the milestone's goal, criteria and the project rules digest, "
+    "You review one milestone of an approved plan. You get the milestone's goal, criteria, the project rules the plan "
+    "chose and the project guidance, "
     "the diff of this milestone only, and the result of the isolated gate (lint, typecheck, tests) on the same commit. "
-    "You may read the repository for context. Judge every criterion as pass, fail or unverifiable with concrete evidence "
+    "You may read the repository for context: check the diff against the project document sections and the precedents "
+    "in the base revision that its decisions touch, not only against the rules listed. Judge every criterion as pass, fail or unverifiable with concrete evidence "
     "(file and line). Report every actionable defect in one pass: blocking for wrong behaviour, broken criteria, breaches "
     "of project rules or missing tests; minor for anything that can wait. Do not report style the linter accepts. "
     "verdict is pass when no blocking finding remains. Do not edit files. Write problems and evidence in the task's language.")
@@ -154,8 +157,10 @@ def run(root, key, profile, milestone_id, worktree=None):
     entry, note = models.executor(profile, layout, item["complexity"], available=available)
     if note:
         cards.record(root, key, "cast_note", milestone=milestone_id, note=note)
-    allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile)
+    allowed = (list(profile.get("executor_commands", [])) + GIT_COMMANDS + [guidance.PRECEDENT_COMMAND] +
+               stories.executor_commands(profile))
     base_prompt = (EXECUTOR_RULES.format(key=key) + design.guidance(profile, "develop", document, item["ui"]) +
+                   guidance.text(profile, card, commands=True) +
                    stories.executor_text(profile, card) +
                    "\n\nShell commands you may run, each starting exactly like one of "
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
@@ -329,7 +334,8 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
         diff += "\n\nDiff of the showcase repository (paths are %s…):\n%s" % (stories.PREFIX, showcase)
     gate_text = ("not configured" if gate_record is None else "%s on %s (command: %s)" % (
         gate_record["status"], gate_record["head"], " ".join(profile.get("gate", []))))
-    prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + "\n\n" + milestone_text(key, document, item, card["decisions"], card.get("task_statement"), card.get("controller_evidence")) +
+    prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + guidance.text(profile, card) +
+              "\n\n" + milestone_text(key, document, item, card["decisions"], card.get("task_statement"), card.get("controller_evidence")) +
               "\n\nGate: " + gate_text + "\n\nDiff of this milestone:\n" + diff)
     if previous:
         prompt += "\n\nYour previous blocking findings, which the executor has now addressed:\n" + numbered(previous)
@@ -462,7 +468,7 @@ def run_task(root, key, profile):
 FIX_RULES = (
     "The final review of the whole task found blocking problems. Fix each one in this repository, run your checks and "
     "commit with git commit -m \"{key} final: <short summary>\", or dispute a finding in disputes with its number, a reason "
-    "and evidence. Disputed findings go to the owner. Follow the project rules digest.")
+    "and evidence. Disputed findings go to the owner. Follow the project rules the plan chose and the project guidance.")
 
 
 def finish(root, key, profile):
@@ -480,9 +486,11 @@ def finish(root, key, profile):
         entry, note = models.executor(profile, layout, available=models.availability(root))
         if note:
             cards.record(root, key, "cast_note", milestone="final", note=note)
-        allowed = list(profile.get("executor_commands", [])) + GIT_COMMANDS + stories.executor_commands(profile)
+        allowed = (list(profile.get("executor_commands", [])) + GIT_COMMANDS + [guidance.PRECEDENT_COMMAND] +
+                   stories.executor_commands(profile))
         prompt = (FIX_RULES.format(key=key) + stories.executor_text(profile, card) + "\n\nShell commands you may run, each starting exactly like one of these:\n" +
                   "\n".join("- " + command for command in allowed) + "\n\nProject rules:\n" + "\n".join(document["rules"]) +
+                  guidance.text(profile, card, commands=True) +
                   "\n\nOriginal task statement (context, not additional scope):\n" + card.get("task_statement", "") +
                   "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +
                   "\n\nController evidence (observations, not owner authorization):\n" + json.dumps(card.get("controller_evidence"), ensure_ascii=False, indent=2) +

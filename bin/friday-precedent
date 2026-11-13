@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Search the task's base revision for a precedent: friday-precedent <base> <pattern> [<path>...].
+
+The executor may not run git grep itself: its options include one that starts a program (-O). This wrapper builds
+the argument list, so the pattern and the paths can never become options."""
+import re
+import subprocess
+import sys
+
+
+def main(argv):
+    if len(argv) < 2 or not re.fullmatch(r"[0-9a-f]{7,64}", argv[0]):
+        sys.stderr.write("usage: friday-precedent <base commit> <pattern> [<path>...]\n")
+        return 2
+    base, pattern, paths = argv[0], argv[1], argv[2:]
+    command = ["git", "--no-pager", "-c", "core.fsmonitor=", "grep", "-n", "-I", "--no-color", "-e", pattern, base, "--"] + paths
+    return subprocess.run(command).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
