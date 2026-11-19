@@ -181,6 +181,19 @@ class FinalTests(unittest.TestCase):
         final.final_review(self.root, "T-1", self.profile, review, changed_schema)
         self.assertEqual(len(calls), 12)
 
+    def test_finalReview_projectToolset_readsTheProjectDocumentMapButBlindCheckDoesNot(self):
+        self.commit_work()
+        prompts = {}
+        def review(root, key, profile, role, entry, worktree, prompt, *args):
+            prompts[role] = prompt
+            return runner.Result('ok', structured=PASS)
+        final.final_review(self.root, 'T-1', self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertNotIn(final.PROJECT_DOCUMENTS, prompts['final-review'])  # the built-in toolset passes its own document map
+        self.profile['toolset'] = {'plan': 'project', 'execute': 'project'}
+        final.final_review(self.root, 'T-1', self.profile, review, milestone.REVIEW_SCHEMA)
+        self.assertIn(final.PROJECT_DOCUMENTS, prompts['final-review'])
+        self.assertNotIn(final.PROJECT_DOCUMENTS, prompts['blind-code'])  # the blind check stays blind
+
     def test_owner_decisions_reach_each_independent_final_reviewer(self):
         self.commit_work()
         decision = 'Use the approved runtime choice instead of the original literal setting.'

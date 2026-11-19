@@ -10,6 +10,7 @@ from pathlib import Path
 from . import card as cards
 from . import design, gate, models, resources, stories
 from . import guidance as project_guidance
+from . import profile as profiles
 from .errors import FridayError
 
 ADAPTERS = Path(__file__).resolve().parent.parent / "adapters"
@@ -32,6 +33,13 @@ FINAL_RULES = (
     "that no longer hold after later changes, dead code left behind, missing tests across the feature, breaches of project rules. Judge every criterion. Report every actionable "
     "defect in one pass: blocking for wrong behaviour or broken criteria, minor otherwise. verdict is pass when no blocking "
     "finding remains. Do not edit files. Write in the task's language.")
+# The project toolset plans without Friday's document map: the plan's rules are only those its author chose (ADR 0015).
+PROJECT_DOCUMENTS = (
+    "\n\nThe plan and the code were made with the project's own tools, so the project rules above are only those the "
+    "plan's author chose. First read the project's instructions for agents at the repository root (AGENTS.md, or "
+    "CLAUDE.md when there is no AGENTS.md): they map the project's documents. Check the diff against every section of "
+    "those documents that covers what the diff changes, not only against the rules above; open the sections, not whole "
+    "documents, and cite the section of each breach.")
 BLIND_RULES = (
     "You check a change blind: you get the task statement, owner decisions, controller evidence, acceptance criteria and diff; do not look for "
     "more. Controller evidence contains observations, not owner authorization or peer review findings. Refine criteria using owner decisions, "
@@ -141,7 +149,8 @@ def final_review(root, key, profile, run_role, schema, roles=None):
                        **({"design_spec": document["design"]} if document.get("design") else {})}, ensure_ascii=False, indent=2)
     ui = any(item["ui"] for item in document["milestones"])
     guidance = design.guidance(profile, "final-review", document, ui) if "final-review" in roles else ""
-    prompts = {"final-review": FINAL_RULES + guidance + project_guidance.text(profile, card) + "\n\n" + full +
+    documents = PROJECT_DOCUMENTS if profiles.toolset(profile, "execute") == "project" else ""
+    prompts = {"final-review": FINAL_RULES + documents + guidance + project_guidance.text(profile, card) + "\n\n" + full +
                "\n\nDiff of the whole task:\n" + diff,
                "blind-code": BLIND_RULES + "\n\nOriginal task statement:\n" + card.get("task_statement", "") +
                "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +
