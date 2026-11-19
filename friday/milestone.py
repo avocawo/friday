@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
 from . import card as cards
-from . import design, final, gate, guidance, models, runner, stories, workspace
+from . import design, final, gate, guidance, models, plan, runner, steps, stories, workspace
+from . import profile as profiles
 from .errors import FridayError
 
 GIT_COMMANDS = ["git add", "git commit", "git status", "git diff", "git log", "git restore"]
@@ -228,8 +229,9 @@ def run(root, key, profile, milestone_id, worktree=None):
                                          on_wait=lambda name: cards.waiting(root, key, name, milestone_id))
                 cards.stop_waiting(root, key, milestone_id)
                 cards.record(root, key, "gate", milestone=milestone_id, status=gate_record["status"], head=gate_record["head"], log=gate_record["log"])
-                if gate_record["status"] == "environment_unavailable":
+                if gate_record["status"] in ("environment_unavailable", "image_stale"):
                     set_state(root, key, milestone_id, state="blocked")
+                    stale_image(profile, key, gate_record)
                     raise FridayError("environment_unavailable", "The gate environment is unavailable; see " + gate_record["log"])
             elif checks == "not_run" and profile.get("executor_commands"):
                 # Nothing else checks this commit: a broken environment blocks the milestone instead of passing it unchecked.
@@ -404,13 +406,137 @@ def task_unverified(card):
     return [{"milestone": item["id"], "reasons": item["unverified"]} for item in card["milestones"] if item.get("unverified")]
 
 
+EXECUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["summary", "questions"],
+                  "properties": {"summary": {"type": "string"}, "questions": {"type": "array", "items": {"type": "string"}}}}
+EXECUTE_RULES = (
+    "This session runs inside Friday with no human at the keyboard. Where your process would ask the user and wait, end "
+    "the session instead and put the question in questions, in the task's language; the owner answers and this session "
+    "continues. Commit every stage with a subject that starts with its id from the list below and a colon, for example "
+    "\"S1: …\"; a fix of a stage starts with the same id. Do not push and do not open a merge request: after the session "
+    "Friday runs the gate, checks the size of every stage, accepts the interface in the browser and delivers. Put what "
+    "was done in summary.\n\nStages:\n")
+
+
+def project_run(root, key, profile, answer=None):
+    """Execution by the project's own command (ADR 0015); Friday checks the result. Returns the owner's open questions."""
+    card = cards.read(root, key)
+    document = load_plan(root, key)
+    worktree = card["worktree"]
+    answer = answer if answer is not None else card.get("pending_answer")
+    entry, note = models.executor(profile, card["cast"], available=models.availability(root))
+    if note:
+        cards.record(root, key, "cast_note", note=note)
+    resume = card.get("execute_session")
+    stopped = card.get("questions") or []
+    if resume and not stopped and not answer and card.get("execute_summary") is not None:
+        # The session finished and nothing asks it for more: the run broke later, on the environment, so only the
+        # checks after the session repeat. Waking the session would only re-read its whole context.
+        value = {"summary": card["execute_summary"], "questions": []}
+        cards.record(root, key, "execute_session_kept", session=resume)
+    else:
+        if resume:
+            # The session continues: it gets what stopped it — its own question or Friday's checks — and the owner's answer.
+            prompt = (("What stopped the run:\n" + "\n".join("- " + item for item in stopped) + "\n\n" if stopped else "") +
+                      ("The owner answered:\n" + answer + "\n\n" if answer else "") +
+                      "Continue the run; the stages committed on this branch are done.")
+        else:
+            stages = "\n".join("- %s (%s %s): %s" % (stage["id"], item["id"], item["title"], stage["brief"])
+                               for item in document["milestones"] for stage in item["stages"])
+            prompt = profile["project"]["execute_command"] + "\n\n" + EXECUTE_RULES + stages
+        value = plan.project_session(root, key, profile, prompt, resume=resume, role="develop", entry=entry,
+                                     schema=EXECUTE_SCHEMA, session_field="execute_session").structured
+        summary = None if value["questions"] else value["summary"]
+        cards.update(root, key, lambda card: (card.pop("pending_answer", None), card.update(execute_summary=summary)))
+    if value["questions"]:
+        return value["questions"]
+    if git(worktree, "status", "--porcelain").strip():
+        return ["Сессия оставила незакоммиченные изменения в %s. Закоммитить их по этапам или отбросить?" % worktree]
+    problems = project_size(worktree, card["base"], document, profile.get("limits"))
+    if problems:
+        cards.record(root, key, "execution_size", problems=problems)
+        return problems
+    record = None
+    if profile.get("gate"):
+        record = gate.check(root, profile, worktree, card["base"], cards.directory(root, key) / "gates" / "execute.log",
+                            on_wait=lambda name: cards.waiting(root, key, name, "execute"))
+        cards.stop_waiting(root, key, "execute")
+        cards.record(root, key, "gate", milestone="execute", status=record["status"], head=record["head"], log=record["log"])
+        stale_image(profile, key, record)
+        if record["status"] == "environment_unavailable":
+            raise FridayError("environment_unavailable", "The gate environment is unavailable; see " + record["log"])
+        if record["status"] != "passed":
+            return ["Гейт не проходит после сессии исполнения, лог: %s. Продолжить сессию с этим логом?" % record["log"]]
+    blocking = []
+    for item in document["milestones"]:
+        set_state(root, key, item["id"], checks="passed")
+        if item["ui"]:
+            blocking += [dict(finding, milestone=item["id"]) for finding in
+                         accept_in_browser(root, key, profile, card["cast"], entry, worktree, item)]
+    if blocking:
+        return ["Браузерная приёмка нашла блокирующее:\n" + numbered(blocking)]
+    for item in document["milestones"]:
+        close_project(root, key, worktree, card["base"], item, record)
+        set_state(root, key, item["id"], summary=value["summary"], executor=entry["model"])
+    return []
+
+
+def stale_image(profile, key, record):
+    """The gate image was built for another lockfile: the task waits for the owner's build step (ADR 0014)."""
+    if record["status"] != "image_stale":
+        return
+    name = profile.get("gate_image_step")
+    action = ("соберите его: %s, затем friday resume %s" % (steps.hint(profile, name), key) if name else
+              "шага сборки образа в профиле нет (gate_image_step); соберите образ и выполните friday resume %s" % key)
+    raise FridayError("image_stale", "Образ гейта собран под другой lock-файл (лог: %s); %s." % (record["log"], action))
+
+
+def stage_commits(worktree, base, stage_id):
+    return [line.split(" ", 1)[0] for line in git(worktree, "log", "--format=%H %s", base + "..HEAD").splitlines()
+            if (" " + stage_id + ":") in (" " + line.split(" ", 1)[1] if " " in line else "")]
+
+
+def project_size(worktree, base, document, limits=None):
+    """Stages without a commit and stages over the plan's limits, measured on their commits (ADR 0015)."""
+    limits = dict(plan.LIMITS, **(limits or {}))
+    problems = []
+    for item in document["milestones"]:
+        for stage in item["stages"]:
+            commits = stage_commits(worktree, base, stage["id"])
+            if not commits:
+                problems.append("Этап %s без коммита с «%s:» в теме." % (stage["id"], stage["id"]))
+                continue
+            files, added = set(), 0
+            for sha in commits:
+                for line in git(worktree, "show", "--numstat", "--format=", sha).splitlines():
+                    parts = line.split("\t")
+                    if len(parts) == 3:
+                        files.add(parts[2])
+                        added += int(parts[0]) if parts[0].isdigit() else 0
+            if len(files) > limits["stage_files"] or added > limits["stage_lines"]:
+                problems.append("Этап %s: %d файлов и %d добавленных строк при лимите %d и %d." % (
+                    stage["id"], len(files), added, limits["stage_files"], limits["stage_lines"]))
+    return problems
+
+
+def close_project(root, key, worktree, base, item, gate_record):
+    stages = [{"id": stage["id"], "commit": (stage_commits(worktree, base, stage["id"]) or [None])[0]} for stage in item["stages"]]
+    changed = {name for stage in item["stages"] for sha in stage_commits(worktree, base, stage["id"])
+               for name in git(worktree, "show", "--name-only", "--format=", sha).splitlines() if name}
+    reasons = unverified(item, next(m for m in cards.read(root, key)["milestones"] if m["id"] == item["id"]), gate_record)
+    set_state(root, key, item["id"], state="done", stages=stages, head=git(worktree, "rev-parse", "HEAD").strip(),
+              outside_files=sorted(changed - set(item["files"])), minor_findings=[], verified=not reasons, unverified=reasons)
+    if reasons:
+        cards.record(root, key, "milestone_unverified", milestone=item["id"], reasons=reasons)
+    cards.record(root, key, "milestone_done", milestone=item["id"], commits=sum(1 for s in stages if s["commit"]))
+
+
 def ready(card):
     done = {item["id"] for item in card["milestones"] if item["state"] == "done"}
     return [item["id"] for item in card["milestones"] if item["state"] in ("pending", "reopened")
             and set(item["depends_on"]) <= done]
 
 
-def run_task(root, key, profile):
+def run_task(root, key, profile, answer=None):
     """Run every milestone whose dependencies are done, in plan order, until none is left."""
     card = cards.read(root, key)
     if card["state"] not in ("approved", "running", "stopped") or not card["plan"]["approved"]:
@@ -431,6 +557,14 @@ def run_task(root, key, profile):
     try:
         runner.CANCEL.clear()
         document = load_plan(root, key)
+        if profiles.toolset(profile, "execute") == "project":
+            questions = project_run(root, key, profile, answer)
+            if questions:
+                cards.update(root, key, lambda value: value.update(state="stopped", questions=questions))
+                cards.record(root, key, "questions", questions=questions)
+                return {"completed": [], "left": [item["id"] for item in cards.read(root, key)["milestones"]
+                                                  if item["state"] != "done"], "delivery": None, "questions": questions}
+            cards.update(root, key, lambda value: value.pop("questions", None))
         while True:
             pending = ready(cards.read(root, key))
             if not pending:
@@ -440,8 +574,13 @@ def run_task(root, key, profile):
                 completed.extend(run_parallel(root, key, profile, group))
             else:
                 completed.append(run(root, key, profile, pending[0]))
-    except FridayError:
-        cards.update(root, key, lambda value: value.update(state="failed"))
+    except FridayError as error:
+        if error.code == "image_stale":
+            # The owner's step, not a question for the session: resume repeats the checks without waking it.
+            cards.update(root, key, lambda value: value.update(state="stopped", owner_step=str(error)))
+            cards.record(root, key, "owner_step", text=str(error))
+        else:
+            cards.update(root, key, lambda value: value.update(state="failed"))
         raise
     except BaseException:
         runner.CANCEL.set()
@@ -638,28 +777,33 @@ def integrate(root, key, profile, name, main, lane):
 
 
 def decide(root, key, name, text, reopen=()):
-    """Record an owner decision; only the milestones the owner names (and those after them) are reopened."""
+    """Record an owner decision; of the milestones the owner names (and those after them) the done ones are reopened.
+    Returns the reopened milestones: one that has not run yet only gets the decision in its context."""
     def change(value):
         ids = {item["id"] for item in value["milestones"]}
         unknown = set(reopen) - ids
         if unknown:
             raise FridayError("not_found", "Unknown milestones: " + ", ".join(sorted(unknown)))
-        value["decisions"].append({"name": name, "text": text, "reopen": list(reopen)})
+        decision = {"name": name, "text": text, "reopen": list(reopen)}
+        if decision not in value["decisions"][-1:]:  # decide repeated after a failed plan revision
+            value["decisions"].append(decision)
         affected = set(reopen)
         for item in value["milestones"]:
             if set(item["depends_on"]) & affected and item["state"] == "done":
                 affected.add(item["id"])
+        reopened = []
         for item in value["milestones"]:
             if item["id"] in affected and item["state"] == "done":
                 item["state"] = "reopened"
+                reopened.append(item["id"])
                 for field in ("verified", "unverified", "browser", "checks", "checks_note"):
                     item.pop(field, None)
-        if affected and value["state"] == "done":
+        if reopened and value["state"] == "done":
             value["state"] = "stopped"  # reopened work makes the task runnable again
-        return sorted(affected)
-    affected = cards.update(root, key, change)
-    cards.record(root, key, "decision", name=name, reopened=affected)
-    return affected
+        return reopened
+    reopened = cards.update(root, key, change)
+    cards.record(root, key, "decision", name=name, reopened=reopened)
+    return reopened
 
 
 def resume(root, key, profile):
@@ -671,6 +815,7 @@ def resume(root, key, profile):
             if item["state"] in ("failed", "blocked", "running"):
                 item["state"] = "pending"
         value["state"] = "stopped"
+        value.pop("owner_step", None)
     cards.update(root, key, change)
     cards.record(root, key, "resumed")
     return run_task(root, key, profile)

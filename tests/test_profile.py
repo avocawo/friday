@@ -109,6 +109,49 @@ class ProfileTests(unittest.TestCase):
                         profile.load(path)
                     self.assertEqual(error.exception.code, "invalid_profile")
 
+    def test_project_toolset_needs_the_project_commands_of_its_phases(self):
+        valid = {"plan_command": "/plan {statement}", "plan_file": "PLAN.md", "execute_command": "/run",
+                 "stage_argument": "only {stages}", "session_env": ["SSH_AUTH_SOCK"], "disallowed_tools": ["mcp__browser"],
+                 "timeouts": {"idle": 1200, "tool": 1800, "total": 7200}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            invalid = [
+                {"toolset": value} for value in ("project", [], {"review": "project"}, {"plan": "codex"})
+            ] + [
+                {"toolset": {"plan": "project"}},
+                {"toolset": {"execute": "project"}, "project": dict(valid, execute_command=None)},
+            ] + [
+                {"toolset": {"plan": "project"}, "project": dict(valid, **{name: value})} for name, value in (
+                    ("plan_command", "/plan"), ("plan_command", ""), ("stage_argument", "only"), ("plan_file", "/abs.md"),
+                    ("plan_file", "../up.md"), ("session_env", ["NOT A NAME"]), ("session_env", "SSH_AUTH_SOCK"),
+                    ("disallowed_tools", [""]), ("timeouts", {"idle": 0}), ("timeouts", {"wait": 10}))
+            ]
+            for extra in invalid:
+                with self.subTest(extra=extra):
+                    path.write_text(json.dumps(dict({"name": "test", "repository": "."}, **extra)))
+                    with self.assertRaises(FridayError) as error:
+                        profile.load(path)
+                    self.assertEqual(error.exception.code, "invalid_profile")
+            path.write_text(json.dumps({"name": "test", "repository": ".", "toolset": {"plan": "project", "execute": "friday"},
+                                        "project": {"plan_command": "/plan {statement}", "plan_file": "PLAN.md"}}))
+            selected = profile.load(path)
+            self.assertEqual((profile.toolset(selected, "plan"), profile.toolset(selected, "execute")), ("project", "friday"))
+            path.write_text(json.dumps({"name": "test", "repository": "."}))
+            self.assertEqual(profile.toolset(profile.load(path), "plan"), "friday")
+
+    def test_load_gateImageStep_mustNameAProfileStep(self):
+        build = {"scope": "profile", "run": ["build.sh"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "profile.json"
+            for extra in ({"gate_image_step": "image"}, {"gate_image_step": "image", "steps": {"image": dict(build, scope="task")}}):
+                with self.subTest(extra=extra):
+                    path.write_text(json.dumps(dict({"name": "test", "repository": "."}, **extra)))
+                    with self.assertRaises(FridayError) as error:
+                        profile.load(path)
+                    self.assertEqual(error.exception.code, "invalid_profile")
+            path.write_text(json.dumps({"name": "test", "repository": ".", "gate_image_step": "image", "steps": {"image": build}}))
+            self.assertEqual(profile.load(path)["gate_image_step"], "image")
+
     def test_execution_limits_inherit_and_remain_optional(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

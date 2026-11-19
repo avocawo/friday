@@ -187,6 +187,10 @@ def render_task(root, key, recent=10):
             lines.append("Заблокирована %s: %s" % (item["id"], item["blocked_reason"]))
         for reason in item.get("unverified") or []:
             lines.append("Не проверено %s: %s" % (item["id"], reason))
+    if card.get("owner_step"):
+        lines.append("Нужен шаг владельца: " + card["owner_step"])
+    for question in card.get("questions") or []:
+        lines.append("Вопрос владельцу: %s (ответ: friday decide %s <имя> \"текст\")" % (question, key))
     from . import steps
     for item in steps.attention_of(card):
         lines.append("Шаг %s: %s — %s" % (steps.STATES[item["state"]], item["name"], item["command"]))

@@ -80,7 +80,7 @@ def capture(spec):
         valid_port = bool(target) and target.port in (None, 443)
     except ValueError:
         valid_port = False
-    if not target or target.scheme != "https" or not target.hostname or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.stage\.[a-z0-9.-]+", target.hostname) or target.username or target.password or target.path or target.query or target.fragment or not valid_port:
+    if not target or target.scheme != "https" or not target.hostname or not browser_probe.test_host(spec, target.hostname) or target.username or target.password or target.path or target.query or target.fragment or not valid_port:
         raise FridayError("invalid_profile", "Browser auth requires an HTTPS staging origin.")
     source = probe_script(spec, source_check=True)
     client = browser_protocol.Client(browser_probe.command(browser_probe.server_path({"browser": spec})))

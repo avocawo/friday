@@ -45,6 +45,13 @@ class BrowserSessionTests(unittest.TestCase):
             with self.subTest(preview=preview, stage=stage), self.assertRaises(FridayError):
                 browser_session.configuration({'stage_origin': stage}, preview)
 
+    def test_configuration_testHostNamedInProfile_acceptsOnlyThatHost(self):
+        preview = 'http://local.localhost:5189/'
+        spec = {'stage_origin': 'https://gql.example.tech', 'test_host': 'gql.example.tech'}
+        self.assertEqual(browser_session.configuration(spec, preview)[1], 'https://gql.example.tech')
+        with self.assertRaises(FridayError):  # the named host does not open any other
+            browser_session.configuration({'stage_origin': 'https://gql.example.io', 'test_host': 'gql.example.tech'}, preview)
+
     def test_arbitrary_script_page_id_and_external_navigation_are_rejected(self):
         session = browser_session.Session.__new__(browser_session.Session)
         session.origin = 'http://test.localhost:5189'

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from friday import runner
+from friday.errors import FridayError
 
 # Idle timeout for tests that read files the fake agent writes on start: a loaded machine starts Python slower
 # than a sub-second timeout, and the agent would be killed before writing them.
@@ -217,6 +218,38 @@ class RunnerTests(unittest.TestCase):
         self.scenario([{"emit": value}])
         result = runner.run(self.spec(schema={"type": "object"}))
         self.assertEqual((result.structured, result.denials), ({"verdict": "pass"}, [{"tool_name": "Bash"}]))
+
+    def test_project_session_gets_project_tools_and_only_friday_model_session_mode_and_schema(self):
+        self.scenario([{"emit": INIT}, {"emit": RESULT}])
+        runner.run(self.spec(toolset="project", effort="high", schema={"type": "object"}, disallowed_tools=["mcp__browser"],
+                             commands=["npm test"], write=True))
+        argv = self.invocation()["argv"]
+        for absent in ("--tools", "--settings", "--restricted", "--strict-mcp-config", "--no-chrome"):
+            self.assertNotIn(absent, argv)
+        self.assertEqual(argv[argv.index("--permission-mode") + 1], "auto")
+        self.assertEqual(argv[argv.index("--model") + 1], "model-a")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
+        self.assertEqual(argv[argv.index("--disallowedTools") + 1], "mcp__browser")
+        self.assertEqual(json.loads(argv[argv.index("--json-schema") + 1]), {"type": "object"})
+        self.assertIn("--session-id", argv)
+
+    def test_project_session_answer_is_the_last_result_after_a_silent_pause(self):
+        early = dict(RESULT, result="waiting for review")
+        self.scenario([{"emit": INIT}, {"emit": early}, {"sleep": 1.5}, {"emit": RESULT}])
+        with patch.object(runner, "LINGER", 0.5):
+            project = runner.run(self.spec(toolset="project"))
+            builtin = runner.run(self.spec(log_dir=str(self.root / "logs-builtin")))
+        self.assertEqual((project.status, project.text, project.duration_ms), ("ok", "hello", 2400))  # both turns count
+        self.assertEqual(builtin.text, "waiting for review")
+
+    def test_project_session_quiet_after_its_answer_is_done_not_idle(self):
+        self.scenario([{"emit": INIT}, {"emit": RESULT}, {"sleep": STARTUP_SLACK + 2}])
+        result = runner.run(self.spec(toolset="project", idle_timeout=STARTUP_SLACK))
+        self.assertEqual((result.status, result.text), ("ok", "hello"))
+
+    def test_project_toolset_needs_claude(self):
+        with self.assertRaises(FridayError):
+            runner.run(self.spec(driver="codex", toolset="project"))
 
     def test_rate_limit_rejection_is_reported_as_quota(self):
         limit = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1793622000}}

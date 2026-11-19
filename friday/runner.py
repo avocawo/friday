@@ -23,6 +23,8 @@ CREDENTIALS = ["~/.ssh", "~/.aws", "~/.config", "~/.netrc", "~/.npmrc", "~/.dock
                "~/.codex", "~/.claude", "~/.local/share/friday", "~/Library/Keychains"]
 # Set by the orchestrator to stop every agent this process runs, e.g. parallel milestones after Ctrl-C.
 CANCEL = threading.Event()
+# Seconds a process may stay silent after its final result before Friday takes it for cleanup and stops it.
+LINGER = 30
 QUOTA_TEXT = re.compile(r"(?i)usage limit|rate limit|quota|too many requests")
 
 
@@ -41,6 +43,8 @@ class Spec:
     add_dirs: list = field(default_factory=list)   # more directories the agent works in, e.g. a second repository
     mcp: object = None               # scoped MCP server(s): {"name", "command": [...] or "url", "tools": [...]}, or a list
     resume: str = None               # session id of a previous run to continue
+    toolset: str = "friday"          # "project": a plain Claude Code session with the project's own tools (ADR 0015)
+    disallowed_tools: list = field(default_factory=list)  # project toolset: tools the session may not use
     env: dict = field(default_factory=dict)
     idle_timeout: float = 600        # seconds without output while no tool call is open
     tool_timeout: float = 1800       # seconds a single tool call may stay open
@@ -84,6 +88,8 @@ class Claude:
 
     def command(self, directory):
         spec = self.spec
+        if spec.toolset == "project":
+            return self.project_command()
         tools = ["Read", "Glob", "Grep"] + (["Edit", "Write"] if spec.write else []) + (["Bash"] if spec.commands else [])
         permissions = {"deny": SECRET_FILES + ["mcp__*"]}
         servers = []
@@ -118,6 +124,21 @@ class Claude:
             args += ["--permission-mode", "acceptEdits"]
         if spec.effort:
             args += ["--effort", spec.effort]
+        if spec.schema is not None:
+            args += ["--json-schema", json.dumps(spec.schema)]
+        return args
+
+    def project_command(self):
+        """A session as the owner's own: project settings, hooks, skills, agents and MCP; Friday sets only the model,
+        effort, session, permission mode and report schema (ADR 0015)."""
+        spec = self.spec
+        args = [shutil.which("claude") or "claude", "-p", "--output-format", "stream-json", "--verbose",
+                "--model", spec.model, "--permission-mode", "auto"]
+        args += ["--resume", self.session] if spec.resume else ["--session-id", self.session]
+        if spec.effort:
+            args += ["--effort", spec.effort]
+        if spec.disallowed_tools:
+            args += ["--disallowedTools", ",".join(spec.disallowed_tools)]
         if spec.schema is not None:
             args += ["--json-schema", json.dumps(spec.schema)]
         return args
@@ -167,7 +188,9 @@ class Claude:
             result.session = event.get("session_id") or result.session
             result.text = event.get("result") or ""
             result.structured = event.get("structured_output")
-            result.duration_ms = event.get("duration_ms")
+            # A project session may report several results; its work is the sum of their turns.
+            if event.get("duration_ms") is not None:
+                result.duration_ms = (result.duration_ms or 0) + event["duration_ms"]
             result.turns = event.get("num_turns")
             result.denials = event.get("permission_denials") or []
             if event.get("is_error"):
@@ -331,6 +354,8 @@ def kill_group(process, grace=5):
 def run(spec, on_event=None):
     if spec.driver not in DRIVERS:
         raise FridayError("invalid_runner", "Unknown agent driver: " + str(spec.driver))
+    if spec.toolset == "project" and spec.driver != "claude":
+        raise FridayError("invalid_runner", "The project toolset runs only Claude Code sessions.")
     driver = DRIVERS[spec.driver](spec)
     logs = Path(spec.log_dir)
     logs.mkdir(parents=True, exist_ok=True)
@@ -379,9 +404,13 @@ def run(spec, on_event=None):
                 if now - started > spec.total_timeout:
                     result.status, result.error = "timeout", "The agent exceeded %ss in total." % spec.total_timeout
                     break
-                if finished and now - last_output > 30:
+                # A project session may end a turn while its background task runs and go on when the task is done,
+                # so its answer is the last result before the process exits, not the first one.
+                if finished and now - last_output > LINGER and spec.toolset != "project":
                     break  # the final result is in; a process that lingers after it is only cleanup
                 if now - last_output > limit:
+                    if finished:
+                        break  # a project session that went quiet after its answer is done, not stuck
                     result.status = "idle"
                     result.error = "No agent output for %ss%s." % (int(limit), " during a tool call" if driver.busy() else "")
                     break

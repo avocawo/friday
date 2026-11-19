@@ -42,7 +42,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(Path(passed["log"]).read_text(), "ok")
         self.assertEqual(self.run_gate(1, "error TS2307")["status"], "failed")
         self.assertEqual(self.run_gate(1, "Could not resolve host registry")["status"], "environment_unavailable")
-        self.assertEqual(self.run_gate(125, "FRIDAY_ENVIRONMENT_UNAVAILABLE: image lockfile differs")["status"], "environment_unavailable")
+        self.assertEqual(self.run_gate(125, "FRIDAY_IMAGE_STALE: image lockfile differs")["status"], "image_stale")
         moved = self.run_gate(0, "ok", change=lambda: (self.repo / "source").write_text("changed\n"))
         self.assertEqual((moved["status"], moved["unchanged"]), ("failed", False))
 

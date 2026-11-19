@@ -14,6 +14,12 @@ from . import browser_protocol
 from .errors import FridayError
 
 
+def test_host(spec, hostname):
+    """A staging API host: its name says so, or the profile names it as a test environment in browser.test_host."""
+    return bool(hostname) and (re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.stage\.[a-z0-9.-]+", hostname) is not None
+                               or (isinstance(spec.get("test_host"), str) and hostname == spec["test_host"]))
+
+
 def server_path(selected):
     spec = selected.get("browser", {})
     path = spec.get("mcp_server") if isinstance(spec, dict) else None

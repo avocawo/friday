@@ -136,7 +136,7 @@ def container(profile, image, head, archive):
             script = ('env -u GIT_DIR -u GIT_WORK_TREE git init --bare -q "$GIT_DIR" && git symbolic-ref HEAD refs/heads/friday && '
                       'git update-ref refs/heads/friday "$FRIDAY_BASE" && git read-tree "$FRIDAY_HEAD" && '
                       'if [ -n "$FRIDAY_LOCKFILE" ]; then cmp "/workspace/$FRIDAY_LOCKFILE" "/app/$FRIDAY_LOCKFILE" || '
-                      '{ echo "FRIDAY_ENVIRONMENT_UNAVAILABLE: image lockfile differs"; exit 125; }; fi && exec "$@"')
+                      '{ echo "FRIDAY_IMAGE_STALE: image lockfile differs"; exit 125; }; fi && exec "$@"')
             command += ["--mount", "type=bind,src=%s,dst=/friday-git,readonly" % common,
                         "--env", "GIT_DIR=/tmp/friday.git", "--env", "GIT_WORK_TREE=/workspace",
                         "--env", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/friday-git/objects",
@@ -183,7 +183,10 @@ def check(root, profile, worktree, base, log_path, on_wait=None):
     output = result.stdout
     environment = result.returncode and ("FRIDAY_ENVIRONMENT_UNAVAILABLE:" in output or any(
         re.search(pattern, line) for line in output.splitlines() for pattern in selected.get("environment_errors", [])))
-    status = "environment_unavailable" if environment else "passed" if result.returncode == 0 and unchanged else "failed"
+    # An image built for another lockfile is the owner's step to fix, not a broken environment (ADR 0014).
+    stale = result.returncode and "FRIDAY_IMAGE_STALE:" in output
+    status = ("image_stale" if stale else "environment_unavailable" if environment else
+              "passed" if result.returncode == 0 and unchanged else "failed")
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
     Path(log_path).write_text(output, encoding="utf-8")
     return {"status": status, "exit_code": result.returncode, "head": head, "log": str(log_path), "unchanged": unchanged}

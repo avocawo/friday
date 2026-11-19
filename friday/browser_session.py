@@ -55,7 +55,7 @@ def configuration(spec, preview):
     if not isinstance(stage, str):
         raise FridayError("invalid_profile", "Browser stage origin is required.")
     target = urllib.parse.urlsplit(stage)
-    if target.scheme != "https" or not target.hostname or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.stage\.[a-z0-9.-]+", target.hostname) or target.username or target.password or target.path or target.query or target.fragment or target.port not in (None, 443):
+    if target.scheme != "https" or not target.hostname or not browser_probe.test_host(spec, target.hostname) or target.username or target.password or target.path or target.query or target.fragment or target.port not in (None, 443):
         raise FridayError("invalid_profile", "Browser API must use an explicit HTTPS staging origin.")
     return origin, stage
 

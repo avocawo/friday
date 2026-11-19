@@ -30,6 +30,8 @@ def main(argv=None):
                        ("resume", "продолжить остановленную или упавшую задачу"), ("stop", "остановить идущую задачу")):
         command = commands.add_parser(name, help=text)
         command.add_argument("key")
+        if name == "plan":
+            command.add_argument("--diff", action="store_true", help="что изменила последняя ревизия плана")
         if name == "resume":
             command.add_argument("--brief", help="восстановить исходную постановку старой задачи по отпечатку планирования")
     approve = commands.add_parser("approve", help="утвердить план и запустить конвейер в фоне")
@@ -38,11 +40,11 @@ def main(argv=None):
     show = commands.add_parser("status", help="что делают задачи сейчас и сколько потрачено")
     show.add_argument("key", nargs="?")
     show.add_argument("--json", action="store_true", help="машиночитаемый вывод")
-    decide = commands.add_parser("decide", help="записать решение владельца")
+    decide = commands.add_parser("decide", help="записать решение владельца; план, ждущий утверждения, исправляется по нему")
     decide.add_argument("key")
     decide.add_argument("name")
     decide.add_argument("text")
-    decide.add_argument("--reopen", default="", help="вехи, которые решение меняет, через запятую")
+    decide.add_argument("--reopen", default="", help="вехи, которые решение меняет, через запятую; до утверждения без них вехи выбирает планировщик")
     archive = commands.add_parser("archive", help="убрать рабочую копию и карточку, чтобы начать задачу заново")
     archive.add_argument("key")
     archive.add_argument("--force", action="store_true", help="удалить и незакоммиченные изменения")
@@ -81,11 +83,30 @@ def task_profile(root, key):
     return profile.load(card.read(root, key)["profile"])
 
 
+def decision_report(value, reopened, revised=None):
+    """What a decision did to the milestones: revised in the plan, reopened to run again, or only told about it."""
+    changed, removed = revised or ([], [])
+    told = [item["id"] for item in value["milestones"]
+            if item["state"] not in ("done", "running") and item["id"] not in reopened and item["id"] not in changed]
+    lines = []
+    if changed:
+        lines.append("План исправлен (вехи: %s)." % ", ".join(changed))
+    if removed:
+        lines.append("Убраны из плана (вехи: %s)." % ", ".join(removed))
+    if revised is not None and not changed and not removed:
+        lines.append("Планировщик не изменил ни одной вехи.")
+    if reopened:
+        lines.append("Переоткрыты для повторного исполнения (вехи: %s)." % ", ".join(reopened))
+    if told:
+        lines.append("Только добавлено в контекст вех (%s): их шаги в плане прежние." % ", ".join(told))
+    return "\n".join(lines) or "Ни одна веха решение не получит: все выполнены. Чтобы переделать, назовите их в --reopen."
+
+
 def dispatch(root, args):
     if args.command == "start":
         return start_task(root, args)
     if args.command == "plan":
-        print(plan.render(root, args.key))
+        print(plan.diff(root, args.key) if args.diff else plan.render(root, args.key))
     elif args.command == "approve":
         plan.approve(root, args.key)
         if args.no_run:
@@ -106,8 +127,27 @@ def dispatch(root, args):
     elif args.command == "stop":
         print("Задаче %s отправлен сигнал остановки (процесс %d)." % (args.key, tasks.stop(root, args.key)))
     elif args.command == "decide":
-        reopened = milestone.decide(root, args.key, args.name, args.text, [x for x in args.reopen.split(",") if x])
-        print("Решение записано. Переоткрыты: " + (", ".join(reopened) or "ничего"))
+        named = [x for x in args.reopen.split(",") if x]
+        reopened = milestone.decide(root, args.key, args.name, args.text, named)
+        print("Решение записано.")
+        selected = task_profile(root, args.key)
+        value = card.read(root, args.key)
+        if value["state"] == "awaiting_approval":
+            if profile.toolset(selected, "plan") == "project":
+                before = milestone.load_plan(root, args.key)
+                # The project's planning session continues with the answer.
+                revised = plan.changes(before, plan.answer(root, args.key, selected, args.text))
+            else:
+                revised = plan.amend(root, args.key, selected, args.text, named)  # ADR 0016
+            print(plan.render(root, args.key) + "\n\n" + decision_report(card.read(root, args.key), reopened, revised) +
+                  ("\nЧто изменилось: friday plan %s --diff" % args.key if any(revised) else "") +
+                  "\nУтвердить и запустить: friday approve " + args.key)
+            return 0
+        print(decision_report(value, reopened))
+        if value["state"] == "stopped" and value.get("questions") and profile.toolset(selected, "execute") == "project":
+            # The project's execution session continues with the answer in the background, as approve starts it.
+            card.update(root, args.key, lambda current: current.update(pending_answer=args.text))
+            print("Ответ передан сессии исполнения, " + launch(root, args.key))
     elif args.command == "archive":
         result = tasks.archive(root, args.key, task_profile(root, args.key), force=args.force)
         print("Задача в архиве: %s. Ветка %s сохранена." % (result["archive"], result["branch"]))

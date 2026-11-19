@@ -1,6 +1,8 @@
 """Make a task plan: planner, deterministic feasibility checks, review by another model, one revision round."""
+import difflib
 import hashlib
 import json
+import os
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,6 +39,9 @@ PLAN_SCHEMA = {"type": "object", "additionalProperties": False,
 # With Figma frames the plan also carries the design specification taken from them.
 DESIGN_PLAN_SCHEMA = dict(PLAN_SCHEMA, required=PLAN_SCHEMA["required"] + ["design"],
                           properties=dict(PLAN_SCHEMA["properties"], design=STRINGS))
+# A project's own planning process (ADR 0015) answers to its own review, so Friday asks for no responses.
+PROJECT_PLAN_SCHEMA = dict(PLAN_SCHEMA, required=[name for name in PLAN_SCHEMA["required"] if name != "responses"],
+                           properties={name: value for name, value in PLAN_SCHEMA["properties"].items() if name != "responses"})
 FINDING = {"type": "object", "additionalProperties": False, "required": ["milestone", "stage", "severity", "problem", "suggestion"],
            "properties": {"milestone": {"type": "string"}, "stage": {"type": "string"},
                           "severity": {"type": "string", "enum": ["blocking", "minor"]},
@@ -89,6 +94,18 @@ PLAN_RULES = (
     "{reading}When you need several files, read them all in one turn with parallel Read calls rather than one per turn.")
 USE_MAP = "Use the repository map below instead of listing directories. "
 
+PROJECT_PLAN_RULES = (
+    "This session runs inside Friday with no human at the keyboard. Where your process would show the plan and wait for "
+    "approval or an answer, write the plan to {plan_file} and end the session instead; the owner reads that file and "
+    "approves it in Friday. Do not commit.\n"
+    "The structured answer is Friday's summary of the same plan, in the task's language. Group the plan's stages into "
+    "milestones that are reviewable as a whole and order them with depends_on; set parallel only when a milestone shares "
+    "no files with any milestone it is not ordered against. ui is true when the milestone changes what a user sees or does. "
+    "Each stage lists the existing files it changes in files, the files it creates in new_files, its added lines in "
+    "estimate_lines and its criteria: a code criterion is verifiable from the stage's own diff, a behavior criterion is "
+    "observable in the browser and belongs only to ui milestones, and every ui milestone has one. rules are the project "
+    "rules the plan relies on, each with its source. Put in questions what the owner must answer before approval.")
+
 REVIEW_RULES = (
     "Review the plan against the ticket, the owner's decisions and the repository. Report every problem in one pass. "
     "Look for: requirements of the ticket the plan misses or exceeds; criteria that depend on a later stage (for "
@@ -99,6 +116,16 @@ REVIEW_RULES = (
     "calls. Use blocking for problems that would make "
     "the result wrong or the pipeline fail, minor otherwise. Do not report wording or style. Write problem and "
     "suggestion in the task's language. Do not edit any file. verdict is ok only when there are no blocking findings.")
+REVIEW_CHANGED = (
+    "\nThis plan was reviewed before. The owner's latest decision changed milestones %s: review only them and what "
+    "their change breaks in the rest of the plan. The other milestones are context, carried over as they were reviewed. "
+    "The files below are those of the changed milestones.")
+AMEND = (
+    "The owner decided before approving the plan:\n%s\n\nRevise the plan by this decision. %s Rewrite the steps, files "
+    "and criteria the decision contradicts, so that no stage asks for what the owner ruled out. Keep in questions only "
+    "what is still open; return the whole plan with an empty responses list.")
+AMEND_NAMED = "Change only milestones %s; every other milestone stays exactly as it is."
+AMEND_FREE = "Change only the milestones the decision affects; every other milestone stays exactly as it is."
 
 
 def locate(worktree, name, showcase=None):
@@ -303,10 +330,26 @@ def plan_schema(root, key):
     return DESIGN_PLAN_SCHEMA if design.frames(cards.read(root, key)) else PLAN_SCHEMA
 
 
-def checked(root, key, profile, worktree, result, limits, prompt, retries=1):
+def carry(document, kept):
+    """Put back the milestones a revision had to keep; one the planner dropped is an error for it to fix."""
+    ids = {item["id"] for item in document["milestones"]}
+    document["milestones"] = [kept.get(item["id"], item) for item in document["milestones"]]
+    return ["Milestone %s is outside the owner's decision and must stay in the plan as it was." % name
+            for name in kept if name not in ids]
+
+
+def changes(before, after):
+    """Milestones a revision changed or added, and those it removed."""
+    old = {item["id"]: item for item in before["milestones"]}
+    new = [item["id"] for item in after["milestones"]]
+    return [item["id"] for item in after["milestones"] if old.get(item["id"]) != item], [name for name in old if name not in new]
+
+
+def checked(root, key, profile, worktree, result, limits, prompt, retries=1, kept=None):
     """Return a plan that passes the feasibility checks, giving the planner its errors in a revision."""
     for attempt in range(retries + 1):
-        errors = validate(result.structured, worktree, limits, stories.worktree(cards.read(root, key)))
+        errors = carry(result.structured, kept) if kept else []
+        errors += validate(result.structured, worktree, limits, stories.worktree(cards.read(root, key)))
         if design.frames(cards.read(root, key)) and not result.structured.get("design"):
             errors.append("The ticket links Figma frames but the plan has no design specification.")
         if not errors:
@@ -404,13 +447,11 @@ def restore_statement(root, key, profile, ticket):
 
 def make(root, key, profile, ticket, use_design=True):
     """Plan the task: cast, plan, feasibility checks, review by another model, one revision, ready for approval."""
+    if profiles.toolset(profile, "plan") == "project":
+        return project_make(root, key, profile, ticket)
     design.prepare(root, key, profile, ticket_text(ticket), enabled=use_design)
     card = cards.update(root, key, lambda value: value.update(task_statement=ticket_text(ticket)))
-    figma = bool(design.frames(card))
     limits = profile.get("limits")
-    def rules(docs, reading=""):
-        return planning_rules(profile, card, docs, reading)
-    task = "\n\nTask:\n" + context(card, profile, ticket)
     identity = planning_identity(card, profile, ticket)  # independent of digest and map caches
     saved = saved_draft(root, key, identity)
     layout, notes = models.cast(profile, models.availability(root), planner=saved and saved["planner"])
@@ -418,11 +459,7 @@ def make(root, key, profile, ticket, use_design=True):
     for note in notes:
         cards.record(root, key, "cast_note", note=note)
     worktree = card["worktree"]
-    digest = rules_digest(root, key, profile, worktree)
-    cards.update(root, key, lambda value: value.update(doc_map=digest["documents"] if digest else []))
-    repo_map = repomap.make(root, key, profile, worktree)
-    project = ("\n\n" + digest_text(digest) if digest else "") + ("\n\n" + repo_map if repo_map else "")
-    prompt = PIPELINE + "\n\n" + rules(USE_DIGEST if digest else READ_DOCS, USE_MAP if repo_map else "") + task + project
+    prompt, shared = prompts(root, key, profile, card, ticket)
     if saved and saved["planner"] == layout["plan"]["name"]:
         planned = SimpleNamespace(structured=saved["plan"], session=saved["session"])
         cards.record(root, key, "plan_reused", reason="the checked plan of the failed start")
@@ -430,14 +467,34 @@ def make(root, key, profile, ticket, use_design=True):
         planned = save_draft(root, key, identity, layout["plan"]["name"],
                              checked(root, key, profile, worktree, agent(root, key, profile, "plan", prompt, plan_schema(root, key)),
                                      limits, prompt))
-    review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + ("\n" + design.REVIEW_FIGMA if figma else "") + task + project +
-                     "\n\nPlan:\n" + json.dumps(dict(planned.structured, responses=[]), ensure_ascii=False, indent=2) +
-                     "\n\nFiles the plan changes:\n" + plan_sources(worktree, planned.structured,
-                                                                     showcase=stories.worktree(card)))
+    document, open_notes = settle(root, key, profile, card, prompt, shared, planned)
+    return ready_for_approval(root, key, profile, document, open_notes)
+
+
+def prompts(root, key, profile, card, ticket):
+    """The planner's prompt and the part the reviewer shares with it: the task, the rules digest and the repository map."""
+    worktree = card["worktree"]
+    digest = rules_digest(root, key, profile, worktree)
+    cards.update(root, key, lambda value: value.update(doc_map=digest["documents"] if digest else []))
+    repo_map = repomap.make(root, key, profile, worktree)
+    shared = ("\n\nTask:\n" + context(card, profile, ticket) + ("\n\n" + digest_text(digest) if digest else "") +
+              ("\n\n" + repo_map if repo_map else ""))
+    return PIPELINE + "\n\n" + planning_rules(profile, card, USE_DIGEST if digest else READ_DOCS, USE_MAP if repo_map else "") + shared, shared
+
+
+def settle(root, key, profile, card, prompt, shared, planned, only=None, kept=None):
+    """Review by another model and one revision round; returns the plan and the findings its planner did not accept.
+    With only, those milestones are under review and the rest of the plan is context (ADR 0016)."""
+    worktree, plan = card["worktree"], planned.structured
+    scope = plan if only is None else {"milestones": [item for item in plan["milestones"] if item["id"] in only]}
+    review_prompt = (PIPELINE + "\n\n" + REVIEW_RULES + ("\n" + design.REVIEW_FIGMA if design.frames(card) else "") +
+                     (REVIEW_CHANGED % ", ".join(only) if only is not None else "") + shared +
+                     "\n\nPlan:\n" + json.dumps(dict(plan, responses=[]), ensure_ascii=False, indent=2) +
+                     "\n\nFiles the plan changes:\n" + plan_sources(worktree, scope, showcase=stories.worktree(card)))
     review = plan_review(root, key, profile, review_prompt)
     findings = review["findings"]
     cards.record(root, key, "plan_reviewed", verdict=review["verdict"], findings=len(findings),
-                 blocking=sum(item["severity"] == "blocking" for item in findings))
+                 blocking=sum(item["severity"] == "blocking" for item in findings), **({"milestones": only} if only is not None else {}))
     final = planned
     if findings:
         listing = "\n".join("%d. [%s] %s/%s: %s Suggestion: %s" % (index, item["severity"], item["milestone"], item["stage"],
@@ -446,7 +503,8 @@ def make(root, key, profile, ticket, use_design=True):
         instruction = ("A reviewer of another vendor checked your plan. For each finding decide on the evidence: accept it "
                        "and change the plan, or reject it with a reason that cites the repository or the ticket. Return the "
                        "whole revised plan and one response per finding, using the finding numbers below.\n\n" + listing)
-        final = checked(root, key, profile, worktree, revise(root, key, profile, prompt, planned.structured, instruction), limits, prompt)
+        final = checked(root, key, profile, worktree, revise(root, key, profile, prompt, plan, instruction),
+                        profile.get("limits"), prompt, kept=kept)
     document = final.structured
     responses = {item["finding"]: item for item in document.get("responses", [])}
     open_notes = []
@@ -454,19 +512,130 @@ def make(root, key, profile, ticket, use_design=True):
         answer = responses.get(index)
         if answer is None or not answer["accepted"]:
             open_notes.append(dict(item, answer=(answer or {}).get("reason", "Планировщик не ответил на замечание.")))
+    return document, open_notes
+
+
+def amend(root, key, profile, text, reopen=()):
+    """The owner decided before approval: the planner revises the plan by the decision in a new session, and only the
+    milestones it changed are reviewed again (ADR 0016). Returns the milestones changed and those removed."""
+    value = cards.read(root, key)
+    if value["state"] != "awaiting_approval" or profiles.toolset(profile, "plan") == "project":
+        raise FridayError("invalid_state", "Task %s has no plan of Friday's planner waiting for approval." % key)
+    before = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
+    kept = {item["id"]: item for item in before["milestones"] if item["id"] not in reopen} if reopen else None
+    cards.update(root, key, lambda card: card.update(state="planning"))
+    try:
+        prompt, shared = prompts(root, key, profile, value, value.get("task_statement") or "")
+        instruction = AMEND % (text, AMEND_NAMED % ", ".join(reopen) if reopen else AMEND_FREE)
+        result = checked(root, key, profile, value["worktree"], revise(root, key, profile, prompt, before, instruction),
+                         profile.get("limits"), prompt, kept=kept)
+        document, notes = result.structured, []
+        changed, removed = changes(before, document)
+        if changed:
+            document, notes = settle(root, key, profile, value, prompt, shared, result, only=changed, kept=kept)
+            changed, removed = changes(before, document)
+    except BaseException:
+        cards.update(root, key, lambda card: card.update(state="awaiting_approval"))
+        raise
+    cards.record(root, key, "plan_amended", changed=changed, removed=removed)
+    if dict(document, responses=[]) == dict(before, responses=[]):
+        cards.update(root, key, lambda card: card.update(state="awaiting_approval"))  # the decision changes no part of the plan
+        return changed, removed
+    # Notes on the milestones the decision left alone still stand.
+    standing = [note for note in value["plan"]["review_notes"]
+                if note["milestone"] not in changed and note["milestone"] not in removed]
+    ready_for_approval(root, key, profile, document, standing + notes, value["plan"].get("file"))
+    return changed, removed
+
+
+def ready_for_approval(root, key, profile, document, open_notes, plan_file=None):
+    """Save the checked plan, lay out its milestones on the card and wait for the owner."""
     warnings = overlaps(root, key, document, profile)
-    (cards.directory(root, key) / "plan.json").write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    target = cards.directory(root, key) / "plan.json"
+    if target.is_file():  # the revision before this one stays for friday plan --diff
+        (cards.directory(root, key) / "plan-previous.json").write_bytes(target.read_bytes())
+    target.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     skeleton = [{"id": item["id"], "title": item["title"], "complexity": item["complexity"], "ui": item["ui"],
                  "parallel": item["parallel"], "depends_on": item["depends_on"], "state": "pending",
                  "stages": [{"id": stage["id"], "commit": None} for stage in item["stages"]]} for item in document["milestones"]]
     def ready(value):
         value["plan"] = {"revision": value["plan"]["revision"] + 1, "approved": False, "review_notes": open_notes,
                          "overlaps": warnings, "questions": document["questions"]}
+        if plan_file:
+            value["plan"]["file"] = plan_file
         value["milestones"] = skeleton
         value["state"] = "awaiting_approval"
     cards.update(root, key, ready)
     cards.record(root, key, "plan_ready", milestones=len(skeleton), open_notes=len(open_notes), overlaps=len(warnings))
     return document
+
+
+def project_session(root, key, profile, prompt, resume=None, role="plan", entry=None, schema=PROJECT_PLAN_SCHEMA,
+                    session_field="plan_session"):
+    """One session of the project's own process in the task's worktree (ADR 0015): its plan or its execution."""
+    card = cards.read(root, key)
+    entry = entry or card["cast"]["plan"]
+    if entry["driver"] != "claude":
+        raise FridayError("invalid_profile", "The project toolset runs Claude Code; the %s model is %s." % (role, entry["model"]))
+    settings = profile["project"]
+    env = dict(models.environment(entry, profile))
+    env.update({name: os.environ[name] for name in settings.get("session_env", []) if name in os.environ})
+    timeouts = {profiles.TIMEOUTS[name]: value for name, value in settings.get("timeouts", {}).items()}
+    spec = runner.Spec(driver="claude", model=entry["model"], effort=entry.get("effort"), prompt=prompt, cwd=card["worktree"],
+                       log_dir="", schema=schema, env=env, resume=resume, toolset="project",
+                       disallowed_tools=settings.get("disallowed_tools", []), **timeouts)
+    result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
+    if result.status != "ok" or not isinstance(result.structured, dict):
+        raise FridayError("agent_failed", "%s did not return a result (%s): %s" % (role, result.status, result.error or "no structured answer"))
+    cards.update(root, key, lambda value: value.update({session_field: result.session}))
+    return result
+
+
+def project_checked(root, key, profile, result, retries=1):
+    """The feasibility checks of Friday's own plans; the session gets its errors and continues once."""
+    worktree = cards.read(root, key)["worktree"]
+    for attempt in range(retries + 1):
+        errors = validate(result.structured, worktree, profile.get("limits"))
+        if not errors:
+            return result.structured
+        cards.record(root, key, "plan_invalid", errors=errors)
+        if attempt == retries:
+            raise FridayError("plan_invalid", "The plan fails feasibility checks:\n- " + "\n- ".join(errors))
+        result = project_session(root, key, profile, "Friday's feasibility checks rejected the summary of your plan. Fix "
+                                 "every problem in the plan file and in the answer, and return the whole summary again:\n- "
+                                 + "\n- ".join(errors), resume=result.session)
+
+
+def project_make(root, key, profile, ticket):
+    """Plan with the project's own planning command; Friday checks the summary and lays it out for approval."""
+    statement = ticket_text(ticket)
+    layout, notes = models.cast(profile, models.availability(root))
+    cards.update(root, key, lambda value: value.update(task_statement=statement, cast=layout, state="planning"))
+    for note in notes:
+        cards.record(root, key, "cast_note", note=note)
+    settings = profile["project"]
+    prompt = (settings["plan_command"].replace("{statement}", statement) + "\n\n" +
+              PROJECT_PLAN_RULES.replace("{plan_file}", settings["plan_file"]))
+    document = project_checked(root, key, profile, project_session(root, key, profile, prompt))
+    plan_file = str(Path(cards.read(root, key)["worktree"]) / settings["plan_file"])
+    return ready_for_approval(root, key, profile, document, [], plan_file)
+
+
+def answer(root, key, profile, text):
+    """The owner answered the plan's questions: the planning session continues with the answer (ADR 0015)."""
+    value = cards.read(root, key)
+    if value["state"] != "awaiting_approval" or profiles.toolset(profile, "plan") != "project" or not value.get("plan_session"):
+        raise FridayError("invalid_state", "Task %s has no project plan waiting for an answer." % key)
+    cards.update(root, key, lambda card: card.update(state="planning"))
+    try:
+        result = project_session(root, key, profile, "The owner answered:\n" + text + "\n\nRevise the plan file by this "
+                                 "answer and return the whole summary again; keep in questions only what is still open.",
+                                 resume=value["plan_session"])
+        document = project_checked(root, key, profile, result)
+    except BaseException:
+        cards.update(root, key, lambda card: card.update(state="awaiting_approval"))
+        raise
+    return ready_for_approval(root, key, profile, document, [], value["plan"].get("file"))
 
 
 def approve(root, key, by="owner"):
@@ -480,6 +649,49 @@ def approve(root, key, by="owner"):
     cards.record(root, key, "plan_approved", by=by)
 
 
+def heading(item):
+    flags = ", ".join(flag for flag, on in (("сложная", item["complexity"] == "complex"), ("интерфейс", item["ui"]),
+                                            ("параллельно", item["parallel"])) if on)
+    after = " после " + ", ".join(item["depends_on"]) if item["depends_on"] else ""
+    return "### %s. %s%s%s" % (item["id"], item["title"], " (" + flags + ")" if flags else "", after)
+
+
+def outline(document):
+    """The whole plan as lines, with the steps and files the executor gets: what friday plan --diff compares."""
+    lines = [document["summary"], ""]
+    for title, field in (("Вопросы владельцу", "questions"), ("Макет", "design"), ("Допущения", "assumptions"),
+                         ("Правила проекта для исполнителя", "rules")):
+        if document.get(field):
+            lines += ["## " + title] + ["- " + item for item in document[field]] + [""]
+    for item in document["milestones"]:
+        lines += [heading(item), item["goal"], "Файлы: " + ", ".join(item["files"])]
+        for stage in item["stages"]:
+            lines.append("- **%s** %s (~%d строк)" % (stage["id"], stage["brief"], stage["estimate_lines"]))
+            lines += ["  шаг: " + step for step in stage["steps"]]
+            lines += ["  файл: " + name for name in stage["files"]] + ["  новый файл: " + name for name in stage["new_files"]]
+            lines += ["  - [%s] %s" % ("браузер" if criterion["check"] == "behavior" else "код", criterion["text"])
+                      for criterion in stage["criteria"]]
+        lines.append("")
+    return lines
+
+
+def diff(root, key):
+    """What the last revision of the plan changed against the one before it."""
+    directory = cards.directory(root, key)
+    try:
+        before = json.loads((directory / "plan-previous.json").read_text(encoding="utf-8"))
+        after = json.loads((directory / "plan.json").read_text(encoding="utf-8"))
+    except OSError:
+        raise FridayError("not_found", "Task %s has no previous revision of the plan." % key)
+    revision = cards.read(root, key)["plan"]["revision"]
+    lines = list(difflib.unified_diff(outline(before), outline(after), "ревизия %d" % (revision - 1), "ревизия %d" % revision,
+                                      lineterm="", n=2))
+    if not lines:
+        return "Ревизии %d и %d плана %s совпадают." % (revision - 1, revision, key)
+    changed, removed = changes(before, after)
+    return "\n".join(["Изменены вехи: " + (", ".join(changed) or "нет") + ("; убраны: " + ", ".join(removed) if removed else ""), ""] + lines)
+
+
 def render(root, key):
     value = cards.read(root, key)
     source = cards.directory(root, key) / "plan.json"
@@ -487,6 +699,8 @@ def render(root, key):
         raise FridayError("not_found", "Task %s has no plan yet." % key)
     document = json.loads(source.read_text(encoding="utf-8"))
     lines = ["# План %s" % key, "", document["summary"], ""]
+    if value["plan"].get("file"):
+        lines += ["Файл плана проекта: " + value["plan"]["file"], ""]
     if value["plan"].get("questions"):
         lines += ["## Вопросы владельцу"] + ["- " + item for item in value["plan"]["questions"]] + [""]
     if value["plan"].get("review_notes"):
@@ -499,10 +713,7 @@ def render(root, key):
         lines += ["## Пересечения с другими задачами"] + ["- " + item for item in value["plan"]["overlaps"]] + [""]
     lines.append("## Вехи")
     for item in document["milestones"]:
-        flags = ", ".join(flag for flag, on in (("сложная", item["complexity"] == "complex"), ("интерфейс", item["ui"]),
-                                                ("параллельно", item["parallel"])) if on)
-        after = " после " + ", ".join(item["depends_on"]) if item["depends_on"] else ""
-        lines.append("### %s. %s%s%s" % (item["id"], item["title"], " (" + flags + ")" if flags else "", after))
+        lines.append(heading(item))
         lines.append(item["goal"])
         for stage in item["stages"]:
             lines.append("- **%s** %s (~%d строк, файлов: %d)" % (stage["id"], stage["brief"], stage["estimate_lines"],

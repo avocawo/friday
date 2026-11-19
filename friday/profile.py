@@ -54,6 +54,52 @@ def execution_limits(selected):
                 raise FridayError("invalid_profile", "limits.%s must be a positive integer." % key)
 
 
+PHASES = ("plan", "execute")
+TIMEOUTS = {"idle": "idle_timeout", "tool": "tool_timeout", "total": "total_timeout"}
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def toolset(selected, phase):
+    """friday or project: who runs the phase (ADR 0015)."""
+    return (selected.get("toolset") or {}).get(phase, "friday")
+
+
+def project_toolset(selected):
+    """Validate toolset and the project block it needs; profiles without toolset are unchanged."""
+    modes = selected.get("toolset")
+    if modes is None:
+        return
+    if not isinstance(modes, dict) or set(modes) - set(PHASES) or any(mode not in ("friday", "project") for mode in modes.values()):
+        raise FridayError("invalid_profile", "toolset maps plan and execute to friday or project.")
+    if "project" not in modes.values():
+        return
+    project = selected.get("project")
+    if not isinstance(project, dict):
+        raise FridayError("invalid_profile", "toolset project needs a project object with the project's commands.")
+    def text(name, required, placeholder=None):
+        value = project.get(name)
+        if value is None and not required:
+            return
+        if not isinstance(value, str) or not value.strip() or (placeholder and placeholder not in value):
+            raise FridayError("invalid_profile", "project.%s must be a non-empty string%s." % (
+                name, " with " + placeholder if placeholder else ""))
+    text("plan_command", modes.get("plan") == "project", "{statement}")
+    text("execute_command", modes.get("execute") == "project")
+    text("stage_argument", False, "{stages}")
+    plan_file = project.get("plan_file")
+    if not isinstance(plan_file, str) or not plan_file or plan_file.startswith("/") or ".." in Path(plan_file).parts:
+        raise FridayError("invalid_profile", "project.plan_file must be a path relative to the worktree.")
+    for name in ("session_env", "disallowed_tools"):
+        value = project.get(name, [])
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+            raise FridayError("invalid_profile", "project.%s must be an array of non-empty strings." % name)
+    if any(not ENV_NAME.fullmatch(name) for name in project.get("session_env", [])):
+        raise FridayError("invalid_profile", "project.session_env must name environment variables.")
+    timeouts = project.get("timeouts", {})
+    if not isinstance(timeouts, dict) or set(timeouts) - set(TIMEOUTS) or any(not positive_integer(v) for v in timeouts.values()):
+        raise FridayError("invalid_profile", "project.timeouts supports positive integer idle, tool and total seconds.")
+
+
 def read_layers(path, seen):
     if path in seen:
         raise FridayError("invalid_profile", "Profile inheritance contains a cycle: " + str(path))
@@ -121,9 +167,12 @@ def load(path):
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
     execution_limits(profile)
+    project_toolset(profile)
     design.validate(profile.get("design"))
     stories.validate(profile.get("stories"))
     steps.validate(profile.get("steps"))
+    if "gate_image_step" in profile and ((profile.get("steps") or {}).get(profile["gate_image_step"]) or {}).get("scope") != "profile":
+        raise FridayError("invalid_profile", "gate_image_step must name a step of scope profile.")
     if isinstance(profile.get("preview"), dict) and profile["preview"].get("backend") == "storybook":
         from . import isolated_preview
         isolated_preview.validate_storybook(profile["preview"])

@@ -30,6 +30,12 @@ for message in call.get("commit", []):
     env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
     subprocess.run(["git", "add", "-A"], check=True, env=env)
     subprocess.run(["git", "commit", "-qm", message], check=True, env=env)
+for step in call.get("steps", []):  # several commits in one session, each with its own files
+    for path, content in step["write"].items():
+        open(path, "w").write(content)
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+    subprocess.run(["git", "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "commit", "-qm", step["message"]], check=True, env=env)
 print(json.dumps({"type": "system", "subtype": "init", "session_id": call["session"]}), flush=True)
 if call.get("quota"):
     print(json.dumps(call["quota"]), flush=True)
@@ -387,6 +393,13 @@ class MilestoneTests(unittest.TestCase):
         self.assertIn("left uncommitted", git("log", "-1", "--format=%s", cwd=self.worktree))
 
     def test_decision_reopens_only_named_milestones_and_their_dependents(self):
+        cli = Path(__file__).resolve().parents[1] / "bin" / "friday"
+        result = subprocess.run([sys.executable, str(cli), "decide", "T-1", "early", "До запуска.", "--reopen", "M1"],
+                                capture_output=True, text=True, env=dict(os.environ, FRIDAY_HOME=str(self.root)))
+        self.assertEqual(result.returncode, 0, result.stderr)  # a milestone that has not run is not reopened
+        self.assertIn("Только добавлено в контекст вех (M1, M2)", result.stdout)
+        self.assertNotIn("Переоткрыты", result.stdout)
+        self.assertEqual(card.events(self.root, "T-1")[-1]["reopened"], [])
         def finish(value):
             for item in value["milestones"]:
                 item["state"] = "done"
@@ -397,7 +410,7 @@ class MilestoneTests(unittest.TestCase):
         value = card.read(self.root, "T-1")
         self.assertEqual([item["state"] for item in value["milestones"]], ["reopened", "reopened"])
         self.assertEqual(value["state"], "stopped")
-        self.assertEqual(len(value["decisions"]), 2)
+        self.assertEqual(len(value["decisions"]), 3)
         self.calls(("e1", {"write": {"greet.py": "z\n"}, "commit": ["T-1 M1.1: decision"]}, DONE), ("rev", None, PASS))
         milestone.run(self.root, "T-1", self.profile, "M1")
         prompt = self.call(0)["prompt"]
@@ -436,6 +449,143 @@ class MilestoneTests(unittest.TestCase):
         executor_spec = spy.call_args_list[0].args[0]
         self.assertEqual((executor_spec.env["GIT_AUTHOR_NAME"], executor_spec.env["GIT_COMMITTER_EMAIL"]), ("Owner", "owner@example.com"))
         self.assertNotIn("GIT_AUTHOR_NAME", spy.call_args_list[1].args[0].env)
+
+    def project_execution(self, **limits):
+        self.profile.update(toolset={"execute": "project"}, project={"plan_file": "ACTUAL_PLAN.md", "execute_command": "/execute-plan"},
+                            **({"limits": limits} if limits else {}))
+        self.profile_path.write_text(json.dumps({k: v for k, v in self.profile.items() if k != "path"}))
+
+    STAGES = {"steps": [{"write": {"greet.py": "def greet(n):\n    return n\n"}, "message": "M1.1: greet"},
+                        {"write": {"app.py": "print(1)\n"}, "message": "M2.1: print"}]}
+    FINISHED = {"summary": "Готово.", "questions": []}
+
+    def test_project_execution_runs_the_project_command_and_closes_milestones_from_its_commits(self):
+        self.project_execution()
+        self.calls(("x1", self.STAGES, self.FINISHED))
+        milestone.run_task(self.root, "T-1", self.profile)
+        value = card.read(self.root, "T-1")
+        self.assertEqual(value["state"], "done")
+        self.assertEqual([item["state"] for item in value["milestones"]], ["done", "done"])
+        self.assertTrue(all(stage["commit"] for item in value["milestones"] for stage in item["stages"]))
+        self.assertEqual((self.fake / "counter").read_text(), "1")  # the project's process reviews its stages itself
+        call = self.call(0)
+        self.assertTrue(call["prompt"].startswith("/execute-plan\n"))
+        self.assertIn("- M1.1 (M1 Функция): greet", call["prompt"])
+        self.assertEqual(call["argv"][call["argv"].index("--permission-mode") + 1], "auto")
+        self.assertEqual(call["argv"][call["argv"].index("--model") + 1], "worker-1")
+        self.assertEqual(value["execute_session"], "x1")
+
+    def test_project_execution_question_stops_the_task_and_the_answer_continues_its_session(self):
+        from friday import status
+        self.project_execution()
+        self.calls(("x1", None, {"summary": "", "questions": ["Маску расширять?"]}))
+        result = milestone.run_task(self.root, "T-1", self.profile)
+        value = card.read(self.root, "T-1")
+        self.assertEqual((result["questions"], value["state"], value["questions"]), (["Маску расширять?"], "stopped", ["Маску расширять?"]))
+        self.assertIn("Вопрос владельцу: Маску расширять?", status.render_task(self.root, "T-1"))
+        card.update(self.root, "T-1", lambda current: current.update(pending_answer="Да, до 12 цифр"))
+        self.calls(("x1", self.STAGES, self.FINISHED))
+        milestone.run_task(self.root, "T-1", self.profile)
+        call = self.call(0)
+        self.assertEqual(call["argv"][call["argv"].index("--resume") + 1], "x1")
+        self.assertIn("Да, до 12 цифр", call["prompt"])
+        self.assertIn("- Маску расширять?", call["prompt"])  # what stopped the run goes back with the answer
+        value = card.read(self.root, "T-1")
+        self.assertEqual(value["state"], "done")
+        self.assertNotIn("questions", value)
+        self.assertNotIn("pending_answer", value)
+
+    def test_project_execution_over_the_limit_without_a_stage_commit_or_with_leftovers_asks_the_owner(self):
+        self.project_execution(stage_lines=1)
+        self.calls(("x1", {"steps": self.STAGES["steps"][:1]}, self.FINISHED))
+        result = milestone.run_task(self.root, "T-1", self.profile)
+        self.assertTrue(any("M1.1: 1 файлов и 2 добавленных строк" in q for q in result["questions"]), result["questions"])
+        self.assertTrue(any("M2.1 без коммита" in q for q in result["questions"]), result["questions"])
+        self.assertEqual([item["state"] for item in card.read(self.root, "T-1")["milestones"]], ["pending", "pending"])
+        self.calls(("x1", self.STAGES["steps"][1:] and {"steps": self.STAGES["steps"][1:]}, self.FINISHED))
+        milestone.resume(self.root, "T-1", self.profile)  # resume continues the stopped session with Friday's findings
+        self.assertEqual(self.call(0)["argv"][self.call(0)["argv"].index("--resume") + 1], "x1")
+        self.assertIn("M2.1 без коммита", self.call(0)["prompt"])
+        self.calls(("x2", {"write": {"note.txt": "draft\n"}}, self.FINISHED))
+        card.update(self.root, "T-1", lambda current: current.update(execute_session=None))
+        result = milestone.run_task(self.root, "T-1", self.profile)
+        self.assertIn("незакоммиченные изменения", result["questions"][0])
+
+    def test_projectResume_afterEnvironmentFailure_repeatsChecksWithoutWakingTheSession(self):
+        self.project_execution()
+        self.profile.update(gate=["check"], gate_image="img")
+        outcomes = iter(["environment_unavailable", "passed"])
+        def fake_gate(root, profile, worktree, base, log, on_wait=None):
+            return {"status": next(outcomes), "head": "h", "log": str(log), "exit_code": 0, "unchanged": True}
+        self.calls(("x1", self.STAGES, self.FINISHED))
+        with patch("friday.milestone.gate.check", side_effect=fake_gate):
+            with self.assertRaises(FridayError):
+                milestone.run_task(self.root, "T-1", self.profile)
+            self.calls()
+            milestone.resume(self.root, "T-1", self.profile)
+        self.assertFalse((self.fake / "counter").exists())  # no session turn: it had finished and nothing asked it for more
+        value = card.read(self.root, "T-1")
+        self.assertEqual([item["state"] for item in value["milestones"]], ["done", "done"])
+        self.assertEqual(value["milestones"][0]["summary"], "Готово.")
+
+    def test_projectRun_staleGateImage_stopsForOwnerStepAndResumeKeepsTheSession(self):
+        from friday import status
+        self.project_execution()
+        self.profile.update(gate=["check"], gate_image="img", gate_image_step="gate-image",
+                            steps={"gate-image": {"scope": "profile", "run": ["build.sh"]}})
+        outcomes = iter(["image_stale", "passed"])
+        def fake_gate(root, profile, worktree, base, log, on_wait=None):
+            return {"status": next(outcomes), "head": "h", "log": str(log), "exit_code": 125, "unchanged": True}
+        self.calls(("x1", self.STAGES, self.FINISHED))
+        with patch("friday.milestone.gate.check", side_effect=fake_gate):
+            with self.assertRaises(FridayError) as error:
+                milestone.run_task(self.root, "T-1", self.profile)
+            self.assertEqual(error.exception.code, "image_stale")
+            value = card.read(self.root, "T-1")
+            self.assertEqual(value["state"], "stopped")
+            self.assertIn("friday step gate-image --profile " + str(self.profile_path), value["owner_step"])
+            self.assertNotIn("questions", value)  # the owner's step is not a question for the session
+            self.assertIn("Нужен шаг владельца:", status.render_task(self.root, "T-1"))
+            self.calls()
+            milestone.resume(self.root, "T-1", self.profile)
+        self.assertFalse((self.fake / "counter").exists())
+        value = card.read(self.root, "T-1")
+        self.assertEqual([item["state"] for item in value["milestones"]], ["done", "done"])
+        self.assertNotIn("owner_step", value)
+
+    def test_runTask_staleGateImageWithoutBuildStep_namesTheMissingStep(self):
+        self.profile.update(gate=["check"], gate_image="img")
+        def fake_gate(root, profile, worktree, base, log, on_wait=None):
+            return {"status": "image_stale", "head": "h", "log": str(log), "exit_code": 125, "unchanged": True}
+        self.calls(("e1", {"write": {"greet.py": "x = 1\n"}, "commit": ["T-1 M1.1: greet"]}, DONE))
+        with patch("friday.milestone.gate.check", side_effect=fake_gate), self.assertRaises(FridayError) as error:
+            milestone.run_task(self.root, "T-1", self.profile)
+        self.assertIn("шага сборки образа в профиле нет", str(error.exception))
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["milestones"][0]["state"]), ("stopped", "blocked"))
+
+    def test_decide_cli_passes_the_answer_to_the_execution_session_in_the_background(self):
+        import time
+        self.project_execution()
+        self.profile["project"]["session_env"] = ["FAKE_DIR"]  # the background run has no patched model environment
+        self.profile_path.write_text(json.dumps({k: v for k, v in self.profile.items() if k != "path"}))
+        self.calls(("x1", None, {"summary": "", "questions": ["Маску расширять?"]}))
+        milestone.run_task(self.root, "T-1", self.profile)
+        self.calls(("x1", self.STAGES, self.FINISHED))
+        cli = Path(__file__).resolve().parents[1] / "bin" / "friday"
+        result = subprocess.run([sys.executable, str(cli), "decide", "T-1", "mask", "Да"], capture_output=True, text=True,
+                                env=dict(os.environ, FRIDAY_HOME=str(self.root)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Ответ передан сессии исполнения", result.stdout)
+        deadline = time.time() + 60
+        while card.read(self.root, "T-1")["state"] not in ("done", "failed") and time.time() < deadline:
+            time.sleep(0.5)
+        # The final phase that follows has its own tests; here it runs unpatched and may fail on the fake agent.
+        value = card.read(self.root, "T-1")
+        self.assertEqual([item["state"] for item in value["milestones"]], ["done", "done"],
+                         (card.directory(self.root, "T-1") / "run.log").read_text())
+        self.assertIn("Да", self.call(0)["prompt"])
+        self.assertIn("final_started", [event["type"] for event in card.events(self.root, "T-1")])
 
     def test_running_needs_an_approved_plan(self):
         card.update(self.root, "T-1", lambda value: value.update(state="awaiting_approval", plan=dict(value["plan"], approved=False)))
