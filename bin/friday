@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from friday import card, doctor, journal, milestone, plan, profile, state, status, tasks, tracker, workspace
-from friday import steps
+from friday import serve, service, steps
 from friday.errors import FridayError
 
 VERSION = "0.2.0"
@@ -55,6 +55,10 @@ def main(argv=None):
     step.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"))
     step.add_argument("--dry-run", action="store_true", help="показать команду, ничего не запуская")
     commands.add_parser("journal", help="обновить журналы задачи из её карточки").add_argument("key")
+    commands.add_parser("serve", help="очередь утверждённых задач машины: запускает их, возвращает упавшие, уведомляет")
+    unit = commands.add_parser("service", help="friday serve как служба пользователя: launchd (macOS) или systemd (Linux)")
+    unit.add_argument("action", choices=("print", "install", "uninstall", "check"))
+    unit.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), help="для check: профиль для friday doctor")
     check = commands.add_parser("doctor", help="готовность машины и профиля")
     check.add_argument("--profile", default=os.environ.get("FRIDAY_PROFILE"), required=not os.environ.get("FRIDAY_PROFILE"))
     check.add_argument("--json", action="store_true")
@@ -70,13 +74,16 @@ def main(argv=None):
         return 130
 
 
-def launch(root, key):
-    """Run the pipeline of an approved task in the background; returns where to follow it."""
+def launch(root, key, command="run", first=False):
+    """Run the pipeline of an approved task in the background — through friday serve's queue when it runs."""
+    if serve.running_server(root):
+        serve.enqueue(root, key, command, first)
+        return "задача в очереди friday serve (%d-я). Ход: friday status %s" % (serve.queue(root).index(key) + 1, key)
     log = card.directory(root, key) / "run.log"
     with open(log, "a") as output:
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "run", key], stdout=output, stderr=output,
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), command, key], stdout=output, stderr=output,
                          stdin=subprocess.DEVNULL, start_new_session=True, env=dict(os.environ, FRIDAY_HOME=str(root)))
-    return "конвейер запущен в фоне. Ход: friday status %s, лог: %s" % (key, log)
+    return "конвейер запущен в фоне (friday serve не запущен). Ход: friday status %s, лог: %s" % (key, log)
 
 
 def task_profile(root, key):
@@ -117,6 +124,9 @@ def dispatch(root, args):
         selected = task_profile(root, args.key)
         if args.command == "resume" and args.brief:
             plan.restore_statement(root, args.key, selected, Path(args.brief).read_text(encoding="utf-8"))
+        if args.command == "resume" and serve.running_server(root) and not os.environ.get(serve.CHILD):
+            print("Задача %s: %s" % (args.key, launch(root, args.key, "resume")))
+            return 0
         result = (milestone.run_task if args.command == "run" else milestone.resume)(root, args.key, selected)
         delivery = result.get("delivery") or {}
         print("Вех готово: %d. Осталось: %s" % (len(result["completed"]), ", ".join(result["left"]) or "нет"))
@@ -125,7 +135,26 @@ def dispatch(root, args):
         elif delivery.get("description"):
             print("Текст MR: " + delivery["description"])
     elif args.command == "stop":
-        print("Задаче %s отправлен сигнал остановки (процесс %d)." % (args.key, tasks.stop(root, args.key)))
+        if serve.dequeue(root, args.key) and not serve.active(card.read(root, args.key)):
+            print("Задача %s убрана из очереди friday serve." % args.key)
+        else:
+            print("Задаче %s отправлен сигнал остановки (процесс %d)." % (args.key, tasks.stop(root, args.key)))
+    elif args.command == "serve":
+        serve.serve(root)
+    elif args.command == "service":
+        if args.action == "print":
+            path, text = service.render(root)
+            print("# %s\n%s" % (path, text))
+        elif args.action == "install":
+            print("Служба установлена: %s. Журнал: %s" % (service.install(root), root / "serve.log"))
+        elif args.action == "uninstall":
+            print("Служба убрана: %s" % service.uninstall())
+        else:
+            if not args.profile:
+                raise FridayError("invalid_state", "Pass --profile for friday doctor.")
+            code, output = service.check(root, args.profile)
+            print("friday doctor в окружении службы:\n" + output)
+            return code
     elif args.command == "decide":
         named = [x for x in args.reopen.split(",") if x]
         reopened = milestone.decide(root, args.key, args.name, args.text, named)
@@ -147,7 +176,7 @@ def dispatch(root, args):
         if value["state"] == "stopped" and value.get("questions") and profile.toolset(selected, "execute") == "project":
             # The project's execution session continues with the answer in the background, as approve starts it.
             card.update(root, args.key, lambda current: current.update(pending_answer=args.text))
-            print("Ответ передан сессии исполнения, " + launch(root, args.key))
+            print("Ответ передан сессии исполнения, " + launch(root, args.key, first=True))
     elif args.command == "archive":
         result = tasks.archive(root, args.key, task_profile(root, args.key), force=args.force)
         print("Задача в архиве: %s. Ветка %s сохранена." % (result["archive"], result["branch"]))
@@ -172,7 +201,8 @@ def dispatch(root, args):
         if args.json:
             print(json.dumps(status.task(root, args.key) if args.key else status.overview(root), ensure_ascii=False, indent=2))
         else:
-            print(status.render_task(root, args.key) if args.key else status.render(status.overview(root)))
+            print(status.render_task(root, args.key) if args.key else
+                  status.render(status.overview(root)) + "\n\n" + status.server_line(root))
     return 0
 
 

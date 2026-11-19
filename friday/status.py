@@ -13,6 +13,8 @@ STATE_NAMES = {"planning": "план", "awaiting_approval": "ждёт утвер
 
 def state_name(card):
     """A finished task that nothing actually checked is not shown as simply done."""
+    if card.get("queued"):
+        return "в очереди"
     if card.get("state") == "done" and card.get("unverified"):
         return "готова, не проверена"
     return STATE_NAMES.get(card.get("state"), card.get("state"))
@@ -151,6 +153,14 @@ def describe(now):
 def describe_wait(wait):
     parts = [wait["milestone"]] if wait["milestone"] else []
     return " · ".join(parts + ["ждёт места: " + wait["resource"]])
+
+
+def server_line(root):
+    from . import serve
+    pid = serve.running_server(root)
+    return ("friday serve: работает (процесс %d, задач одновременно: %d), в очереди: %s" % (
+        pid, serve.max_workers(root), ", ".join(serve.queue(root)) or "никого") if pid else
+            "friday serve не запущен: задачи идут отдельными фоновыми процессами")
 
 
 def render(rows, width=110):

@@ -57,6 +57,7 @@ cp examples/models.json examples/project-profile.json profiles/
 | `archive KEY [--force]` | Убрать рабочую копию и карточку; ветка остаётся |
 | `journal KEY` | Обновить журналы задачи (Obsidian, jsonl) |
 | `doctor --profile P` | Готовность машины и профиля |
+| `serve` / `service print\|install\|uninstall\|check` | Очередь задач машины: запуск по очереди, возврат упавших, уведомления; служба launchd или systemd ([руководство](docs/guide.md#очередь-задач-friday-serve)) |
 | `step [NAME] [KEY] [--profile P] [--dry-run]` | Выполнить шаг профиля (`steps`): шаг задачи — с её ключом, шаг профиля — с `--profile`; без имени — список шагов и их состояние. Что делает шаг (сборка образа, бандла и т. п.), описывает профиль ([ADR 0011](docs/adr/0011-profile-steps.md)) |
 
 Подробно о профиле, моделях и границах — в [руководстве](docs/guide.md). Почему конвейер устроен так — в [разборе пилота](docs/process-redesign.md) и [ADR](docs/adr/).
