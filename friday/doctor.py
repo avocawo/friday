@@ -2,10 +2,10 @@
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
-from . import codex_policy, design, models, profile as profiles, resources, state, steps, stories
+from . import codex_policy, design, i18n, models, profile as profiles, resources, state, steps, stories, tracker
 from .errors import FridayError
+from .i18n import N_, _
 
 
 def inspect(path):
@@ -15,7 +15,10 @@ def inspect(path):
             detail = operation()
             checks.append({"name": name, "status": "ok", **({"detail": detail} if isinstance(detail, str) and detail else {})})
         except (FridayError, OSError, subprocess.SubprocessError) as exc:
-            checks.append({"name": name, "status": "warning" if warning else "missing", "reason": str(exc)})
+            item = {"name": name, "status": "warning" if warning else "missing", "reason": str(exc)}
+            if i18n.error(exc) != str(exc):
+                item["localized"] = i18n.error(exc)
+            checks.append(item)
     selected = {}
     check("profile", lambda: selected.update(profiles.load(path)))
     if not selected:
@@ -23,16 +26,19 @@ def inspect(path):
     def repository():
         result = subprocess.run(["git", "-C", selected["repository"], "rev-parse", "--git-dir"], capture_output=True)
         if result.returncode:
-            raise FridayError("not_a_repository", "Not a git repository: " + selected["repository"])
+            raise FridayError("not_a_repository", "Not a git repository: {path}", path=selected["repository"])
         if not selected.get("worktree_root") or not selected.get("base_branch"):
             raise FridayError("invalid_profile", "worktree_root and base_branch are required.")
     check("repository", repository)
-    layout = {}
+    layout, shown = {}, []
     def cast():
         value, notes = models.cast(selected, models.availability(state.home()))
         layout.update(value)
+        shown.extend(i18n.show(note) for note in notes)
         return "; ".join(notes)
     check("models", cast)
+    if shown and "; ".join(shown) != checks[-1].get("detail"):
+        checks[-1]["localized"] = "; ".join(shown)
     catalog = models.catalog(selected) if layout else {}
     drivers = {entry["driver"] for entry in catalog.values()}
     if "claude" in drivers:
@@ -48,11 +54,11 @@ def inspect(path):
             codex_git.verify(executable)
         check("codex_cli_and_sandbox", codex)
     for name, entry in catalog.items():
-        if entry["vendor"] in models.VENDOR_ENDPOINTS:
+        if models.endpoint(entry):
             check("token:" + name, lambda entry=entry: models.environment(entry, selected) and None)
     if not selected.get("executor_commands"):
         checks.append({"name": "executor_commands", "status": "warning",
-                       "reason": "No executor_commands: the executor cannot run lint, typecheck or tests itself."})
+                       "reason": N_("No executor_commands: the executor cannot run lint, typecheck or tests itself.")})
     if selected.get("repo_map") == "graphify":
         check("graphify", lambda: tool_version("graphify"))
         if selected.get("repo_map_mcp"):
@@ -70,8 +76,7 @@ def inspect(path):
         checks.append({"name": "gate", "status": "missing", "reason": "No gate: a profile with a preview must set gate and "
                        "gate_image, or every milestone ends unverified (lint, types and build never run in isolation)."})
     else:
-        checks.append({"name": "gate", "status": "warning", "reason": "No gate: milestones are reviewed without an isolated check "
-                       "and end unverified."})
+        checks.append({"name": "gate", "status": "warning", "reason": N_("No gate: milestones are reviewed without an isolated check and end unverified.")})
     if isinstance(selected.get("browser"), dict):
         def browser():
             from . import browser_probe, browser_session
@@ -105,9 +110,11 @@ def inspect(path):
     elif delivery == "gitlab":
         check("delivery_gitlab", lambda: tool_version("glab"))
     else:
-        checks.append({"name": "delivery", "status": "warning", "reason": "No delivery transport: the MR text is only saved."})
+        checks.append({"name": "delivery", "status": "warning", "reason": N_("No delivery transport: the MR text is only saved.")})
+    if isinstance(selected.get("tracker"), dict) and tracker.tool(selected["tracker"]):
+        check("tracker_" + tracker.tool(selected["tracker"]), lambda: tool_version(tracker.tool(selected["tracker"])))
     if selected.get("tracker") is None:
-        checks.append({"name": "tracker", "status": "warning", "reason": "No tracker: start needs --brief."})
+        checks.append({"name": "tracker", "status": "warning", "reason": N_("No tracker: start needs --brief.")})
     return {"ready": all(item["status"] != "missing" for item in checks), "checks": checks, "cast": layout}
 
 
@@ -125,10 +132,10 @@ def step_check(checks, name, selected):
 def tool_version(name):
     executable = shutil.which(name)
     if not executable:
-        raise FridayError("missing", name + " is not installed.")
+        raise FridayError("missing", "{tool} is not installed.", tool=name)
     result = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=30)
     if result.returncode:
-        raise FridayError("missing", name + " does not run.")
+        raise FridayError("missing", "{tool} does not run.", tool=name)
     return result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
 
 
@@ -136,17 +143,17 @@ def sandbox():
     """Claude Code's shell sandbox needs Seatbelt on macOS or bubblewrap on Linux; without it executors refuse to start."""
     needed = "sandbox-exec" if sys.platform == "darwin" else "bwrap"
     if not shutil.which(needed):
-        raise FridayError("missing", needed + " is not available; the executor sandbox cannot start.")
+        raise FridayError("missing", "{tool} is not available; the executor sandbox cannot start.", tool=needed)
 
 
 def render(report):
     marks = {"ok": "✓", "warning": "!", "missing": "✗"}
     lines = []
     for item in report["checks"]:
-        text = item.get("reason") or item.get("detail")
+        text = item.get("localized") or (_(item["reason"]) if item.get("reason") else item.get("detail"))
         lines.append("%s %s%s" % (marks[item["status"]], item["name"], ": " + text if text else ""))
     if report.get("cast"):
-        lines.append("Раскладка: " + ", ".join("%s → %s%s" % (role, entry["model"], " " + entry["effort"] if entry.get("effort") else "")
-                                             for role, entry in report["cast"].items()))
-    lines.append("Готово к работе." if report["ready"] else "Не готово: исправьте пункты со ✗.")
+        lines.append(_("Models: {cast}", cast=", ".join("%s → %s%s" % (role, entry["model"], " " + entry["effort"] if entry.get("effort") else "")
+                                                       for role, entry in report["cast"].items())))
+    lines.append(_("Ready to work.") if report["ready"] else _("Not ready: fix the items marked ✗."))
     return "\n".join(lines)

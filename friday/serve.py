@@ -18,6 +18,7 @@ from pathlib import Path
 from . import card as cards
 from . import resources
 from .errors import FridayError
+from .i18n import _
 
 DEFAULT_WORKERS = 2
 POLL_SECONDS = 5
@@ -106,13 +107,13 @@ def notify(title, text):
 def outcome(card):
     """What the owner is told when a task leaves the running state, or None when there is nothing to say."""
     if card.get("owner_step"):
-        return "нужен шаг владельца", card["owner_step"]
+        return _("owner step needed"), card["owner_step"]
     if card["state"] == "stopped" and card.get("questions"):
-        return "вопрос владельцу", card["questions"][0]
+        return _("question for the owner"), card["questions"][0]
     if card["state"] == "failed":
-        return "сбой", "friday status %s" % card["key"]
+        return _("failed"), "friday status %s" % card["key"]
     if card["state"] == "done":
-        return "готова", "friday status %s" % card["key"]
+        return _("done"), "friday status %s" % card["key"]
     return None
 
 
@@ -143,7 +144,7 @@ class Server:
             except (FridayError, OSError, ValueError, KeyError, TypeError) as exc:
                 if key not in self.broken:
                     self.broken.add(key)
-                    self.log("Карточка %s не читается, пропускаю: %s" % (key, exc))
+                    self.log(_("Card {key} cannot be read, skipping it: {error}", key=key, error=exc))
                 continue
             yield key, value
 
@@ -226,7 +227,7 @@ def serve(root, poll=POLL_SECONDS):
         try:
             while True:
                 for key in server.step():
-                    print("Запущена %s" % key, flush=True)
+                    print(_("Started {key}", key=key), flush=True)
                 time.sleep(poll)
         finally:
             info_path(root).unlink(missing_ok=True)

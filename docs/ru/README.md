@@ -1,0 +1,86 @@
+<!-- i18n: source=README.md sha256=b45badbf640b -->
+<p align="center">
+  <img src="../../assets/friday-logo.png" alt="Friday — неоновый логотип" width="900">
+</p>
+
+<h1 align="center">Friday</h1>
+
+<p align="center"><strong>Личный конвейер разработки, который приближает пятницу.</strong><br>
+От задачи до чернового MR: сильные модели планируют и проверяют, недорогие пишут код.</p>
+
+<p align="center">Python 3.11+ · macOS / Linux · <a href="../../LICENSE">MIT</a> · ранняя версия</p>
+
+[English](../../README.md) · **Русский** · [简体中文](../zh-cn/README.md) · [日本語](../ja/README.md) · [한국어](../ko/README.md) · [Português (Brasil)](../pt-br/README.md) · [Español](../es/README.md) · [Deutsch](../de/README.md) · [Français](../fr/README.md) · [Bahasa Indonesia](../id/README.md)
+
+_Это перевод английской документации; при расхождениях действует английская версия._
+
+---
+
+```text
+задача → план (сильная модель) → проверка плана (другой вендор) → ваше утверждение
+       → вехи: исполнитель в песочнице → гейт → ревью вехи → браузерная приёмка UI
+       → финальное ревью + слепая проверка → черновой MR
+```
+
+Вы утверждаете план и принимаете черновой MR. Конвейер исполняет план в пределах настроенного бюджета; исчерпание бюджета или сбой среды возвращаются владельцу. Спорные замечания ревью уходят вам вместе с MR.
+
+## Что важно
+
+- **Модели по уровням, а не по именам.** В профиле — каталог моделей с вендором и уровнем (`frontier`, `strong`, `efficient`) для каждой модели. Код смотрят только `frontier`-модели, ревьюер не бывает слабее автора, по возможности он другого вендора. Дорогую модель можно пометить, чтобы она шла один раз на задачу.
+- **Дешёвый исполнитель с быстрой обратной связью.** Исполнитель сам запускает линтер, типы и тесты в песочнице без сети, а гейт отдаёт ему только упавшие проверки.
+- **Видно, что происходит.** `friday status` показывает фазу, модель, сколько агент молчит и сколько потрачено на каждую задачу.
+- **Несколько задач сразу.** Каждая задача — своя ветка и рабочая копия. Сколько гейтов, браузеров и запусков одного вендора идёт одновременно, задаётся настройками машины.
+- **Ветки по имени проекта.** По умолчанию `start` создаёт `<repository>/<task key>`, например `octis/31`. Имя берётся из Git `origin`; свой шаблон задаётся в профиле.
+- **Ограниченный расход.** Профиль может запретить frontier-исполнителей через `executor_tiers`, ограничить размер всего плана и число вызовов моделей через `budget`; `resume` счётчики не сбрасывает. Финальное ревью сохраняется по ролям, поэтому повторный запуск на неизменных входах не запускает его заново.
+- **Параллельные вехи.** Независимые готовые вехи работают в отдельных worktree, по умолчанию по две одновременно; общие изменённые файлы блокируют интеграцию.
+
+## Быстрый старт
+
+Нужны Python 3.11+, Git и Claude Code (Codex CLI — по желанию). Для гейта и браузерной приёмки нужен Docker.
+
+```sh
+uv tool install git+https://github.com/avocawo/friday   # or: pipx install git+https://github.com/avocawo/friday
+mkdir -p ~/.config/friday/profiles && cd ~/.config/friday/profiles
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/models.json
+curl -fsSLO https://raw.githubusercontent.com/avocawo/friday/main/examples/project-profile.json
+# in project-profile.json, set your project's repository, worktree_root and executor_commands
+export FRIDAY_PROFILE=~/.config/friday/profiles/project-profile.json
+friday doctor
+friday start TASK-1 --brief task.md
+friday approve TASK-1
+friday status
+```
+
+Friday говорит на десяти языках: `friday --lang ru …`, `FRIDAY_LANG=ru` или `friday config language ru`. Агенты всегда работают по-английски; переводится то, что читаете вы. Примеры профилей для проектов на Node и Python лежат в [examples/profiles](../../examples/profiles).
+
+## Команды
+
+| Команда | Что делает |
+| --- | --- |
+| `start KEY --profile P [--brief F] [--no-design]` | Создаёт рабочую копию и план, проверку плана поручает другой модели; с `design` в профиле план сверяется с фреймом Figma из тикета |
+| `plan KEY [--diff]` | Показывает план с несогласованными замечаниями; `--diff` показывает, что изменила последняя ревизия |
+| `approve KEY [--no-run]` | Утверждает план и запускает конвейер в фоне |
+| `status [KEY] [--json]` | Показывает, что делают задачи и сколько потрачено |
+| `decide KEY name "text" [--reopen M2]` | Записывает решение владельца. Пока план ждёт утверждения, планировщик исправляет по нему названные вехи (без `--reopen` выбирает их сам), и повторную проверку проходят только изменённые ([ADR 0016](../adr/0016-decision-revises-the-plan.md)); после утверждения переоткрывает только названные вехи |
+| `serve` / `service print\|install\|uninstall\|check` | Очередь задач машины: запускает задачи по очереди, возвращает упавшие, уведомляет; работает как служба launchd или systemd ([руководство](guide.md#очередь-задач-friday-serve)) |
+| `step [NAME] [KEY] [--profile P] [--dry-run]` | Запускает шаг профиля (`steps`): шаг задачи — с ключом задачи, шаг профиля — с `--profile`; без имени показывает шаги и их состояние. Что делает шаг (сборка образа, бандла и так далее), описывает профиль ([ADR 0011](../adr/0011-profile-steps.md)) |
+| `run KEY` / `resume KEY [--brief F]` / `stop KEY` | Исполняет в этом терминале, продолжает, останавливает; `--brief` восстанавливает исходную постановку старой задачи по отпечатку планирования |
+| `archive KEY [--force]` | Убирает рабочую копию и карточку; ветка остаётся |
+| `journal KEY` | Обновляет журналы задачи (Obsidian, jsonl) |
+| `doctor --profile P` | Проверяет, что машина и профиль готовы |
+| `config language L` | Задаёт язык, на котором Friday говорит на этой машине |
+
+Подробно о профиле, моделях и границах — в [руководстве](guide.md). Почему конвейер устроен так — в [разборе пилота](../process-redesign.md) и [ADR](../adr/) (0001–0006 на русском).
+
+## Разработка
+
+```sh
+git clone https://github.com/avocawo/friday.git && cd friday
+python3 -m unittest discover -s tests
+uvx ruff check .
+python3 -m friday.i18n
+```
+
+Тесты работают с временными данными и фейковыми агентами, без сети и Docker. Как устроен код — в [docs/architecture.md](../architecture.md); как предложить изменение — в [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+[Руководство](guide.md) · [Глоссарий](GLOSSARY.md) · [Участие в разработке](../../CONTRIBUTING.md) · [Лицензия](../../LICENSE)

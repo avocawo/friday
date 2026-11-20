@@ -45,13 +45,6 @@ class BrowserSessionTests(unittest.TestCase):
             with self.subTest(preview=preview, stage=stage), self.assertRaises(FridayError):
                 browser_session.configuration({'stage_origin': stage}, preview)
 
-    def test_configuration_testHostNamedInProfile_acceptsOnlyThatHost(self):
-        preview = 'http://local.localhost:5189/'
-        spec = {'stage_origin': 'https://gql.example.tech', 'test_host': 'gql.example.tech'}
-        self.assertEqual(browser_session.configuration(spec, preview)[1], 'https://gql.example.tech')
-        with self.assertRaises(FridayError):  # the named host does not open any other
-            browser_session.configuration({'stage_origin': 'https://gql.example.io', 'test_host': 'gql.example.tech'}, preview)
-
     def test_arbitrary_script_page_id_and_external_navigation_are_rejected(self):
         session = browser_session.Session.__new__(browser_session.Session)
         session.origin = 'http://test.localhost:5189'
@@ -110,3 +103,22 @@ class BrowserSessionTests(unittest.TestCase):
         with self.assertRaises(FridayError):
             session.call('navigate_page', {'type': 'back'})
         session.client.tool.assert_called_with('navigate_page', {'pageId': 7, 'type': 'url', 'url': 'http://test.localhost:5189/'})
+
+
+class StagingOriginTests(unittest.TestCase):
+    def test_only_an_explicit_origin_named_as_a_test_environment_is_accepted(self):
+        from friday import browser_probe
+        for origin in ("https://gql.stage.example", "https://api.staging.example.com", "https://app-dev.example.com",
+                       "https://qa.example.org:443"):
+            self.assertTrue(browser_session.stage_origin({"stage_origin": origin}).startswith("https://"), origin)
+        for origin in ("https://api.example.com", "http://api.stage.example", "https://api.stage.example/path",
+                       "https://user@api.stage.example", "https://api.stage.example:8443", "https://*.stage.example"):
+            with self.assertRaises(FridayError, msg=origin):
+                browser_session.stage_origin({"stage_origin": origin})
+        self.assertEqual(browser_session.stage_origin({"stage_origin": "https://api.int.example", "stage_host_pattern": r".*\.int\.example"}),
+                         "https://api.int.example")
+        self.assertEqual(browser_probe.chrome_url({"chrome_url": "http://127.0.0.1:9222"}), "http://127.0.0.1:9222")
+        with self.assertRaises(FridayError):
+            browser_probe.chrome_url({"chrome_url": "http://example.com:9222"})
+        with self.assertRaises(FridayError):
+            browser_session.stage_check({"stage_check": {"path": "https://x/main.ts", "variable": "API"}})

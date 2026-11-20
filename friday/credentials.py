@@ -27,7 +27,7 @@ def token(config, default_env):
                 raise FridayError("credentials_insecure", "Token file must be a regular owner-only file.")
             raw = handle.read(16385)
     except OSError as exc:
-        raise FridayError("credentials_missing", "Cannot read token file: " + type(exc).__name__)
+        raise FridayError("credentials_missing", "Cannot read token file: {name}", name=type(exc).__name__)
     if len(raw) > 16384:
         raise FridayError("credentials_insecure", "Token file is unexpectedly large.")
     try:

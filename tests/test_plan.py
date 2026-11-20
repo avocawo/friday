@@ -16,6 +16,8 @@ CLI = Path(__file__).resolve().parents[1] / "bin" / "friday"
 # Each call of the fake agent takes the next entry of calls.json: the structured answer and the session it reports.
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys
+
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
 directory = os.environ["FAKE_DIR"]
 prompt = sys.stdin.read()
 counter = os.path.join(directory, "counter")
@@ -139,7 +141,7 @@ class PlanTests(unittest.TestCase):
         self.assertIn("Сделать приветствие", revision["prompt"])
         self.assertIn("--json-schema", planner["argv"])
         text = plan.render(self.root, "T-1")
-        for expected in ("### M2. Экран (сложная, интерфейс) после M1", "Несогласованные замечания", "[браузер]", "plan-review → rival-1"):
+        for expected in ("### M2. Экран (complex, interface) after M1", "Open review notes", "[browser]", "plan-review → rival-1"):
             self.assertIn(expected, text)
         self.assertTrue((Path(value["worktree"]) / "app.py").is_file())
         plan.approve(self.root, "T-1")
@@ -325,7 +327,7 @@ class PlanTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=environment,
                                 cwd=str(Path(__file__).resolve().parents[1]))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("# План T-9", result.stdout)
+        self.assertIn("# Plan T-9", result.stdout)
         self.assertIn("friday approve T-9", result.stdout)
         result = subprocess.run([sys.executable, str(CLI), "approve", "T-9", "--no-run"], capture_output=True, text=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -362,7 +364,7 @@ class PlanTests(unittest.TestCase):
         self.assertNotIn("--tools", call["argv"])
         self.assertNotIn("responses", json.loads(call["argv"][call["argv"].index("--json-schema") + 1])["required"])
         self.assertEqual(call["agent"], "agent.sock")
-        self.assertIn("Файл плана проекта: ", plan.render(self.root, "T-1"))
+        self.assertIn("Project plan file: ", plan.render(self.root, "T-1"))
 
     def test_project_plan_session_continues_with_the_errors_of_an_infeasible_summary(self):
         self.project_profile()
@@ -382,7 +384,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(card.read(self.root, "T-1")["plan"]["questions"], ["Маску ИНН расширять?"])
         script = ("import sys, runpy; from unittest.mock import patch; "
                   "patch('friday.models.environment', return_value={'FAKE_DIR': %r}).start(); "
-                  "sys.argv = ['friday', 'decide', 'T-1', 'mask', 'Да, до 12 цифр']; "
+                  "sys.argv = ['friday', 'decide', 'T-1', 'mask', 'Yes, up to 12 digits']; "
                   "runpy.run_path(%r, run_name='__main__')") % (str(self.fake), str(CLI))
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                                 env=dict(os.environ, FRIDAY_HOME=str(self.root)), cwd=str(Path(__file__).resolve().parents[1]))
@@ -390,7 +392,7 @@ class PlanTests(unittest.TestCase):
         self.assertIn("friday approve T-1", result.stdout)
         answer = self.call(1)
         self.assertEqual(answer["argv"][answer["argv"].index("--resume") + 1], "ps-1")
-        self.assertIn("Да, до 12 цифр", answer["prompt"])
+        self.assertIn("Yes, up to 12 digits", answer["prompt"])
         value = card.read(self.root, "T-1")
         self.assertEqual((value["state"], value["plan"]["revision"], value["plan"]["questions"]), ("awaiting_approval", 2, []))
         self.assertEqual(value["decisions"][0]["name"], "mask")
@@ -416,15 +418,15 @@ class PlanTests(unittest.TestCase):
         finding = {"milestone": "M2", "stage": "M2.1", "severity": "minor", "problem": "Шапки на странице нет.", "suggestion": "Создать."}
         answered = dict(self.decided(), responses=[{"finding": 0, "accepted": False, "reason": "Шапка есть в page.html."}])
         self.calls(("p2", self.decided()), ("r2", {"verdict": "ok", "findings": [finding]}), ("p3", answered))
-        result = self.cli("decide", "T-1", "header", "Приветствие — в шапке.", "--reopen", "M2")
+        result = self.cli("decide", "T-1", "header", "Greeting in the header.", "--reopen", "M2")
         self.assertEqual(result.returncode, 0, result.stderr)
-        for expected in ("Решение записано.", "План исправлен (вехи: M2).", "Только добавлено в контекст вех (M1)",
+        for expected in ("Decision recorded.", "The plan is revised (milestones: M2).", "Only added to the context of milestones (M1)",
                          "friday plan T-1 --diff", "friday approve T-1", "Вывести в шапке"):
             self.assertIn(expected, result.stdout)
-        self.assertNotIn("Переоткрыты", result.stdout)
+        self.assertNotIn("Reopened", result.stdout)
         revision, review = self.call(0), self.call(1)
         self.assertNotIn("--resume", revision["argv"])
-        self.assertIn("Приветствие — в шапке.", revision["prompt"])
+        self.assertIn("Greeting in the header.", revision["prompt"])
         self.assertIn("Change only milestones M2;", revision["prompt"])
         self.assertIn("Your plan:", revision["prompt"])
         self.assertIn("changed milestones M2: review only them", review["prompt"])
@@ -438,9 +440,9 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(document["milestones"][0], PLAN["milestones"][0])  # carried over as it was
         self.assertEqual(document["milestones"][1]["stages"][0]["steps"], ["вставить в header"])
         text = self.cli("plan", "T-1", "--diff").stdout
-        self.assertIn("Изменены вехи: M2", text)
-        self.assertIn("-- **M2.1** Вывести на страницу (~20 строк)", text)
-        self.assertIn("+  шаг: вставить в header", text)
+        self.assertIn("Changed milestones: M2", text)
+        self.assertIn("-- **M2.1** Вывести на страницу (~20 lines)", text)
+        self.assertIn("+  step: вставить в header", text)
         self.assertNotIn("Функция greet", text)
 
     def test_decision_without_reopen_lets_the_planner_choose_and_an_unchanged_plan_is_not_reviewed(self):
@@ -448,10 +450,10 @@ class PlanTests(unittest.TestCase):
         self.start()
         self.assertIn("no previous revision", self.cli("plan", "T-1", "--diff").stderr)
         self.calls(("p2", PLAN))
-        result = self.cli("decide", "T-1", "tone", "Обращение на «вы».")
+        result = self.cli("decide", "T-1", "tone", "Use the formal address.")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Планировщик не изменил ни одной вехи.", result.stdout)
-        self.assertIn("Только добавлено в контекст вех (M1, M2)", result.stdout)
+        self.assertIn("The planner changed no milestone.", result.stdout)
+        self.assertIn("Only added to the context of milestones (M1, M2)", result.stdout)
         self.assertNotIn("--diff", result.stdout)
         self.assertIn("Change only the milestones the decision affects", self.call(0)["prompt"])
         self.assertEqual((self.fake / "counter").read_text(), "1")
@@ -460,7 +462,7 @@ class PlanTests(unittest.TestCase):
         changed = copy.deepcopy(PLAN)
         changed["milestones"][0]["stages"][0]["steps"] = ["обращаться на «вы»"]
         self.calls(("p3", changed), ("r3", {"verdict": "ok", "findings": []}))
-        self.assertEqual(plan.amend(self.root, "T-1", self.profile, "Обращение на «вы»."), (["M1"], []))
+        self.assertEqual(plan.amend(self.root, "T-1", self.profile, "Use the formal address."), (["M1"], []))
         self.assertIn("changed milestones M1:", self.call(1)["prompt"])
 
     def test_failed_revision_by_a_decision_leaves_the_plan_waiting_and_the_decision_recorded_once(self):
@@ -470,7 +472,7 @@ class PlanTests(unittest.TestCase):
         dropped["milestones"][0]["depends_on"] = []
         for _ in range(2):
             self.calls(("p2", dropped), ("p3", dropped))  # M1 is not named, yet the planner drops it twice
-            result = self.cli("decide", "T-1", "header", "Приветствие — в шапке.", "--reopen", "M2")
+            result = self.cli("decide", "T-1", "header", "Greeting in the header.", "--reopen", "M2")
             self.assertEqual(result.returncode, 1)
             self.assertIn("M1 is outside the owner's decision", result.stderr)
         self.assertIn("M1 is outside the owner's decision", self.call(1)["prompt"])
@@ -493,7 +495,7 @@ class PlanTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
                                 env=dict(os.environ, FRIDAY_HOME=str(self.root)), cwd=str(Path(__file__).resolve().parents[1]))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("План утверждён автоматически", result.stdout)
+        self.assertIn("Plan approved automatically", result.stdout)
         self.assertEqual(card.read(self.root, "T-8")["state"], "approved")
         self.assertEqual(card.events(self.root, "T-8")[-1], dict(card.events(self.root, "T-8")[-1], type="plan_approved", by="auto"))
 

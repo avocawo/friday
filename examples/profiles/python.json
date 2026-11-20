@@ -1,0 +1,14 @@
+{
+  "name": "python-app",
+  "extends": "../models.json",
+  "repository": "~/code/my-python-app",
+  "base_branch": "main",
+  "worktree_root": "~/code/my-python-app-worktrees",
+  "worktree_setup": [["uv", "sync", "--frozen"]],
+  "executor_commands": ["uv run ruff check .", "uv run pytest -q"],
+  "gate": ["sh", "-c", "ruff check . && python -m pytest -q"],
+  "gate_image": "my-python-app-gate:local",
+  "gate_links": {".venv": "/opt/venv"},
+  "gate_tmpfs": ["/tmp/.pytest_cache"],
+  "delivery": {"transport": "none"}
+}

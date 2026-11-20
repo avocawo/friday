@@ -22,7 +22,7 @@ def machine(root):
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
-        raise FridayError("invalid_machine", "Cannot read machine.json: %s" % exc)
+        raise FridayError("invalid_machine", "Cannot read machine.json: {exc}", exc=exc)
     return value if isinstance(value, dict) else {}
 
 
@@ -58,7 +58,7 @@ def slot(root, name, timeout=7200, on_wait=None):
                     continue
             if held is None:
                 if time.monotonic() >= deadline:
-                    raise FridayError("lock_timeout", "No free %s slot after %ds." % (name, timeout))
+                    raise FridayError("lock_timeout", "No free {name} slot after {timeout}s.", name=name, timeout=timeout)
                 if on_wait and not announced:
                     on_wait(name)
                     announced = True
@@ -96,7 +96,7 @@ def port(root, key):
             temporary.write_text(json.dumps(taken, indent=2))
             os.replace(temporary, path)
             return candidate
-    raise FridayError("no_port", "No free preview port in %d-%d." % (low, high))
+    raise FridayError("no_port", "No free preview port in {low}-{high}.", low=low, high=high)
 
 
 def release_port(root, key):

@@ -2,7 +2,6 @@ import json
 import os
 import plistlib
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,7 +50,7 @@ class ServeTests(unittest.TestCase):
         self.assertEqual(self.server.start(), [])  # T-1 counts as busy until its process marks the card running
         self.assertEqual(self.spawned, [("T-1", "run")])
         self.assertEqual(serve.queue(self.root), ["T-2"])
-        self.assertEqual(status.state_name(card.read(self.root, "T-2")), "в очереди")
+        self.assertEqual(status.card_state_name(card.read(self.root, "T-2")), "queued")
 
     def test_step_runningTaskWithDeadProcess_resumesIt(self):
         self.task("T-1", "2026-11-19T09:00:00+00:00", state="running", runner_pid=DEAD)
@@ -70,9 +69,9 @@ class ServeTests(unittest.TestCase):
             card.update(self.root, key, lambda value, ending=ending: value.update(**ending))
         self.server.tell()
         self.assertEqual(sorted(title for title, _ in self.told),
-                         ["Friday: T-1 — вопрос владельцу", "Friday: T-2 — нужен шаг владельца", "Friday: T-3 — сбой",
-                          "Friday: T-4 — готова"])  # a plain stop by the owner says nothing
-        self.assertIn(("Friday: T-1 — вопрос владельцу", "Маску расширять?"), self.told)
+                         ["Friday: T-1 — question for the owner", "Friday: T-2 — owner step needed", "Friday: T-3 — failed",
+                          "Friday: T-4 — done"])  # a plain stop by the owner says nothing
+        self.assertIn(("Friday: T-1 — question for the owner", "Маску расширять?"), self.told)
 
     def test_reap_childShorterThanOnePoll_isStillReported(self):
         class Child:
@@ -87,7 +86,7 @@ class ServeTests(unittest.TestCase):
         card.update(self.root, "T-1", lambda value: value.update(state="stopped", owner_step="Соберите образ"))
         child.code = 0  # ran and stopped between two polls: no pass ever saw it running
         self.server.step()
-        self.assertEqual(self.told, [("Friday: T-1 — нужен шаг владельца", "Соберите образ")])
+        self.assertEqual(self.told, [("Friday: T-1 — owner step needed", "Соберите образ")])
         self.assertEqual(self.server.children, {})
 
     def test_step_unreadableCard_isSkippedAndLoggedOnce(self):
@@ -103,8 +102,7 @@ class ServeTests(unittest.TestCase):
         self.assertEqual(len(logged), 1)
 
     def test_resumeCli_underServer_queuesForTheOwnerAndRunsInTheServersChild(self):
-        import importlib.machinery
-        cli = importlib.machinery.SourceFileLoader("friday_cli", str(FRIDAY)).load_module()
+        from friday import cli
         self.task("T-1", "2026-11-19T09:00:00+00:00", state="stopped")
         (self.root / "serve.json").write_text(json.dumps({"pid": os.getpid()}))
         result = {"completed": [], "left": [], "delivery": None}
@@ -123,18 +121,16 @@ class ServeTests(unittest.TestCase):
     def test_approveCli_withoutServer_launchesInTheBackgroundAsBefore(self):
         self.task("T-1", "2026-11-19T09:00:00+00:00")
         with patch("subprocess.Popen") as popen:
-            sys.path.insert(0, str(FRIDAY.parent))
-            import importlib.machinery
-            cli = importlib.machinery.SourceFileLoader("friday_cli", str(FRIDAY)).load_module()
+            from friday import cli
             text = cli.launch(self.root, "T-1")
-        self.assertIn("friday serve не запущен", text)
+        self.assertIn("friday serve is not running", text)
         self.assertEqual(popen.call_args.args[0][-2:], ["run", "T-1"])
         self.assertNotIn("queued", card.read(self.root, "T-1"))
         (self.root / "serve.json").write_text(json.dumps({"pid": os.getpid()}))  # a live server takes the task instead
         with patch("subprocess.Popen") as popen:
             text = cli.launch(self.root, "T-1", first=True)
         popen.assert_not_called()
-        self.assertIn("в очереди friday serve (1-я)", text)
+        self.assertIn("queued in friday serve (position 1)", text)
         self.assertTrue(card.read(self.root, "T-1")["queued"]["first"])
 
 

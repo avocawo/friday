@@ -1,6 +1,5 @@
 import json
 import os
-import subprocess
 import tempfile
 import threading
 import time
@@ -8,13 +7,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from friday import card, milestone, plan, resources, runner, status, workspace
+from friday import card, milestone, resources, runner, status, workspace
 from test_milestone import DONE, MODELS, PASS, git
 from test_runner import FAKE as STREAM_FAKE, INIT, alive
 
 # Parallel lanes call the fake concurrently, so answers are chosen by milestone and role, not by call order.
 FAKE = r'''#!/usr/bin/env python3
 import json, os, re, subprocess, sys, time
+
+os.environ["FRIDAY_LANG"] = "en"  # assertions read Friday's English messages
 directory = os.environ["FAKE_DIR"]
 prompt = sys.stdin.read()
 milestone = re.search(r'"id": "(M\d)"', prompt).group(1)
@@ -194,8 +195,8 @@ class ParallelTests(unittest.TestCase):
             milestone.run_task(self.root, "T-1", self.profile)
         starts = sorted(entry["start"] for entry in self.log() if entry["kind"] == "develop" and entry["milestone"] in ("M1", "M2"))
         self.assertGreaterEqual(starts[1] - starts[0], 1.4)
-        self.assertTrue(any("ждёт места: vendor:gamma" in text for text in seen))
-        self.assertFalse(any("ПОТЕРЯН" in text for text in seen))
+        self.assertTrue(any("waiting for a slot: vendor:gamma" in text for text in seen))
+        self.assertFalse(any("LOST" in text for text in seen))
 
     def test_failed_lane_still_lands_the_good_one_and_cleans_up(self):
         never = {"answer": DONE}

@@ -9,23 +9,23 @@ tags: [friday]
 
 {{status}}
 
-## План
+## {{h_plan}}
 {{plan}}
 
-## Вехи
+## {{h_milestones}}
 {{milestones}}
 
-## На решение владельцу
+## {{h_disputes}}
 {{disputes}}
 
-## Решения владельца
+## {{h_decisions}}
 {{decisions}}
 
-## Расход
+## {{h_costs}}
 {{costs}}
 
-## Хронология
+## {{h_timeline}}
 {{timeline}}
 
-## Заметки
+## {{h_notes}}
 {{notes}}

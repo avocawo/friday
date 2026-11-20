@@ -154,7 +154,7 @@ class StoriesTests(unittest.TestCase):
         self.assertIn("has no showcase repository", " ".join(plan.validate(PLAN, kit)))
 
     def test_a_milestone_commits_in_both_repositories_and_the_review_sees_both(self):
-        kit = workspace.create(self.root, "T-1", self.profile)
+        workspace.create(self.root, "T-1", self.profile)
         showcase = card.read(self.root, "T-1")["stories"]["worktree"]
         self.calls(("p", None, PLAN), ("r", None, {"verdict": "ok", "findings": []}))
         plan.make(self.root, "T-1", self.profile, "Кнопка")
@@ -183,7 +183,7 @@ class StoriesTests(unittest.TestCase):
         self.assertTrue(done["stages"][0]["showcase_commit"])
         self.assertEqual(done["outside_files"], [])
         text = final.description(self.root, "T-1")
-        self.assertIn("Вторая ветка: `T-1`", text)
+        self.assertIn("Second branch: `T-1`", text)
 
     def test_runner_passes_extra_directories_to_both_drivers(self):
         logs = Path(self.directory.name) / "logs"

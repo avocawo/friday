@@ -106,7 +106,7 @@ TRANSPORTS = {"github": (github_matching, github_create), "gitlab": (gitlab_matc
 def open_draft(profile, transport, branch, target, title, description):
     """The open draft for the branch, created only when none exists."""
     if transport not in TRANSPORTS:
-        raise FridayError("invalid_profile", "Unknown delivery transport: " + str(transport))
+        raise FridayError("invalid_profile", "Unknown delivery transport: {transport}", transport=str(transport))
     matching, create = TRANSPORTS[transport]
     existing = matching(profile, branch)
     return existing[0] if existing else create(profile, branch, target, title, description)

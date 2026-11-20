@@ -10,3 +10,6 @@ __pycache__/
 *.key
 *.log
 /profiles/
+/build/
+/dist/
+*.egg-info/

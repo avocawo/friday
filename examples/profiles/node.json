@@ -1,0 +1,16 @@
+{
+  "name": "node-app",
+  "extends": "../models.json",
+  "repository": "~/code/my-node-app",
+  "base_branch": "main",
+  "worktree_root": "~/code/my-node-app-worktrees",
+  "worktree_setup": [["npm", "ci", "--ignore-scripts"]],
+  "executor_commands": ["npm run lint", "npm run typecheck", "npm test"],
+  "gate": ["sh", "-c", "npm run lint && npm run typecheck && npm test"],
+  "gate_image": "my-node-app-gate:local",
+  "gate_links": {"node_modules": "/app/node_modules"},
+  "gate_tmpfs": ["/app/node_modules/.cache"],
+  "delivery": {"transport": "github", "target_branch": "main"},
+  "github": {"repository": "me/my-node-app"},
+  "tracker": {"backend": "github"}
+}

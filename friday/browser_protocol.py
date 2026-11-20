@@ -66,7 +66,7 @@ class Client:
     def tool(self, name, arguments, timeout=30):
         result = self.request("tools/call", {"name": name, "arguments": arguments}, timeout=timeout)
         if result.get("isError"):
-            raise FridayError("browser_unavailable", "Browser MCP tool failed: " + name)
+            raise FridayError("browser_unavailable", "Browser MCP tool failed: {name}", name=name)
         return result
 
     def close(self):

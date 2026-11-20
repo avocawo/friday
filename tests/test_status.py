@@ -55,7 +55,7 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(spent["seconds"], 0)
         self.assertEqual(spent["unmeasured_runs"], 4)
         self.assertEqual(spent["by_role"]["?"]["unmeasured_runs"], 4)
-        self.assertIn("4 без длительности", status.work_time(spent))
+        self.assertIn("4 without duration", status.work_time(spent))
 
     def test_unknown_cost_is_preserved_by_role_and_visible_in_task_output(self):
         events = [event("run_finished", "a", "2026-11-08T10:00:00+00:00", role="develop", duration_ms=1000,
@@ -65,14 +65,14 @@ class AccountingTests(unittest.TestCase):
         spent = status.totals(events)
         self.assertEqual(spent["by_role"]["develop"]["unpriced_runs"], 1)
         self.assertEqual(spent["by_role"]["review"]["unpriced_runs"], 0)
-        self.assertIn("неизвестно", status.money(spent["by_role"]["develop"]))
+        self.assertIn("unknown", status.money(spent["by_role"]["develop"]))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             card.create(root, "T-1", "/missing/profile.json")
             with patch("friday.card.events", return_value=events):
                 text = status.render_task(root, "T-1")
-            line = next(line for line in text.splitlines() if line.startswith("  исполнение:"))
-            self.assertIn("1 без цены", line)
+            line = next(line for line in text.splitlines() if line.startswith("  development:"))
+            self.assertIn("1 unpriced", line)
             self.assertNotIn("$0.00", line)
 
 

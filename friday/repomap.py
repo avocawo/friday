@@ -23,7 +23,7 @@ GRAPH_TOOLS = ["query_graph", "get_node", "get_neighbors", "shortest_path"]
 def head(worktree):
     result = subprocess.run(["git", "-C", str(worktree), "rev-parse", "HEAD"], capture_output=True, text=True)
     if result.returncode:
-        raise FridayError("not_a_repository", "Cannot read HEAD of " + str(worktree))
+        raise FridayError("not_a_repository", "Cannot read HEAD of {worktree}", worktree=str(worktree))
     return result.stdout.strip()
 
 
@@ -31,7 +31,7 @@ def tracked(worktree):
     """Tracked files only: the worktree may hold a copied node_modules and other ignored trees."""
     result = subprocess.run(["git", "-C", str(worktree), "ls-files", "-z"], capture_output=True)
     if result.returncode:
-        raise FridayError("not_a_repository", "Cannot list files of " + str(worktree))
+        raise FridayError("not_a_repository", "Cannot list files of {worktree}", worktree=str(worktree))
     return sorted(name for name in result.stdout.decode("utf-8").split("\0") if name)
 
 
@@ -52,7 +52,7 @@ def builtin(worktree):
 def executable(name):
     found = shutil.which(name)
     if not found:
-        raise FridayError("missing", "%s is not installed; repo_map graphify needs graphifyy (uv tool install graphifyy)." % name)
+        raise FridayError("missing", "{name} is not installed; repo_map graphify needs graphifyy (uv tool install graphifyy).", name=name)
     return found
 
 
@@ -73,7 +73,7 @@ def build_graph(root, worktree):
     result = subprocess.run([executable("graphify"), "update", str(worktree)], env=env,
                             capture_output=True, text=True, timeout=900)
     if result.returncode or not graph.is_file():
-        raise FridayError("repo_map_failed", "graphify update failed: " + (result.stderr or result.stdout).strip()[-2000:])
+        raise FridayError("repo_map_failed", "graphify update failed: {value}", value=(result.stderr or result.stdout).strip()[-2000:])
     return graph
 
 

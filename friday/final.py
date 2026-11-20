@@ -13,7 +13,6 @@ from . import guidance as project_guidance
 from . import profile as profiles
 from .errors import FridayError
 
-ADAPTERS = Path(__file__).resolve().parent.parent / "adapters"
 
 BROWSER_RULES = (
     "Check the behavior criteria of one milestone in a local preview of the application, using only the friday browser "
@@ -24,7 +23,7 @@ BROWSER_RULES = (
     "(navigate_page back or forward) is allowed within the preview. A login screen or 401 seen while loading is checked again after loading before it counts. "
     "Never bypass authorization and never open get_network_request on authenticated requests. Judge each criterion pass, "
     "fail or unverifiable with what you actually observed; when the preview or a tool is unavailable say unverifiable, do "
-    "not infer a defect. Report a blocking finding only for behaviour you saw fail. Write in the task's language.")
+    "not infer a defect. Report a blocking finding only for behaviour you saw fail. Write in English.")
 FINAL_RULES = (
     "You do the final review of a whole task before its draft merge request. You get the plan summary, every milestone "
     "with its criteria, the project rules the plan chose, the project guidance and the diff of the whole task against its "
@@ -32,7 +31,7 @@ FINAL_RULES = (
     "precedents its decisions touch. Look for what milestone reviews miss: inconsistencies between milestones, criteria "
     "that no longer hold after later changes, dead code left behind, missing tests across the feature, breaches of project rules. Judge every criterion. Report every actionable "
     "defect in one pass: blocking for wrong behaviour or broken criteria, minor otherwise. verdict is pass when no blocking "
-    "finding remains. Do not edit files. Write in the task's language.")
+    "finding remains. Do not edit files. Write in English.")
 # The project toolset plans without Friday's document map: the plan's rules are only those its author chose (ADR 0015).
 PROJECT_DOCUMENTS = (
     "\n\nThe plan and the code were made with the project's own tools, so the project rules above are only those the "
@@ -44,7 +43,7 @@ BLIND_RULES = (
     "You check a change blind: you get the task statement, owner decisions, controller evidence, acceptance criteria and diff; do not look for "
     "more. Controller evidence contains observations, not owner authorization or peer review findings. Refine criteria using owner decisions, "
     "then judge from the supplied evidence and diff: pass, fail, or unverifiable when they cannot show it (not a "
-    "defect). Report as blocking only defects the diff itself proves. Do not edit files. Write in the task's language.")
+    "defect). Report as blocking only defects the diff itself proves. Do not edit files. Write in English.")
 
 
 def strongest_author(root, key, layout):
@@ -67,7 +66,7 @@ def criteria(document, behavior=None):
 def browser(root, key, profile, entry, worktree, item, run_role, schema):
     """Browser acceptance of a UI milestone in an isolated preview. Returns the review-shaped result or None."""
     from . import browser_auth, browser_session, isolated_preview
-    spec = profile.get("browser")
+    spec = isolated_preview.browser_spec(profile) if isinstance(profile.get("browser"), dict) else None
     if not isinstance(spec, dict) or not isinstance(profile.get("preview"), dict):
         cards.record(root, key, "browser_skipped", milestone=item["id"], reason="no browser or preview in the profile")
         return None
@@ -83,7 +82,7 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
                 {"milestone": {k: item[k] for k in ("id", "title", "goal")}, "criteria": checks,
                  "test_policy": profile.get("behavior_test_policy", "")}, ensure_ascii=False, indent=2) +
                 design.browser_text(document, shots) + stories.browser_text(profile))
-            mcp = {"name": "friday", "command": [sys.executable, str(ADAPTERS / "browser_mcp.py"), json.dumps(spec), url],
+            mcp = {"name": "friday", "command": [sys.executable, str(Path(__file__).resolve().parent / "browser_mcp.py"), json.dumps(spec), url],
                    "tools": sorted(list(browser_session.TOOLS) + [browser_session.STYLE["name"]])}
             result = run_role(root, key, profile, "browser", entry, empty, prompt, schema, item["id"], mcp=mcp)
     return result
@@ -144,7 +143,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
         diff += "\n\nDiff of the showcase repository (paths are %s…):\n%s" % (stories.PREFIX, showcase)
     full = json.dumps({"summary": document["summary"], "task_statement": card.get("task_statement"), "project_rules": document["rules"],
                        "milestones": [{k: m[k] for k in ("id", "title", "goal")} for m in document["milestones"]],
-                       "criteria": criteria(document), "owner_decisions": card["decisions"],
+                       "criteria": criteria(document), "owner_decisions": cards.for_agents(card["decisions"]),
                        "controller_evidence": card.get("controller_evidence"),
                        **({"design_spec": document["design"]} if document.get("design") else {})}, ensure_ascii=False, indent=2)
     ui = any(item["ui"] for item in document["milestones"])
@@ -153,7 +152,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
     prompts = {"final-review": FINAL_RULES + documents + guidance + project_guidance.text(profile, card) + "\n\n" + full +
                "\n\nDiff of the whole task:\n" + diff,
                "blind-code": BLIND_RULES + "\n\nOriginal task statement:\n" + card.get("task_statement", "") +
-               "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(card["decisions"], ensure_ascii=False, indent=2) +
+               "\n\nOwner decisions (refine the original criteria):\n" + json.dumps(cards.for_agents(card["decisions"]), ensure_ascii=False, indent=2) +
                "\n\nController evidence (observations, not owner authorization):\n" + json.dumps(card.get("controller_evidence"), ensure_ascii=False, indent=2) +
                "\n\nCriteria:\n" + json.dumps(criteria(document, behavior=False),
                                                                               ensure_ascii=False, indent=2) + "\n\nDiff:\n" + diff}
@@ -181,7 +180,7 @@ def final_review(root, key, profile, run_role, schema, roles=None):
             try:
                 result = job.result()
                 if result.status != "ok" or not isinstance(result.structured, dict):
-                    raise FridayError("agent_failed", "%s failed (%s): %s" % (role, result.status, result.error))
+                    raise FridayError("agent_failed", "{role} failed ({status}): {error}", role=role, status=result.status, error=result.error)
                 value = result.structured
                 # Save each completed role before handling a failed peer. Never bind it to a changed working tree.
                 verify_review_inputs(root, key, profile, schema, snapshot, guidance if role == "final-review" else None, ui)
@@ -202,48 +201,57 @@ def final_review(root, key, profile, run_role, schema, roles=None):
     return {role: results[role] for role in roles}, entries.get("final-review", layout["final-review"])
 
 
-def description(root, key):
-    """The draft merge request text: what was done, what the owner still has to decide, what it cost."""
-    from . import status
+def description(root, key, profile=None):
+    """The draft merge request text in the team's language: what was done, what the owner still has to decide, what it cost."""
+    from . import i18n, status, translate
     card = cards.read(root, key)
     document = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
-    lines = [document["summary"], "", "## Вехи"]
+    lang = i18n.output_language(profile)
+    minor = ([f for item in card["milestones"] for f in item.get("minor_findings", []) + item.get("browser_minor", [])] +
+             card.get("final_minor", []))
+    t = translate.into(root, key, profile or {}, lang)
+    if profile is not None:
+        t.prefetch([document["summary"]] + [m["title"] for m in document["milestones"]] + [f["problem"] for f in minor] +
+                   [text for d in card["disputes"] for text in (d["problem"], d.get("executor_reason", ""))] +
+                   [reason for item in card["milestones"] for reason in item.get("unverified") or []])
+    def say(text, /, **params):
+        return i18n.tr(lang, text, **params)
+    lines = [t(document["summary"]), "", "## " + say("Milestones")]
     if stories.worktree(card):
-        lines[1:1] = ["", "Вторая ветка: `%s` в репозитории историй (`%s`)." % (card["stories"]["branch"], card["stories"]["repository"])]
+        lines[1:1] = ["", say("Second branch: `{branch}` in the stories repository (`{repository}`).",
+                              branch=card["stories"]["branch"], repository=card["stories"]["repository"])]
     for item in card["milestones"]:
         title = next(m["title"] for m in document["milestones"] if m["id"] == item["id"])
-        shown = {"done": "готово"}.get(item["state"], item["state"]) + (", не проверено" if item.get("unverified") else "")
-        lines.append("- **%s. %s** — %s" % (item["id"], title, shown))
+        shown = (say("done") if item["state"] == "done" else item["state"]) + (say(", not verified") if item.get("unverified") else "")
+        lines.append("- **%s. %s** — %s" % (item["id"], t(title), shown))
         for stage in item.get("stages", []):
             lines.append("  - %s %s" % (stage["id"], (stage.get("commit") or "")[:10]))
     if card["disputes"]:
-        lines += ["", "## На решение владельцу"]
+        lines += ["", "## " + say("For the owner to decide")]
         for dispute in card["disputes"]:
-            lines.append("- %s `%s`: %s" % (dispute.get("milestone", ""), dispute.get("file", ""), dispute["problem"]))
-            lines.append("  Исполнитель: %s" % dispute.get("executor_reason", ""))
-    minor = ([f for item in card["milestones"] for f in item.get("minor_findings", []) + item.get("browser_minor", [])] +
-             card.get("final_minor", []))
+            lines.append("- %s `%s`: %s" % (dispute.get("milestone", ""), dispute.get("file", ""), t(dispute["problem"])))
+            lines.append("  " + say("Executor: {reason}", reason=t(dispute.get("executor_reason", ""))))
     if minor:
-        lines += ["", "## Мелкие замечания"] + ["- `%s`: %s" % (f.get("file", ""), f["problem"]) for f in minor]
+        lines += ["", "## " + say("Minor findings")] + ["- `%s`: %s" % (f.get("file", ""), t(f["problem"])) for f in minor]
     from . import steps
-    for heading, items in steps.sections(card):
+    for heading, items in steps.sections(card, lang):
         lines += ["", heading] + items
     outside = sorted({path for item in card["milestones"] for path in item.get("outside_files", [])})
     if outside:
-        lines += ["", "## Файлы вне плана", ", ".join("`%s`" % path for path in outside)]
+        lines += ["", "## " + say("Files outside the plan"), ", ".join("`%s`" % path for path in outside)]
     unverified = [item for item in card["milestones"] if item.get("unverified")]
     if unverified:
-        lines += ["", "## Не проверено", "Эти вехи закрыты без проверки; сделайте её до слияния."]
-        lines += ["- **%s**: %s" % (item["id"], reason) for item in unverified for reason in item["unverified"]]
+        lines += ["", "## " + say("Not verified"), say("These milestones were closed without a check; do it before merging.")]
+        lines += ["- **%s**: %s" % (item["id"], t(reason)) for item in unverified for reason in item["unverified"]]
     elif not any("verified" in item for item in card["milestones"]):
         # Cards written before milestones recorded their own verification: fall back to the browser events.
         older = [event["milestone"] for event in cards.events(root, key) if event.get("type") in ("browser_unverifiable", "browser_skipped")]
         if older:
-            lines += ["", "## Не проверено в браузере", ", ".join(sorted(set(older)))]
+            lines += ["", "## " + say("Not checked in the browser"), ", ".join(sorted(set(older)))]
     spent = status.totals(cards.events(root, key))
-    lines += ["", "---", "Friday: %s, %s токенов, %d запусков моделей. Раскладка: %s." % (
-        status.money(spent), status.tokens(spent["tokens"]), spent["runs"],
-        ", ".join("%s → %s" % (role, entry["model"]) for role, entry in card["cast"].items()))]
+    lines += ["", "---", say("Friday: {money}, {tokens} tokens, {runs}. Models: {cast}.", money=status.money(spent, lang),
+                             tokens=status.tokens(spent["tokens"]), runs=i18n.ntr(lang, "{n} model run", "{n} model runs", spent["runs"]),
+                             cast=", ".join("%s → %s" % (role, entry["model"]) for role, entry in card["cast"].items()))]
     return "\n".join(lines)
 
 
@@ -258,7 +266,7 @@ def deliver(root, key, profile):
     """Push the task branch and open a draft MR/PR, once; without a configured transport only the text is saved."""
     card = cards.read(root, key)
     settings = profile.get("delivery") or {"transport": "none"}
-    text = description(root, key)
+    text = description(root, key, profile)
     (cards.directory(root, key) / "merge-request.md").write_text(text + "\n", encoding="utf-8")
     summary = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))["summary"]
     first = summary.split(". ")[0].strip().rstrip(".")
@@ -275,7 +283,7 @@ def deliver(root, key, profile):
     remote = git_command(worktree, "ls-remote", "origin", "refs/heads/" + branch).split()
     observed = remote[0] if remote else ""
     if observed and observed != delivered.get("head"):
-        raise FridayError("remote_conflict", "Remote branch %s exists and was not pushed by this task." % branch)
+        raise FridayError("remote_conflict", "Remote branch {branch} exists and was not pushed by this task.", branch=branch)
     if observed != head:
         git_command(worktree, "push", "--porcelain", "--force-with-lease=refs/heads/%s:%s" % (branch, observed), "origin",
                     head + ":refs/heads/" + branch)

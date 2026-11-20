@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "friday-pipeline"
+dynamic = ["version"]
+description = "A development pipeline that runs Claude Code and Codex agents from a task to a draft merge request"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "avocawo" }]
+keywords = ["ai", "agents", "claude-code", "codex", "code-review", "developer-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = []
+
+[project.scripts]
+friday = "friday.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/avocawo/friday"
+Issues = "https://github.com/avocawo/friday/issues"
+Changelog = "https://github.com/avocawo/friday/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["friday"]
+
+[tool.setuptools.dynamic]
+version = { attr = "friday.__version__" }
+
+[tool.setuptools.package-data]
+friday = ["templates/*.md", "locales/*.json"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 140
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E9", "F", "B006", "B008", "UP004", "S102", "S307"]

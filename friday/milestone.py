@@ -54,7 +54,7 @@ EXECUTOR_RULES = (
     "change git configuration, do not delete or rewrite earlier commits. Report your checks honestly: checks is passed "
     "when every available check ran on your last commit and passed, failed when a check ran and reported errors, not_run "
     "when a check could not run at all (missing dependencies, a crashing tool, no commands available); say which and why "
-    "in checks_note. Write summary and checks_note in the task's language.")
+    "in checks_note. Write summary and checks_note in English.")
 REVIEW_RULES = (
     "You review one milestone of an approved plan. You get the milestone's goal, criteria, the project rules the plan "
     "chose and the project guidance, "
@@ -63,7 +63,7 @@ REVIEW_RULES = (
     "in the base revision that its decisions touch, not only against the rules listed. Judge every criterion as pass, fail or unverifiable with concrete evidence "
     "(file and line). Report every actionable defect in one pass: blocking for wrong behaviour, broken criteria, breaches "
     "of project rules or missing tests; minor for anything that can wait. Do not report style the linter accepts. "
-    "verdict is pass when no blocking finding remains. Do not edit files. Write problems and evidence in the task's language.")
+    "verdict is pass when no blocking finding remains. Do not edit files. Write problems and evidence in English.")
 
 
 def git(worktree, *args):
@@ -89,7 +89,7 @@ def define(document, milestone_id):
     for item in document["milestones"]:
         if item["id"] == milestone_id:
             return item
-    raise FridayError("not_found", "Unknown milestone: " + milestone_id)
+    raise FridayError("not_found", "Unknown milestone: {milestone_id}", milestone_id=milestone_id)
 
 
 def set_state(root, key, milestone_id, **changes):
@@ -98,7 +98,7 @@ def set_state(root, key, milestone_id, **changes):
             if item["id"] == milestone_id:
                 item.update(changes)
                 return
-        raise FridayError("not_found", "Unknown milestone: " + milestone_id)
+        raise FridayError("not_found", "Unknown milestone: {milestone_id}", milestone_id=milestone_id)
     cards.update(root, key, change)
 
 
@@ -166,7 +166,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                    "\n\nShell commands you may run, each starting exactly like one of "
                    "these (anything else is denied; run one command per call, without pipes or redirection):\n" +
                    "\n".join("- " + command for command in allowed) + "\n\n" +
-                   milestone_text(key, document, item, card["decisions"], card.get("task_statement"), card.get("controller_evidence")))
+                   milestone_text(key, document, item, cards.for_agents(card["decisions"]), card.get("task_statement"), card.get("controller_evidence")))
     if start != head:
         base_prompt += "\n\nContinue the retained commits on this branch; completed stages need no dummy commit."
         previous = next((event for event in reversed(cards.events(root, key))
@@ -187,11 +187,11 @@ def run(root, key, profile, milestone_id, worktree=None):
         if result.status == "quota":
             available = models.availability(root)
             entry, note = models.executor(profile, layout, item["complexity"], failures, entry, available)
-            cards.record(root, key, "cast_note", milestone=milestone_id, note=note or "квота исполнителя")
+            cards.record(root, key, "cast_note", milestone=milestone_id, note=note or "executor quota")
             prompt, session = base_prompt + ("\n\nPrevious attempt feedback:\n" + feedback_text if round_number > 1 else ""), None
             continue
         if result.status != "ok":
-            raise FridayError("agent_failed", "Executor failed on %s (%s): %s" % (milestone_id, result.status, result.error))
+            raise FridayError("agent_failed", "Executor failed on {milestone_id} ({status}): {error}", milestone_id=milestone_id, status=result.status, error=result.error)
         session = result.session
         answer = result.structured or {}
         if answer.get("summary"):
@@ -232,13 +232,13 @@ def run(root, key, profile, milestone_id, worktree=None):
                 if gate_record["status"] in ("environment_unavailable", "image_stale"):
                     set_state(root, key, milestone_id, state="blocked")
                     stale_image(profile, key, gate_record)
-                    raise FridayError("environment_unavailable", "The gate environment is unavailable; see " + gate_record["log"])
+                    raise FridayError("environment_unavailable", "The gate environment is unavailable; see {log}", log=gate_record["log"])
             elif checks == "not_run" and profile.get("executor_commands"):
                 # Nothing else checks this commit: a broken environment blocks the milestone instead of passing it unchecked.
                 set_state(root, key, milestone_id, state="blocked", blocked_reason=checks_note)
                 cards.record(root, key, "milestone_blocked", milestone=milestone_id, reason=checks_note)
-                raise FridayError("environment_unavailable", "The executor's checks could not run on %s and there is no gate: %s"
-                                  % (milestone_id, checks_note))
+                raise FridayError("environment_unavailable", "The executor's checks could not run on {milestone} and there is no gate: {note}",
+                                  milestone=milestone_id, note=checks_note)
             if gate_record is None and checks == "failed":
                 failures += 1
                 feedback_text = ("Your own checks fail on your last commit and no gate checks it instead. Fix the errors "
@@ -256,7 +256,7 @@ def run(root, key, profile, milestone_id, worktree=None):
                     if review_value is not None:
                         break
                 if review_value is None:
-                    raise FridayError("agent_failed", "No reviewer with quota is available for " + milestone_id)
+                    raise FridayError("agent_failed", "No reviewer with quota is available for {milestone_id}", milestone_id=milestone_id)
                 # Exact match only: a rephrased repeat of a disputed finding goes back to the executor once more.
                 disputed = {(d["file"], d["problem"]) for d in disputes}
                 findings = [finding for finding in review_value["findings"]
@@ -284,16 +284,16 @@ def run(root, key, profile, milestone_id, worktree=None):
         reason = "no commits" if mark() == start_mark else ("the gate never passed" if profile.get("gate") else "no check ever passed")
         set_state(root, key, milestone_id, state="failed")
         cards.record(root, key, "milestone_failed", milestone=milestone_id, reason=reason)
-        raise FridayError("milestone_failed", "Milestone %s was never reviewed: %s." % (milestone_id, reason))
+        raise FridayError("milestone_failed", "Milestone {milestone_id} was never reviewed: {reason}.", milestone_id=milestone_id, reason=reason)
     if gate_record is None or gate_record["status"] == "passed":
         # The pipeline does not stop on review disagreement: what remains goes to the owner with the draft.
         for finding in findings:
-            disputes.append(dict(finding, milestone=milestone_id, executor_reason="Не исправлено за отведённые круги.",
+            disputes.append(dict(finding, milestone=milestone_id, executor_reason="Not fixed within the allowed rounds.",
                                  executor_evidence="", reviewer=review_entry["model"], status="owner"))
         return close(root, key, milestone_id, item, start, worktree, review_value, gate_record, disputes, extra, ROUNDS)
     set_state(root, key, milestone_id, state="failed")
     cards.record(root, key, "milestone_failed", milestone=milestone_id, gate=gate_record["log"])
-    raise FridayError("milestone_failed", "Milestone %s still fails the gate after all rounds; see %s" % (milestone_id, gate_record["log"]))
+    raise FridayError("milestone_failed", "Milestone {milestone_id} still fails the gate after all rounds; see {log}", milestone_id=milestone_id, log=gate_record["log"])
 
 
 def accept_in_browser(root, key, profile, layout, author, worktree, item):
@@ -303,7 +303,7 @@ def accept_in_browser(root, key, profile, layout, author, worktree, item):
         cards.record(root, key, "cast_note", milestone=item["id"], note=note)
     result = final.browser(root, key, profile, entry, worktree, item, run_role, REVIEW_SCHEMA)
     if result is None:
-        set_state(root, key, item["id"], browser={"status": "skipped", "reason": "в профиле нет браузера или preview"})
+        set_state(root, key, item["id"], browser={"status": "skipped", "reason": "the profile has no browser or preview"})
         return []
     if result.status != "ok" or not isinstance(result.structured, dict):
         cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason=result.error or result.status)
@@ -318,11 +318,11 @@ def accept_in_browser(root, key, profile, layout, author, worktree, item):
     set_state(root, key, item["id"], browser_minor=[f for f in value["findings"] if f["severity"] == "minor"])
     if not statuses or all(status == "unverifiable" for status in statuses):
         cards.record(root, key, "browser_unverifiable", milestone=item["id"], reason="no criterion could be observed")
-        set_state(root, key, item["id"], browser={"status": "unverifiable", "reason": "ни один критерий не удалось наблюдать"})
+        set_state(root, key, item["id"], browser={"status": "unverifiable", "reason": "no criterion could be observed"})
     elif themes and any(result == "unverifiable" for result in themes.values()):
         missing = [name for name, result in themes.items() if result == "unverifiable"]
         set_state(root, key, item["id"], themes=themes, browser={"status": "unverifiable",
-                                                                 "reason": "не проверены темы: " + ", ".join(missing)})
+                                                                 "reason": "themes not checked: " + ", ".join(missing)})
     else:
         set_state(root, key, item["id"], browser={"status": "checked", "reason": ""}, **({"themes": themes} if themes else {}))
     return [finding for finding in value["findings"] if finding["severity"] == "blocking"]
@@ -337,7 +337,7 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
     gate_text = ("not configured" if gate_record is None else "%s on %s (command: %s)" % (
         gate_record["status"], gate_record["head"], " ".join(profile.get("gate", []))))
     prompt = (REVIEW_RULES + design.guidance(profile, "review", document, item["ui"]) + guidance.text(profile, card) +
-              "\n\n" + milestone_text(key, document, item, card["decisions"], card.get("task_statement"), card.get("controller_evidence")) +
+              "\n\n" + milestone_text(key, document, item, cards.for_agents(card["decisions"]), card.get("task_statement"), card.get("controller_evidence")) +
               "\n\nGate: " + gate_text + "\n\nDiff of this milestone:\n" + diff)
     if previous:
         prompt += "\n\nYour previous blocking findings, which the executor has now addressed:\n" + numbered(previous)
@@ -348,7 +348,7 @@ def review(root, key, profile, entry, worktree, document, item, start, gate_reco
     if result.status == "quota":
         return None
     if result.status != "ok" or not isinstance(result.structured, dict):
-        raise FridayError("agent_failed", "Review of %s failed (%s): %s" % (item["id"], result.status, result.error))
+        raise FridayError("agent_failed", "Review of {id} failed ({status}): {error}", id=item["id"], status=result.status, error=result.error)
     value = result.structured
     cards.record(root, key, "milestone_reviewed", milestone=item["id"], verdict=value["verdict"], model=entry["model"],
                  blocking=sum(f["severity"] == "blocking" for f in value["findings"]),
@@ -391,14 +391,14 @@ def unverified(item, entry, gate_record):
     reasons = []
     gate_passed = bool(gate_record) and gate_record.get("status") == "passed"
     if gate_record is None:
-        reasons.append("гейт не настроен: изолированной проверки не было")
+        reasons.append("no gate is configured: there was no isolated check")
     if not gate_passed and entry.get("checks", "passed") != "passed":
-        reasons.append("проверки исполнителя %s: %s" % ({"failed": "не прошли", "not_run": "не запускались"}.get(
-            entry["checks"], entry["checks"]), entry.get("checks_note") or "без пояснения"))
+        reasons.append("the executor's checks %s: %s" % ({"failed": "failed", "not_run": "did not run"}.get(
+            entry["checks"], entry["checks"]), entry.get("checks_note") or "no explanation"))
     browser = entry.get("browser") or {}
     if item.get("ui") and browser.get("status") != "checked":
-        reasons.append("браузерная приёмка %s: %s" % ({"skipped": "не проводилась", "unverifiable": "не смогла проверить"}.get(
-            browser.get("status"), "не проводилась"), browser.get("reason") or "нет данных"))
+        reasons.append("browser acceptance %s: %s" % ({"skipped": "did not run", "unverifiable": "could not check"}.get(
+            browser.get("status"), "did not run"), browser.get("reason") or "no data"))
     return reasons
 
 
@@ -410,7 +410,7 @@ EXECUTE_SCHEMA = {"type": "object", "additionalProperties": False, "required": [
                   "properties": {"summary": {"type": "string"}, "questions": {"type": "array", "items": {"type": "string"}}}}
 EXECUTE_RULES = (
     "This session runs inside Friday with no human at the keyboard. Where your process would ask the user and wait, end "
-    "the session instead and put the question in questions, in the task's language; the owner answers and this session "
+    "the session instead and put the question in questions, in English; the owner answers and this session "
     "continues. Commit every stage with a subject that starts with its id from the list below and a colon, for example "
     "\"S1: …\"; a fix of a stage starts with the same id. Do not push and do not open a merge request: after the session "
     "Friday runs the gate, checks the size of every stage, accepts the interface in the browser and delivers. Put what "
@@ -450,7 +450,7 @@ def project_run(root, key, profile, answer=None):
     if value["questions"]:
         return value["questions"]
     if git(worktree, "status", "--porcelain").strip():
-        return ["Сессия оставила незакоммиченные изменения в %s. Закоммитить их по этапам или отбросить?" % worktree]
+        return ["The session left uncommitted changes in %s. Commit them by stage or discard them?" % worktree]
     problems = project_size(worktree, card["base"], document, profile.get("limits"))
     if problems:
         cards.record(root, key, "execution_size", problems=problems)
@@ -463,9 +463,9 @@ def project_run(root, key, profile, answer=None):
         cards.record(root, key, "gate", milestone="execute", status=record["status"], head=record["head"], log=record["log"])
         stale_image(profile, key, record)
         if record["status"] == "environment_unavailable":
-            raise FridayError("environment_unavailable", "The gate environment is unavailable; see " + record["log"])
+            raise FridayError("environment_unavailable", "The gate environment is unavailable; see {log}", log=record["log"])
         if record["status"] != "passed":
-            return ["Гейт не проходит после сессии исполнения, лог: %s. Продолжить сессию с этим логом?" % record["log"]]
+            return ["The gate fails after the execution session, log: %s. Continue the session with this log?" % record["log"]]
     blocking = []
     for item in document["milestones"]:
         set_state(root, key, item["id"], checks="passed")
@@ -473,7 +473,7 @@ def project_run(root, key, profile, answer=None):
             blocking += [dict(finding, milestone=item["id"]) for finding in
                          accept_in_browser(root, key, profile, card["cast"], entry, worktree, item)]
     if blocking:
-        return ["Браузерная приёмка нашла блокирующее:\n" + numbered(blocking)]
+        return ["Browser acceptance found blocking defects:\n" + numbered(blocking)]
     for item in document["milestones"]:
         close_project(root, key, worktree, card["base"], item, record)
         set_state(root, key, item["id"], summary=value["summary"], executor=entry["model"])
@@ -485,9 +485,11 @@ def stale_image(profile, key, record):
     if record["status"] != "image_stale":
         return
     name = profile.get("gate_image_step")
-    action = ("соберите его: %s, затем friday resume %s" % (steps.hint(profile, name), key) if name else
-              "шага сборки образа в профиле нет (gate_image_step); соберите образ и выполните friday resume %s" % key)
-    raise FridayError("image_stale", "Образ гейта собран под другой lock-файл (лог: %s); %s." % (record["log"], action))
+    if name:
+        raise FridayError("image_stale", "The gate image was built for another lockfile (log: {log}); build it: {step}, then "
+                          "friday resume {key}.", log=record["log"], step=steps.hint(profile, name), key=key)
+    raise FridayError("image_stale", "The gate image was built for another lockfile (log: {log}); the profile has no image "
+                      "build step (gate_image_step): build the image and run friday resume {key}.", log=record["log"], key=key)
 
 
 def stage_commits(worktree, base, stage_id):
@@ -503,7 +505,7 @@ def project_size(worktree, base, document, limits=None):
         for stage in item["stages"]:
             commits = stage_commits(worktree, base, stage["id"])
             if not commits:
-                problems.append("Этап %s без коммита с «%s:» в теме." % (stage["id"], stage["id"]))
+                problems.append("Stage %s has no commit with \"%s:\" in its subject." % (stage["id"], stage["id"]))
                 continue
             files, added = set(), 0
             for sha in commits:
@@ -513,7 +515,7 @@ def project_size(worktree, base, document, limits=None):
                         files.add(parts[2])
                         added += int(parts[0]) if parts[0].isdigit() else 0
             if len(files) > limits["stage_files"] or added > limits["stage_lines"]:
-                problems.append("Этап %s: %d файлов и %d добавленных строк при лимите %d и %d." % (
+                problems.append("Stage %s: %d files and %d added lines over the limits of %d and %d." % (
                     stage["id"], len(files), added, limits["stage_files"], limits["stage_lines"]))
     return problems
 
@@ -540,12 +542,12 @@ def run_task(root, key, profile, answer=None):
     """Run every milestone whose dependencies are done, in plan order, until none is left."""
     card = cards.read(root, key)
     if card["state"] not in ("approved", "running", "stopped") or not card["plan"]["approved"]:
-        raise FridayError("invalid_state", "Approve the plan of %s before running it." % key)
+        raise FridayError("invalid_state", "Approve the plan of {key} before running it.", key=key)
     for item in card["milestones"]:
         if item.get("recovery_worktree") and (os.path.lexists(item["recovery_worktree"]) or
                 git(profile["repository"], "branch", "--list", item["recovery_branch"]).strip()):
-            raise FridayError("parallel_recovery_required", "Inspect retained work for %s before resuming: %s (%s)."
-                              % (item["id"], item["recovery_worktree"], item["recovery_branch"]))
+            raise FridayError("parallel_recovery_required", "Inspect retained work for {milestone} before resuming: {worktree} ({branch}).",
+                              milestone=item["id"], worktree=item["recovery_worktree"], branch=item["recovery_branch"])
     cards.update(root, key, lambda value: value.update(state="running", runner_pid=os.getpid()))
     cards.record(root, key, "run_task_started")
     previous = None
@@ -577,8 +579,9 @@ def run_task(root, key, profile, answer=None):
     except FridayError as error:
         if error.code == "image_stale":
             # The owner's step, not a question for the session: resume repeats the checks without waking it.
-            cards.update(root, key, lambda value: value.update(state="stopped", owner_step=str(error)))
-            cards.record(root, key, "owner_step", text=str(error))
+            step = str(error)
+            cards.update(root, key, lambda value: value.update(state="stopped", owner_step=step))
+            cards.record(root, key, "owner_step", text=step)
         else:
             cards.update(root, key, lambda value: value.update(state="failed"))
         raise
@@ -653,11 +656,11 @@ def finish(root, key, profile):
             cards.stop_waiting(root, key, "final")
             cards.record(root, key, "gate", milestone="final", status=record["status"], head=record["head"])
             if record["status"] != "passed":
-                raise FridayError("final_failed", "The gate fails after the final fixes; see " + record["log"])
+                raise FridayError("final_failed", "The gate fails after the final fixes; see {log}", log=record["log"])
         again, _ = final.final_review(root, key, profile, run_role, REVIEW_SCHEMA, roles=("final-review",))
         disputed = {(d["file"], d["problem"]) for d in disputes}
         remaining = [f for f in again["final-review"]["findings"] if f["severity"] == "blocking" and (f["file"], f["problem"]) not in disputed]
-        disputes += [dict(f, milestone="final", executor_reason="Не исправлено после финального ревью.", executor_evidence="",
+        disputes += [dict(f, milestone="final", executor_reason="Not fixed after the final review.", executor_evidence="",
                           reviewer=final_entry["model"], status="owner") for f in remaining]
         if disputes:
             cards.update(root, key, lambda value: value["disputes"].extend(disputes))
@@ -768,7 +771,7 @@ def integrate(root, key, profile, name, main, lane):
         if result.returncode:
             subprocess.run(["git", "-C", main, "cherry-pick", "--abort"], capture_output=True)
             set_state(root, key, name, state="failed")
-            raise FridayError("merge_conflict", "Parallel milestone %s conflicts with the task branch: %s" % (name, result.stderr.strip()))
+            raise FridayError("merge_conflict", "Parallel milestone {name} conflicts with the task branch: {value}", name=name, value=result.stderr.strip())
     subjects = [line.split(" ", 1) for line in git(main, "log", "--format=%H %s", before + "..HEAD").splitlines()]
     stages = [{"id": stage["id"], "commit": next((sha for sha, subject in subjects if (" " + stage["id"] + ":") in (" " + subject)), None)}
               for stage in item["stages"]]
@@ -776,15 +779,18 @@ def integrate(root, key, profile, name, main, lane):
     cards.record(root, key, "parallel_integrated", milestone=name, commits=len(commits))
 
 
-def decide(root, key, name, text, reopen=()):
+def decide(root, key, name, text, reopen=(), profile=None):
     """Record an owner decision; of the milestones the owner names (and those after them) the done ones are reopened.
-    Returns the reopened milestones: one that has not run yet only gets the decision in its context."""
+    Returns the reopened milestones: one that has not run yet only gets the decision in its context. The decision is
+    kept as written; agents get its English translation."""
+    from . import translate
+    english = translate.to_english(root, key, profile, text) if profile is not None else text
     def change(value):
         ids = {item["id"] for item in value["milestones"]}
         unknown = set(reopen) - ids
         if unknown:
-            raise FridayError("not_found", "Unknown milestones: " + ", ".join(sorted(unknown)))
-        decision = {"name": name, "text": text, "reopen": list(reopen)}
+            raise FridayError("not_found", "Unknown milestones: {items}", items=", ".join(sorted(unknown)))
+        decision = dict({"name": name, "text": text, "reopen": list(reopen)}, **({"text_en": english} if english != text else {}))
         if decision not in value["decisions"][-1:]:  # decide repeated after a failed plan revision
             value["decisions"].append(decision)
         affected = set(reopen)
@@ -810,7 +816,7 @@ def resume(root, key, profile):
     """Run a stopped or failed task again: failed or blocked milestones start over from the current branch."""
     def change(value):
         if value["state"] not in ("stopped", "failed", "approved", "running") or not value["plan"]["approved"]:
-            raise FridayError("invalid_state", "Task %s has nothing to resume (%s)." % (key, value["state"]))
+            raise FridayError("invalid_state", "Task {key} has nothing to resume ({state}).", key=key, state=value["state"])
         for item in value["milestones"]:
             if item["state"] in ("failed", "blocked", "running"):
                 item["state"] = "pending"

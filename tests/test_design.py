@@ -1,6 +1,5 @@
 import base64
 import contextlib
-import copy
 import json
 import tempfile
 import threading
@@ -180,7 +179,7 @@ class PlanWithFigmaTests(unittest.TestCase):
         self.assertIn("design", json.loads(planner["argv"][planner["argv"].index("--json-schema") + 1])["required"])
         self.assertIn("get_screenshot and get_design_context", planner["prompt"])
         self.assertIn("a missing or wrong design fact is blocking", reviewer["prompt"])
-        self.assertIn("## Макет\n- Высота 40px, скругление 8px (12:34)", plan.render(self.root, "T-1"))
+        self.assertIn("## Mockup\n- Высота 40px, скругление 8px (12:34)", plan.render(self.root, "T-1"))
 
     def test_plan_without_a_design_specification_goes_back_to_the_planner(self):
         self.profile["design"] = {"figma": {}}

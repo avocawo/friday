@@ -112,7 +112,7 @@ class StepTests(unittest.TestCase):
         git("commit", "-qam", "change a source", cwd=self.worktree)
         self.assertEqual(steps.state(self.profile, value(), "bundle"), "stale")
         self.assertEqual(steps.pending(self.profile, value()), ["bundle"])
-        self.assertIn("bundle (задача, обязательный) — устарел", steps.listing(self.profile, value()))
+        self.assertIn("bundle (task, required) — stale", steps.listing(self.profile, value()))
 
     def test_a_dist_recorded_before_steps_counts_as_the_step(self):
         head = git("rev-parse", "HEAD", cwd=self.worktree).strip()
@@ -140,11 +140,11 @@ class StepTests(unittest.TestCase):
         card.update(self.root, "T-1", lambda value: value.update(delivery={"head": "0" * 40, "branch": "T-1"}))
         report = self.run_step("bundle")
         text = (directory / "merge-request.md").read_text()
-        self.assertIn("## Шаги профиля\n- bundle: коммит", text)
-        self.assertNotIn("не выполнен", text)
-        self.assertIn("ещё не запушен", steps.text(report))
+        self.assertIn("## Profile steps\n- bundle: commit", text)
+        self.assertNotIn("not run", text)
+        self.assertIn("is not pushed yet", steps.text(report))
         self.assertIn("stray.txt", steps.text(report))
-        self.assertNotIn("Шаги профиля не выполнены", final.description(self.root, "T-1"))
+        self.assertNotIn("Profile steps not done", final.description(self.root, "T-1"))
 
     def test_secrets_are_passed_by_path_and_never_opened(self):
         real_open = open

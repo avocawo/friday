@@ -186,7 +186,7 @@ def browser_text(profile):
             "the page (the area dims instead of reacting) is a blocking defect, even when the same state is right in the "
             "other theme. Report each criterion once per theme, starting its criterion text with [<theme>], for example "
             "[%s] %s; name the theme in every finding it concerns."
-            % (", ".join(names), urls, names[-1], "hover отличается от покоя"))
+            % (", ".join(names), urls, names[-1], "hover differs from rest"))
 
 
 def theme_results(criteria_results, profile):

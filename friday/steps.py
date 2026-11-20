@@ -12,6 +12,7 @@ from pathlib import Path
 from . import card as cards
 from . import stories
 from .errors import FridayError
+from .i18n import N_, _
 from .locks import locked
 
 FIELDS = {"run", "description", "scope", "required", "env", "cwd", "commit", "check", "secrets", "lock"}
@@ -20,7 +21,7 @@ PROFILE_PLACES = {"profile_dir", "repository", "base_branch", "stories_repositor
 TASK_PLACES = PROFILE_PLACES | {"key", "worktree", "branch", "base", "head", "showcase"}
 PLACEHOLDER = re.compile(r"\{([a-z_]+(?:\.[A-Za-z0-9_-]+)?)\}")
 NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
-STATES = {"done": "выполнен", "stale": "устарел", "pending": "не выполнен", "failed": "последний запуск упал"}
+STATES = {"done": N_("done"), "stale": N_("stale"), "pending": N_("not run"), "failed": N_("the last run failed")}
 
 
 def argv_list(value):
@@ -186,9 +187,11 @@ def attention_of(card):
         return []
 
 
-def sections(card):
+def sections(card, lang=None):
     """MR text sections: steps that need the owner, and steps whose result is on the branch."""
+    from . import i18n
     from . import profile as profiles
+    lang = lang or i18n.language()
     try:
         selected = profiles.load(card["profile"])
     except (FridayError, OSError, KeyError):
@@ -197,12 +200,13 @@ def sections(card):
     result = []
     waiting = [item for item in items if item["state"] != "done" and (item["required"] or item["state"] == "failed")]
     if waiting:
-        result.append(("## Шаги профиля не выполнены", ["- %s — %s: `%s`" % (item["name"], STATES[item["state"]], item["command"])
-                                                        for item in waiting]))
+        result.append(("## " + i18n.tr(lang, "Profile steps not done"),
+                       ["- %s — %s: `%s`" % (item["name"], i18n.tr(lang, STATES[item["state"]]), item["command"]) for item in waiting]))
     done = [(item["name"], recorded(card, item["name"])) for item in items if item["state"] == "done"]
     done = [(name, value) for name, value in done if value and value.get("commit")]
     if done:
-        result.append(("## Шаги профиля", ["- %s: коммит `%s`" % (name, value["commit"][:10]) for name, value in done]))
+        result.append(("## " + i18n.tr(lang, "Profile steps"), [i18n.tr(lang, "- {name}: commit `{commit}`", name=name, commit=value["commit"][:10])
+                                                                for name, value in done]))
     return result
 
 
@@ -283,7 +287,8 @@ def after_task_step(root, key, report):
         notes["mr_text"] = str(text)
     delivery = cards.read(root, key).get("delivery") or {}
     if report.get("commit") and delivery.get("head") and delivery["head"] != report["commit"]:
-        notes["push"] = "Ветка %s уже доставлена; коммит шага ещё не запушен, а текст MR на сервере не обновлён." % delivery.get("branch", "")
+        notes["push"] = _("Branch {branch} is already delivered; the step's commit is not pushed yet and the MR text on the server "
+                          "is not updated.", branch=delivery.get("branch", ""))
     return notes
 
 
@@ -311,28 +316,29 @@ def listing(profile, card=None):
     for name, step in sorted((profile.get("steps") or {}).items()):
         shown = ""
         if step["scope"] == "task" and card:
-            shown = " — " + STATES[state(profile, card, name)]
-        lines.append("%s (%s%s)%s" % (name, "задача" if step["scope"] == "task" else "профиль",
-                                      ", обязательный" if step.get("required") else "", shown))
+            shown = " — " + _(STATES[state(profile, card, name)])
+        lines.append("%s (%s%s)%s" % (name, _("task") if step["scope"] == "task" else _("profile"),
+                                      ", " + _("required") if step.get("required") else "", shown))
         if step.get("description"):
             lines.append("  " + step["description"])
-    return "\n".join(lines) or "В профиле нет шагов (steps)."
+    return "\n".join(lines) or _("The profile has no steps (steps).")
 
 
 def text(report):
     if report.get("dry_run"):
-        lines = ["Шаг %s (пробный прогон, ничего не запускается):" % report["name"], "  cwd: " + report["cwd"]]
+        lines = [_("Step {name} (dry run, nothing runs):", name=report["name"]), "  cwd: " + report["cwd"]]
         lines += ["  env: %s=%s" % item for item in sorted(report["env"].items())]
         if report.get("lock"):
-            lines.append("  блокировка: " + report["lock"])
+            lines.append("  " + _("lock: {lock}", lock=report["lock"]))
         return "\n".join(lines + ["  $ " + " ".join(report["argv"])])
-    lines = ["Шаг %s выполнен%s." % (report["name"], ", коммит " + report["commit"][:12] if report.get("commit") else "")]
+    lines = [_("Step {name} done, commit {commit}.", name=report["name"], commit=report["commit"][:12]) if report.get("commit") else
+             _("Step {name} done.", name=report["name"])]
     if report.get("stat"):
         lines += ["", report["stat"]]
     if report.get("left"):
-        lines += ["", "Шаг оставил в рабочей копии изменения вне своих путей — разберитесь до следующего шага:", report["left"]]
+        lines += ["", _("The step left changes in the worktree outside its paths; sort them out before the next step:"), report["left"]]
     if report.get("mr_text"):
-        lines.append("Текст MR обновлён: " + report["mr_text"])
+        lines.append(_("MR text updated: {path}", path=report["mr_text"]))
     if report.get("push"):
         lines.append(report["push"])
     return "\n".join(lines)

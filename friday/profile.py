@@ -102,11 +102,11 @@ def project_toolset(selected):
 
 def read_layers(path, seen):
     if path in seen:
-        raise FridayError("invalid_profile", "Profile inheritance contains a cycle: " + str(path))
+        raise FridayError("invalid_profile", "Profile inheritance contains a cycle: {path}", path=str(path))
     try:
         layer = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise FridayError("invalid_profile", "Cannot load profile %s: %s" % (path, exc))
+        raise FridayError("invalid_profile", "Cannot load profile {path}: {exc}", path=path, exc=exc)
     if not isinstance(layer, dict):
         raise FridayError("invalid_profile", "Profile must contain a JSON object.")
     parent = layer.pop("extends", None)
@@ -121,8 +121,8 @@ def read_layers(path, seen):
     for field in ("repository", "journal_dir", "worktree_root", "dor_file"):
         if field in layer:
             if not isinstance(layer[field], str) or not layer[field]:
-                raise FridayError("invalid_profile", field + " must be a non-empty path.")
-            layer[field] = str((path.parent / layer[field]).resolve())
+                raise FridayError("invalid_profile", "{field} must be a non-empty path.", field=field)
+            layer[field] = str((path.parent / Path(layer[field]).expanduser()).resolve())
     if not parent:
         return layer
     parent_path = (path.parent / Path(parent).expanduser()).resolve()
@@ -146,7 +146,7 @@ def load(path):
         try:
             re.compile(pattern)
         except (re.error, TypeError) as exc:
-            raise FridayError("invalid_profile", "Invalid environment error pattern: %s" % exc)
+            raise FridayError("invalid_profile", "Invalid environment error pattern: {exc}", exc=exc)
     policy = profile.get("engineering_policy", [])
     if not isinstance(policy, list) or any(not isinstance(item, str) or not item.strip() for item in policy):
         raise FridayError("invalid_profile", "engineering_policy must be an array of non-empty instructions.")
