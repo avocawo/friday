@@ -17,6 +17,7 @@ from .errors import FridayError
 from .i18n import N_
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
+PAGE = "{key}.md"
 MARKER = "<!-- friday:generated %s -->"
 FIELD = "friday_generated: %s"
 NOTES = re.compile(r"<!-- friday:notes -->\n(.*?)<!-- /friday:notes -->", re.S)
@@ -36,12 +37,18 @@ HEADINGS = {"plan": N_("Plan"), "milestones": N_("Milestones"), "disputes": N_("
 def sinks(profile):
     value = profile.get("journal")
     if value is None and profile.get("journal_dir"):
-        value = [{"kind": "markdown", "dir": profile["journal_dir"]}]
+        value = [dict({"kind": "markdown", "dir": profile["journal_dir"]},
+                      **({"page": profile["journal_page"]} if profile.get("journal_page") else {}))]
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(item, dict) or item.get("kind") not in ("markdown", "jsonl")
                                           or not isinstance(item.get("dir"), str) for item in value):
         raise FridayError("invalid_profile", "journal must list sinks with kind markdown or jsonl and a dir.")
+    for item in value:
+        page = item.get("page", PAGE)
+        if (not isinstance(page, str) or "{key}" not in page or not page.endswith(".md") or page.startswith("/")
+                or ".." in page.split("/")):
+            raise FridayError("invalid_profile", "journal page must be a .md path inside the folder with {key}, like {key}/Friday.md.")
     base = Path(profile.get("path", ".")).parent
     return [dict(item, dir=str((base / Path(item["dir"]).expanduser()).resolve())) for item in value]
 
@@ -112,12 +119,20 @@ def describe(event, lang="en", t=lambda text: text):
         "milestone_reviewed": lambda: say("{milestone}: review by {model} — {verdict}, {blocking} blocking.", milestone=milestone,
                                           model=event.get("model"), verdict=event.get("verdict"), blocking=event.get("blocking")),
         "browser_checked": lambda: say("{milestone}: browser acceptance by {model} — {verdict}.", milestone=milestone,
-                                       model=event.get("model"), verdict=event.get("verdict")),
+                                       model=event.get("model"), verdict=event.get("verdict")) + (
+            " (" + ", ".join("%s: %s" % item for item in event["themes"].items()) + ")" if event.get("themes") else ""),
         "browser_unverifiable": lambda: say("{milestone}: could not be checked in the browser ({reason}).", milestone=milestone,
                                             reason=t(event.get("reason", ""))),
         "browser_skipped": lambda: say("{milestone}: no browser acceptance ({reason}).", milestone=milestone, reason=t(event.get("reason", ""))),
         "milestone_done": lambda: say("{milestone}: done in {rounds} round(s), {commits} commits, {disputes} disputed.", milestone=milestone,
                                       rounds=event.get("rounds"), commits=event.get("commits"), disputes=event.get("disputes")),
+        "step_done": lambda: say("Step {name} done with commit `{commit}`.", name=event.get("name"), commit=event["commit"][:10])
+                             if event.get("commit") else say("Step {name} done.", name=event.get("name")),
+        "step_failed": lambda: say("Step {name} failed (code {code}).", name=event.get("name"), code=event.get("code")),
+        "milestone_blocked": lambda: say("{milestone}: blocked, the environment does not allow a check ({reason}).",
+                                         milestone=milestone, reason=t(event.get("reason", ""))),
+        "milestone_unverified": lambda: say("{milestone}: done but not verified: {reasons}.", milestone=milestone,
+                                            reasons="; ".join(t(reason) for reason in event.get("reasons") or [])),
         "milestone_failed": lambda: say("{milestone}: failed ({reason}).", milestone=milestone,
                                         reason=t(event.get("reason") or "") or say("the gate never passed")),
         "parallel_started": lambda: say("In parallel: {milestones}.", milestones=", ".join(map(str, event.get("milestones") or []))),
@@ -182,7 +197,13 @@ def render_task(root, key, profile, sink, previous=""):
     for item in card["milestones"]:
         planned = titles.get(item["id"], {})
         state_text = say(MILESTONE_STATES[item["state"]]) if item["state"] in MILESTONE_STATES else item["state"]
+        if item["state"] == "done" and item.get("unverified"):
+            state_text += say(", not verified")
         milestones.append("### %s. %s — %s" % (item["id"], t(planned.get("title", item.get("title", ""))), state_text))
+        for reason in item.get("unverified") or []:
+            milestones.append(say("- Not verified: {reason}", reason=t(reason)))
+        if item["state"] == "blocked" and item.get("blocked_reason"):
+            milestones.append(say("- Blocked: {reason}", reason=t(item["blocked_reason"])))
         if planned.get("goal"):
             milestones.append(t(planned["goal"]))
         if item.get("summary"):
@@ -193,9 +214,14 @@ def render_task(root, key, profile, sink, previous=""):
                 milestones.append("- %s `%s`" % (stage["id"], stage["commit"][:10]))
         for finding in item.get("minor_findings", []):
             milestones.append(say("- Minor: `{file}` {problem}", file=finding.get("file", ""), problem=t(finding["problem"])))
+        for finding in item.get("browser_minor", []):
+            milestones.append(say("- Minor in the browser: `{file}` {problem}", file=finding.get("file", ""), problem=t(finding["problem"])))
         if item.get("outside_files"):
             milestones.append(say("- Outside the plan: {files}", files=", ".join("`%s`" % path for path in item["outside_files"])))
         milestones.append("")
+    from . import steps
+    milestones += [say("- Step {state}: {name} — `{command}`", state=say(steps.STATES[item["state"]]), name=item["name"],
+                       command=item["command"]) for item in steps.attention_of(card)]
     disputes = [say("- **{milestone}** `{file}`: {problem}\n  - Reviewer {reviewer}; executor: {reason}", milestone=d.get("milestone", ""),
                     file=d.get("file", ""), problem=t(d["problem"]), reviewer=d.get("reviewer", ""), reason=t(d.get("executor_reason", "")))
                 for d in card["disputes"]]
@@ -203,16 +229,17 @@ def render_task(root, key, profile, sink, previous=""):
                                      if d.get("reopen") else "") for d in card["decisions"]]
     costs = [say("{money}, {tokens} tokens, {runs}, {seconds} of model work.", money=status.money(spent, lang),
                  tokens=status.tokens(spent["tokens"]), runs=i18n.ntr(lang, "{n} run", "{n} runs", spent["runs"]),
-                 seconds=status.duration(spent["seconds"], lang)), ""]
+                 seconds=status.work_time(spent, lang)), ""]
     costs += ["| %s | %s | %s | %s |" % (say("Role"), say("Runs"), say("Tokens"), say("Spent")), "|---|---|---|---|"]
     costs += ["| %s | %d | %s | %s |" % (status.role_name(role, lang), value["runs"], status.tokens(value["tokens"]),
-                                       status.money({"cost_usd": value["cost_usd"], "unpriced_runs": 0}, lang))
+                                       status.money(value, lang))
               for role, value in sorted(spent["by_role"].items(), key=lambda item: -item[1]["tokens"])]
     timeline = ["- %s %s" % (local_time(event["at"]), line) for event in events for line in [describe(event, lang, t)] if line]
     found = NOTES.search(previous)
     notes = "<!-- friday:notes -->\n%s<!-- /friday:notes -->" % (found.group(1) if found else "")
     delivery = card.get("delivery") or {}
-    status_line = say(STATES[card["state"]]) if card["state"] in STATES else card["state"]
+    status_line = (say("Done, not verified") if card["state"] == "done" and card.get("unverified") else
+                   say(STATES[card["state"]]) if card["state"] in STATES else card["state"])
     if delivery.get("url"):
         status_line += " · [%s](%s)" % (say("draft MR"), delivery["url"])
     if card.get("branch"):
@@ -226,6 +253,10 @@ def render_task(root, key, profile, sink, previous=""):
     return owned(key, fill(template(sink, profile, "task.md"), values))
 
 
+def link(sink, key):
+    return sink.get("page", PAGE).replace("{key}", key)[:-3]
+
+
 def headings(lang):
     return {"h_" + name: i18n.tr(lang, text) for name, text in HEADINGS.items()}
 
@@ -236,7 +267,10 @@ def render_now(root, sink, profile):
     rows = ["| %s | %s | %s | %s |" % (say("Task"), say("State"), say("Now"), say("Spent")), "|---|---|---|---|"]
     for row in status.overview(root):
         doing = "; ".join(status.describe(now) for now in row["now"]) or "; ".join(status.describe_wait(w) for w in row["waiting"]) or "—"
-        rows.append("| [[%s]] | %s | %s | %s |" % (row["key"], say(STATES[row["state"]]) if row["state"] in STATES else row["state"],
+        shown = (say("Done, not verified") if row["state"] == "done" and row.get("unverified") else
+                 say(STATES[row["state"]]) if row["state"] in STATES else row["state"])
+        target = link(sink, row["key"])
+        rows.append("| [[%s]] | %s | %s | %s |" % (target if target == row["key"] else "%s\\|%s" % (target, row["key"]), shown,
                                                   doing.replace("|", "/"), status.money(row["spent"], lang)))
     return owned("now", fill(template(sink, profile, "now.md"), dict(headings(lang), updated=state.now(), tasks="\n".join(rows))))
 
@@ -252,17 +286,26 @@ def write_page(path, key, text):
 
 
 def sync(root, key, profile=None):
-    """Render the task into every journal its profile names; returns the written paths."""
+    """Render the task into every journal its profile names; returns the written paths. A page somebody else wrote
+    under the same name is left untouched and reported as skipped."""
     profile = profile or profiles.load(cards.read(root, key)["profile"])
     written = []
     for sink in sinks(profile):
         directory = Path(sink["dir"])
         if sink["kind"] == "markdown":
-            page = directory / (key + ".md")
-            previous = page.read_text(encoding="utf-8") if page.exists() else ""
-            write_page(page, key, render_task(root, key, profile, sink, previous))
-            write_page(directory / (i18n.tr(i18n.output_language(profile), HEADINGS["now"]) + ".md"), "now", render_now(root, sink, profile))
-            written.append(str(page))
+            page = directory / sink.get("page", PAGE).replace("{key}", key)
+            now = directory / (i18n.tr(i18n.output_language(profile), HEADINGS["now"]) + ".md")
+            for target, owner, render in ((page, key, lambda: render_task(root, key, profile, sink, page.read_text(encoding="utf-8")
+                                                                         if page.exists() else "")),
+                                          (now, "now", lambda: render_now(root, sink, profile))):
+                try:
+                    write_page(target, owner, render())
+                    if target == page:
+                        written.append(str(page))
+                except FridayError as exc:
+                    if exc.code != "journal_conflict":
+                        raise
+                    print(i18n._("Skipped: {reason}", reason=i18n.error(exc)), file=sys.stderr)
         else:
             directory.mkdir(parents=True, exist_ok=True)
             target = directory / (key + ".jsonl")

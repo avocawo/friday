@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=b45badbf640b -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo em neon" width="900">
 </p>
@@ -22,7 +22,7 @@ tarefa → plano (modelo forte) → revisão do plano (outro fornecedor) → sua
        → revisão final + verificação cega → MR em rascunho
 ```
 
-Você participa duas vezes: aprova o plano e aceita o MR em rascunho. Entre esses dois pontos o pipeline não para: os achados contestados da revisão chegam a você junto com o MR.
+Você aprova o plano e aceita o MR em rascunho. O pipeline executa o plano dentro do orçamento configurado; se o orçamento se esgota ou o ambiente quebra, a tarefa volta ao dono. Os achados contestados da revisão chegam a você junto com o MR.
 
 ## Pontos principais
 
@@ -30,6 +30,9 @@ Você participa duas vezes: aprova o plano e aceita o MR em rascunho. Entre esse
 - **Um executor econômico com feedback rápido.** O executor roda sozinho o linter, a checagem de tipos e os testes em um sandbox sem acesso à rede, e o gate entrega a ele apenas as verificações que falharam.
 - **Você vê o que está acontecendo.** `friday status` mostra a fase, o modelo, há quanto tempo o agente está em silêncio e quanto foi gasto em cada tarefa.
 - **Várias tarefas ao mesmo tempo.** Cada tarefa tem a sua própria branch e o seu próprio worktree. As configurações da máquina definem quantos gates, navegadores e execuções de um mesmo fornecedor podem rodar simultaneamente.
+- **Branches com o nome do projeto.** Por padrão, `start` cria `<repository>/<task key>`, por exemplo `octis/31`. O nome vem do `origin` do Git; o perfil pode definir o próprio template.
+- **Gasto limitado.** Um perfil pode excluir executores frontier com `executor_tiers` e limitar o tamanho de todo o plano e o número de execuções de modelos com `budget`; `resume` não zera os contadores. A revisão final é salva por papel, então um resume com as mesmas entradas não a executa de novo.
+- **Marcos em paralelo.** Marcos independentes que estão prontos rodam em seus próprios worktrees, dois por vez por padrão; arquivos alterados que eles compartilham bloqueiam a integração.
 
 ## Início rápido
 
@@ -54,12 +57,15 @@ O Friday fala dez idiomas: `friday --lang ru …`, `FRIDAY_LANG=ru` ou `friday c
 
 | Comando | O que faz |
 | --- | --- |
-| `start KEY --profile P [--brief F]` | Cria o worktree e o plano, e pede a outro modelo que revise o plano |
-| `plan KEY` | Mostra o plano com os achados não resolvidos |
+| `start KEY --profile P [--brief F] [--no-design]` | Cria o worktree e o plano, e pede a outro modelo que revise o plano; com `design` no perfil, o plano é verificado contra o frame do Figma do ticket |
+| `plan KEY [--diff]` | Mostra o plano com os achados não resolvidos; `--diff` mostra o que a última revisão mudou |
+
 | `approve KEY [--no-run]` | Aprova o plano e inicia o pipeline em segundo plano |
 | `status [KEY] [--json]` | Mostra o que as tarefas estão fazendo e quanto foi gasto |
-| `decide KEY name "text" [--reopen M2]` | Registra uma decisão do dono; reabre apenas os marcos indicados |
-| `run KEY` / `resume KEY` / `stop KEY` | Executa neste terminal, continua, interrompe |
+| `decide KEY name "text" [--reopen M2]` | Registra uma decisão do dono. Enquanto o plano aguarda aprovação, o planejador revisa por ela os marcos indicados (sem `--reopen` ele mesmo os escolhe) e apenas os alterados são revisados de novo ([ADR 0016](../adr/0016-decision-revises-the-plan.md)); depois da aprovação, reabre apenas os marcos indicados |
+| `run KEY` / `resume KEY [--brief F]` / `stop KEY` | Executa neste terminal, continua, interrompe; `--brief` restaura o enunciado original de uma tarefa antiga pela impressão digital do seu planejamento |
+| `serve` / `service print\|install\|uninstall\|check` | A fila de tarefas da máquina: inicia as tarefas em sequência, devolve à fila as que falharam, notifica; roda como serviço do launchd ou do systemd ([guia](guide.md#fila-de-tarefas-friday-serve)) |
+| `step [NAME] [KEY] [--profile P] [--dry-run]` | Executa um passo do perfil (`steps`): um passo de tarefa com a chave da tarefa, um passo de perfil com `--profile`; sem nome, lista os passos e o estado deles. O perfil descreve o que um passo faz (montar uma imagem, um bundle e assim por diante) ([ADR 0011](../adr/0011-profile-steps.md)) |
 | `archive KEY [--force]` | Remove o worktree e o card; a branch permanece |
 | `journal KEY` | Atualiza os diários das tarefas (Obsidian, jsonl) |
 | `doctor --profile P` | Verifica se a máquina e o perfil estão prontos |

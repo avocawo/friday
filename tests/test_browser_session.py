@@ -65,6 +65,27 @@ class BrowserSessionTests(unittest.TestCase):
         session.call('emulate', {'viewport': '375x900x1'})
         session.client.tool.assert_called_with('emulate', {'pageId': 7, 'viewport': '375x900x1'})
 
+    def test_computed_style_runs_a_fixed_script_on_one_element(self):
+        session = browser_session.Session.__new__(browser_session.Session)
+        session.client = Mock()
+        session.page = 7
+        session.call('computed_style', {'uid': '1_23', 'properties': ['border-radius', 'height']})
+        name, arguments = session.client.tool.call_args.args
+        self.assertEqual((name, arguments['pageId'], arguments['args']), ('evaluate_script', 7, ['1_23']))
+        self.assertIn('["border-radius", "height"]', arguments['function'])
+        self.assertIn('getComputedStyle(element)', arguments['function'])
+        session.client.reset_mock()
+        for arguments in ({'uid': '1_23', 'properties': ['x); fetch("//evil")']}, {'uid': 'a b', 'properties': []},
+                          {'uid': '1', 'properties': ['color'], 'function': '()=>1'}, {'uid': '1', 'properties': 'color'}):
+            with self.subTest(arguments=arguments), self.assertRaises(FridayError):
+                session.call('computed_style', arguments)
+        session.client.tool.assert_not_called()
+        session.call('hover', {'uid': '1_23'})
+        session.client.tool.assert_called_once_with('hover', {'pageId': 7, 'uid': '1_23'})
+        session.client.request.return_value = {'tools': [{'name': 'hover', 'inputSchema': {'properties': {'uid': {}, 'pageId': {}}}},
+                                                         {'name': 'evaluate_script', 'inputSchema': {'properties': {}}}]}
+        self.assertEqual([tool['name'] for tool in session.tools()], ['hover', 'computed_style'])
+
     def test_emulation_is_cleared_before_navigation_and_history_stays_on_the_preview(self):
         session = browser_session.Session.__new__(browser_session.Session)
         session.origin = 'http://test.localhost:5189'

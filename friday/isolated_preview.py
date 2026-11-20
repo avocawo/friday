@@ -1,4 +1,4 @@
-"""Serve a committed snapshot of a web app that talks to staging, from a container with no network.
+"""Serve a committed snapshot of a web app that talks to staging, or a Storybook showcase, from a container with no network.
 
 preview.backend "docker-staging" runs the profile's dev server command in the gate image:
 {"backend": "docker-staging", "command": [...], "port": 5173, "env": {"API_URL": "{stage_origin}/graphql"},
@@ -19,7 +19,7 @@ import urllib.parse
 import uuid
 from pathlib import Path, PurePosixPath
 
-from . import browser_session, gate
+from . import browser_session, gate, stories
 from .errors import FridayError
 
 BRIDGE = r'''import base64,json,sys,urllib.request,urllib.error
@@ -64,9 +64,11 @@ def server(spec, stage):
     """The dev server to run: command, port, environment with {stage_origin} and {api_path} filled, links and tmpfs."""
     if spec.get('backend') == 'docker-vite':
         api_path = spec.get('api_path')
-        if not isinstance(api_path, str) or not api_path.startswith('/') or '?' in api_path or '#' in api_path:
+        if stage and (not isinstance(api_path, str) or not api_path.startswith('/') or '?' in api_path or '#' in api_path):
             raise FridayError('invalid_profile', 'The staging API path must be an absolute path without a query.')
         spec = dict(VITE, **{key: value for key, value in spec.items() if key in VITE or key == 'api_path'})
+        if not stage:  # local browser mode runs the preview without a staging API
+            spec['env'] = {key: value for key, value in spec['env'].items() if '{stage_origin}' not in value}
     api_path = spec.get('api_path', '')
     command, port, env = spec.get('command'), spec.get('port'), spec.get('env', {})
     if not isinstance(command, list) or not command or any(not isinstance(arg, str) or not arg for arg in command):
@@ -78,15 +80,15 @@ def server(spec, stage):
         raise FridayError('invalid_profile', 'preview.env must map variable names to strings.')
     if not isinstance(api_path, str) or any(x in api_path for x in '?#'):
         raise FridayError('invalid_profile', 'The staging API path must be an absolute path without a query.')
-    filled = {key: value.replace('{stage_origin}', stage).replace('{api_path}', api_path) for key, value in env.items()}
+    filled = {key: value.replace('{stage_origin}', stage or '').replace('{api_path}', api_path) for key, value in env.items()}
     links = gate.links({'gate_links': spec.get('links') or {}})
     tmpfs = spec.get('tmpfs', [])
     gate.tmpfs({'gate_tmpfs': [entry.split(':', 1)[0] for entry in tmpfs]} if isinstance(tmpfs, list) else {'gate_tmpfs': tmpfs})
     return {'command': command, 'port': port, 'env': filled, 'links': links, 'tmpfs': tmpfs}
 
 
-def wait_for_server(name, port):
-    for _ in range(40):
+def wait_for_server(name, port, attempts=40):
+    for _ in range(attempts):
         try:
             result = json.loads(docker('exec', name, 'python3', '-c', BRIDGE, '/', str(port), timeout=5))
             if not isinstance(result, dict) or result.get('status') != 200 or not isinstance(result.get('type'), str):
@@ -102,9 +104,76 @@ def wait_for_server(name, port):
     raise FridayError('preview_unavailable', 'The isolated preview server did not start.')
 
 
+def extract(archive, destination):
+    """Unpack a snapshot without links, special files or local secrets."""
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as tar:
+        members = []
+        for item in tar:
+            parts = PurePosixPath(item.name).parts
+            if item.issym() or item.islnk() or item.name.startswith('/') or '..' in parts or not (item.isfile() or item.isdir()):
+                raise FridayError('preview_unavailable', 'The preview snapshot contains an unsupported file.')
+            if any(part == '.env' or part.startswith('.env.') or part == '.npmrc' for part in parts):
+                continue
+            members.append(item)
+        tar.extractall(destination, members=members)
+
+
+@contextlib.contextmanager
+def served(name, port):
+    """Bridge the container's server to one local origin; stops the container when done."""
+    server = None
+    thread = None
+    try:
+        slots = threading.BoundedSemaphore(8)
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                parsed = urllib.parse.urlsplit(self.path)
+                if parsed.scheme or parsed.netloc or not parsed.path.startswith('/') or parsed.path.startswith('//'):
+                    self.send_error(400)
+                    return
+                try:
+                    with slots:
+                        raw = docker('exec', name, 'python3', '-c', BRIDGE, self.path, str(port), timeout=40)
+                    result = json.loads(raw)
+                    data = base64.b64decode(result['data'], validate=True)
+                    self.send_response(result['status'])
+                    self.send_header('Content-Type', result['type'])
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                except (FridayError, ValueError, KeyError):
+                    self.send_error(502)
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        yield 'http://preview-' + uuid.uuid4().hex + '.localhost:' + str(server.server_port) + '/'
+    finally:
+        if server:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        try:
+            docker('stop', '--time', '1', name, timeout=10)
+        except FridayError:
+            pass
+
+
+ISOLATION = ['--rm', '--pull=never', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+             '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,exec,nosuid,nodev,size=512m']
+
+
 @contextlib.contextmanager
 def open_preview(selected, worktree):
     spec = selected.get('preview', {})
+    if isinstance(spec, dict) and spec.get('backend') == 'storybook':
+        with storybook_preview(selected, worktree) as url:
+            yield url
+        return
     if isinstance(spec, dict) and spec.get('backend') == 'docker-local':
         from . import local_preview
         with local_preview.open_preview(selected, worktree) as url:
@@ -115,71 +184,105 @@ def open_preview(selected, worktree):
     _, stage = browser_session.configuration(selected.get('browser'), 'http://probe.localhost:12345/')
     run = server(spec, stage)
     image = gate.image_id(selected.get('gate_image'))
-    snapshot_profile = dict(selected, repository=worktree)
-    _, _, archive = gate.snapshot(snapshot_profile)
+    _, _, archive = gate.snapshot(dict(selected, repository=worktree))
     with tempfile.TemporaryDirectory(prefix='friday-preview-') as directory:
         source = Path(directory) / 'src'
-        source.mkdir()
-        with tarfile.open(fileobj=io.BytesIO(archive), mode='r:') as tar:
-            members = []
-            for item in tar:
-                parts = PurePosixPath(item.name).parts
-                if item.issym() or item.islnk() or item.name.startswith('/') or '..' in parts or not (item.isfile() or item.isdir()):
-                    raise FridayError('preview_unavailable', 'The preview snapshot contains an unsupported file.')
-                if any(part == '.env' or part.startswith('.env.') or part == '.npmrc' for part in parts):
-                    continue
-                members.append(item)
-            tar.extractall(source, members=members)
+        extract(archive, source)
         for link, target in run['links'].items():
             if (source / link).exists() or (source / link).is_symlink():
                 raise FridayError('invalid_profile', 'preview.links: {path} exists in the snapshot.', path=link)
             (source / link).parent.mkdir(parents=True, exist_ok=True)
             (source / link).symlink_to(target)
         name = 'friday-preview-' + uuid.uuid4().hex
-        server = None
-        thread = None
         try:
-            docker('run', '-d', '--rm', '--pull=never', '--network', 'none', '--read-only',
-                   '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-                   '--tmpfs', '/tmp:rw,exec,nosuid,nodev,size=512m',
+            docker('run', '-d', *ISOLATION,
                    *[option for entry in run['tmpfs'] for option in ('--tmpfs', entry)],
                    '--mount', 'type=bind,src=' + str(source) + ',dst=/src,readonly', '--name', name, '-w', '/src',
                    *[option for key, value in run['env'].items() for option in ('-e', key + '=' + value)],
                    '--entrypoint', run['command'][0], image, *run['command'][1:])
             wait_for_server(name, run['port'])
-            slots = threading.BoundedSemaphore(8)
-            class Handler(http.server.BaseHTTPRequestHandler):
-                def do_GET(self):
-                    parsed = urllib.parse.urlsplit(self.path)
-                    if parsed.scheme or parsed.netloc or not parsed.path.startswith('/') or parsed.path.startswith('//'):
-                        self.send_error(400)
-                        return
-                    try:
-                        with slots:
-                            raw = docker('exec', name, 'python3', '-c', BRIDGE, self.path, str(run['port']), timeout=40)
-                        result = json.loads(raw)
-                        data = base64.b64decode(result['data'], validate=True)
-                        self.send_response(result['status'])
-                        self.send_header('Content-Type', result['type'])
-                        self.send_header('Content-Length', str(len(data)))
-                        self.end_headers()
-                        self.wfile.write(data)
-                    except (BrokenPipeError, ConnectionResetError):
-                        return
-                    except (FridayError, ValueError, KeyError):
-                        self.send_error(502)
-                def log_message(self, *args):
-                    pass
-            server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            yield 'http://preview-' + uuid.uuid4().hex + '.localhost:' + str(server.server_port) + '/'
-        finally:
-            if server:
-                server.shutdown()
-                server.server_close()
-                thread.join(timeout=5)
+        except BaseException:
             try:
                 docker('stop', '--time', '1', name, timeout=10)
             except FridayError:
                 pass
+            raise
+        with served(name, run['port']) as url:
+            yield url
+
+
+def showcase_of(selected, worktree):
+    """The showcase worktree that holds the kit's worktree at its mount."""
+    mount = PurePosixPath(stories.mount(selected))
+    showcase = Path(worktree)
+    for _ in mount.parts:
+        showcase = showcase.parent
+    if (showcase / mount).resolve() != Path(worktree).resolve():
+        raise FridayError('preview_unavailable', 'The kit worktree is not inside a showcase worktree.')
+    return showcase
+
+
+@contextlib.contextmanager
+def storybook_preview(selected, worktree):
+    """The showcase with the kit's sources at its mount, both from their committed snapshots, served by the profile's command.
+
+    The showcase snapshot is mounted read-only at /src and the kit snapshot at /src/<mount>; the container has no network.
+    The image (stories.image), the command, its port, environment, writable directories and links into the image all
+    come from the profile's preview block."""
+    config = stories.settings(selected)
+    spec = selected.get('preview') or {}
+    if not config:
+        raise FridayError('invalid_profile', 'The storybook preview needs stories in the profile.')
+    validate_storybook(spec)
+    browser_session.configuration(selected.get('browser'), 'http://probe.localhost:12345/')
+    mount = stories.mount(selected)
+    image = gate.image_id(config.get('image'))
+    showcase = showcase_of(selected, worktree)
+    _, _, showcase_archive = gate.snapshot(dict(selected, repository=str(showcase)))
+    _, _, kit_archive = gate.snapshot(dict(selected, repository=worktree))
+    with tempfile.TemporaryDirectory(prefix='friday-storybook-') as directory:
+        source = Path(directory) / 'src'
+        extract(showcase_archive, source)
+        extract(kit_archive, source / mount)
+        for link, target in sorted((spec.get('links') or {}).items()):
+            (source / link).symlink_to(target)
+        name = 'friday-storybook-' + uuid.uuid4().hex
+        command = [part.replace('{mount}', mount) for part in spec['command']]
+        port = spec['port']
+        options = [part for path in spec.get('tmpfs', []) for part in ('--tmpfs', path + ':rw,exec,nosuid,nodev,size=512m')]
+        options += [part for key, value in sorted((spec.get('env') or {}).items()) for part in ('-e', '%s=%s' % (key, value))]
+        try:
+            docker('run', '-d', *ISOLATION, *options,
+                   '--mount', 'type=bind,src=' + str(source) + ',dst=/src,readonly', '--name', name, '-w', '/src',
+                   '-e', 'HOME=/tmp', '--entrypoint', command[0], image, *command[1:])
+            wait_for_server(name, port, attempts=240)
+        except BaseException:
+            try:
+                docker('stop', '--time', '1', name, timeout=10)
+            except FridayError:
+                pass
+            raise
+        with served(name, port) as url:
+            yield url
+
+
+def validate_storybook(spec):
+    """The storybook backend's own keys: command (argv, {mount} allowed), port, env, tmpfs paths and links into the image."""
+    # Other keys may come from a parent profile's preview of another backend; this backend reads only its own.
+    command = spec.get('command')
+    if not isinstance(command, list) or not command or any(not isinstance(part, str) or not part for part in command):
+        raise FridayError('invalid_profile', 'preview.command is required: the argument array that serves the showcase.')
+    port = spec.get('port')
+    if not isinstance(port, int) or isinstance(port, bool) or not 0 < port < 65536:
+        raise FridayError('invalid_profile', 'preview.port is required: the port the command serves on.')
+    env = spec.get('env', {})
+    if not isinstance(env, dict) or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', k) or not isinstance(v, str) for k, v in env.items()):
+        raise FridayError('invalid_profile', 'preview.env maps variable names to strings.')
+    tmpfs = spec.get('tmpfs', [])
+    if not isinstance(tmpfs, list) or any(not isinstance(p, str) or not p.startswith('/') or ':' in p or ',' in p or '..' in p.split('/')
+                                          for p in tmpfs):
+        raise FridayError('invalid_profile', 'preview.tmpfs lists absolute container paths.')
+    links = spec.get('links', {})
+    if not isinstance(links, dict) or any(not stories.safe_relative(k) or not isinstance(v, str) or not v.startswith('/')
+                                          for k, v in links.items()):
+        raise FridayError('invalid_profile', 'preview.links maps paths in the snapshot to absolute container paths.')

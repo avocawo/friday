@@ -24,7 +24,7 @@ counter = os.path.join(directory, "counter")
 index = int(open(counter).read()) if os.path.exists(counter) else 0
 open(counter, "w").write(str(index + 1))
 with open(os.path.join(directory, "call-%d.json" % index), "w") as handle:
-    json.dump({"argv": sys.argv[1:], "prompt": prompt}, handle)
+    json.dump({"argv": sys.argv[1:], "prompt": prompt, "agent": os.environ.get("FRIDAY_TEST_AGENT")}, handle)
 call = json.load(open(os.path.join(directory, "calls.json")))[index]
 print(json.dumps({"type": "system", "subtype": "init", "session_id": call["session"]}), flush=True)
 print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "session_id": call["session"], "result": "",
@@ -106,6 +106,12 @@ class PlanTests(unittest.TestCase):
         (self.fake / "calls.json").write_text(json.dumps([{"session": session, "answer": answer} for session, answer in answers]))
         (self.fake / "counter").unlink(missing_ok=True)
 
+    def test_task_limits_bound_the_whole_plan(self):
+        self.assertFalse(plan.validate(PLAN, self.repo))
+        errors = plan.validate(PLAN, self.repo, {"task_milestones": 1, "task_stages": 1})
+        self.assertTrue(any("2 milestones" in error and "limit is 1" in error for error in errors), errors)
+        self.assertTrue(any("2 stages" in error and "limit is 1" in error for error in errors), errors)
+
     def call(self, index):
         return json.loads((self.fake / ("call-%d.json" % index)).read_text())
 
@@ -176,6 +182,16 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(FridayError) as error:
             self.start("T-2")
         self.assertEqual(error.exception.code, "plan_invalid")
+
+    def test_ordered_file_creation_reaches_review_without_an_extra_model_run(self):
+        document = copy.deepcopy(PLAN)
+        document["milestones"][0]["stages"].append(dict(
+            document["milestones"][0]["stages"][0], id="M1.2", files=["greet.py"], new_files=[]))
+        self.calls(("planner", document), ("reviewer", {"verdict": "ok", "findings": []}))
+        self.start()
+        self.assertEqual(card.read(self.root, "T-1")["state"], "awaiting_approval")
+        self.assertNotIn("plan_invalid", [event["type"] for event in card.events(self.root, "T-1")])
+        self.assertEqual((self.fake / "counter").read_text(), "2")
 
     def test_rules_digest_is_made_once_per_document_content_and_replaces_reading(self):
         (self.repo / "AGENTS.md").write_text("Тесты рядом с кодом.\n")
@@ -284,7 +300,7 @@ class PlanTests(unittest.TestCase):
         card.update(self.root, "T-1", lambda value: value.update(worktree=None))
         self.assertEqual(workspace.create(self.root, "T-1", self.profile), first)  # registered path is reused
         self.assertEqual(subprocess.run(["git", "-C", first, "branch", "--show-current"], capture_output=True, text=True).stdout.strip(),
-                         "friday/T-1")
+                         "origin/T-1")
 
     def test_worktree_setup_runs_in_a_new_worktree_and_failures_stop_the_start(self):
         self.profile["worktree_setup"] = [["sh", "-c", "[ -e deps ] || cp -R {repository}/app.py deps"]]
@@ -316,6 +332,156 @@ class PlanTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(CLI), "approve", "T-9", "--no-run"], capture_output=True, text=True, env=environment)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(card.read(self.root, "T-9")["state"], "approved")
+
+    def project_profile(self):
+        self.profile.update(toolset={"plan": "project"}, project={
+            "plan_command": "/plan-stages {statement}", "plan_file": "ACTUAL_PLAN.md", "session_env": ["FRIDAY_TEST_AGENT"],
+            "disallowed_tools": ["mcp__chrome-devtools"], "timeouts": {"total": 7200}})
+        self.profile_path.write_text(json.dumps({k: v for k, v in self.profile.items() if k != "path"}))
+        environment = patch.dict(os.environ, {"FRIDAY_TEST_AGENT": "agent.sock"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def summary(self, questions=()):
+        value = {k: v for k, v in copy.deepcopy(PLAN).items() if k != "responses"}
+        value["questions"] = list(questions)
+        return value
+
+    def test_project_plan_is_the_project_command_in_a_project_session_without_friday_review(self):
+        self.project_profile()
+        self.calls(("ps-1", self.summary()))
+        self.start()
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["plan_session"]), ("awaiting_approval", "ps-1"))
+        self.assertEqual([item["id"] for item in value["milestones"]], ["M1", "M2"])
+        self.assertEqual(value["plan"]["file"], str(Path(value["worktree"]) / "ACTUAL_PLAN.md"))
+        self.assertEqual((self.fake / "counter").read_text(), "1")  # no Friday plan review
+        call = self.call(0)
+        self.assertTrue(call["prompt"].startswith("/plan-stages Сделать приветствие для пользователя."))
+        self.assertIn("write the plan to ACTUAL_PLAN.md", call["prompt"])
+        self.assertEqual(call["argv"][call["argv"].index("--permission-mode") + 1], "auto")
+        self.assertEqual(call["argv"][call["argv"].index("--disallowedTools") + 1], "mcp__chrome-devtools")
+        self.assertNotIn("--tools", call["argv"])
+        self.assertNotIn("responses", json.loads(call["argv"][call["argv"].index("--json-schema") + 1])["required"])
+        self.assertEqual(call["agent"], "agent.sock")
+        self.assertIn("Project plan file: ", plan.render(self.root, "T-1"))
+
+    def test_project_plan_session_continues_with_the_errors_of_an_infeasible_summary(self):
+        self.project_profile()
+        broken = self.summary()
+        broken["milestones"][0]["stages"][0]["criteria"].append({"text": "Видно в браузере", "check": "behavior"})
+        self.calls(("ps-1", broken), ("ps-1", self.summary()))
+        self.start()
+        retry = self.call(1)
+        self.assertEqual(retry["argv"][retry["argv"].index("--resume") + 1], "ps-1")
+        self.assertIn("not marked ui", retry["prompt"])
+        self.assertEqual(card.read(self.root, "T-1")["state"], "awaiting_approval")
+
+    def test_owner_answer_to_a_project_plan_continues_its_session_through_decide(self):
+        self.project_profile()
+        self.calls(("ps-1", self.summary(["Маску ИНН расширять?"])), ("ps-1", self.summary()))
+        self.start()
+        self.assertEqual(card.read(self.root, "T-1")["plan"]["questions"], ["Маску ИНН расширять?"])
+        script = ("import sys, runpy; from unittest.mock import patch; "
+                  "patch('friday.models.environment', return_value={'FAKE_DIR': %r}).start(); "
+                  "sys.argv = ['friday', 'decide', 'T-1', 'mask', 'Yes, up to 12 digits']; "
+                  "runpy.run_path(%r, run_name='__main__')") % (str(self.fake), str(CLI))
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                                env=dict(os.environ, FRIDAY_HOME=str(self.root)), cwd=str(Path(__file__).resolve().parents[1]))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("friday approve T-1", result.stdout)
+        answer = self.call(1)
+        self.assertEqual(answer["argv"][answer["argv"].index("--resume") + 1], "ps-1")
+        self.assertIn("Yes, up to 12 digits", answer["prompt"])
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["plan"]["revision"], value["plan"]["questions"]), ("awaiting_approval", 2, []))
+        self.assertEqual(value["decisions"][0]["name"], "mask")
+
+    def cli(self, *argv):
+        script = ("import sys, runpy; from unittest.mock import patch; "
+                  "patch('friday.models.environment', return_value={'FAKE_DIR': %r}).start(); "
+                  "sys.argv = ['friday'] + %r; runpy.run_path(%r, run_name='__main__')") % (str(self.fake), list(argv), str(CLI))
+        return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                              env=dict(os.environ, FRIDAY_HOME=str(self.root)), cwd=str(Path(__file__).resolve().parents[1]))
+
+    def decided(self):
+        """The planner's answer to a decision about M2; it also touches M1, which the decision does not name."""
+        value = copy.deepcopy(PLAN)
+        value["milestones"][0]["goal"] = "Заодно переписать модель."
+        value["milestones"][1]["stages"][0].update(brief="Вывести в шапке", steps=["вставить в header"])
+        return value
+
+    def test_decision_before_approval_revises_the_named_milestones_and_reviews_only_them(self):
+        clean = {"verdict": "ok", "findings": []}
+        self.calls(("p", PLAN), ("r", clean))
+        self.start()
+        finding = {"milestone": "M2", "stage": "M2.1", "severity": "minor", "problem": "Шапки на странице нет.", "suggestion": "Создать."}
+        answered = dict(self.decided(), responses=[{"finding": 0, "accepted": False, "reason": "Шапка есть в page.html."}])
+        self.calls(("p2", self.decided()), ("r2", {"verdict": "ok", "findings": [finding]}), ("p3", answered))
+        result = self.cli("decide", "T-1", "header", "Greeting in the header.", "--reopen", "M2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for expected in ("Decision recorded.", "The plan is revised (milestones: M2).", "Only added to the context of milestones (M1)",
+                         "friday plan T-1 --diff", "friday approve T-1", "Вывести в шапке"):
+            self.assertIn(expected, result.stdout)
+        self.assertNotIn("Reopened", result.stdout)
+        revision, review = self.call(0), self.call(1)
+        self.assertNotIn("--resume", revision["argv"])
+        self.assertIn("Greeting in the header.", revision["prompt"])
+        self.assertIn("Change only milestones M2;", revision["prompt"])
+        self.assertIn("Your plan:", revision["prompt"])
+        self.assertIn("changed milestones M2: review only them", review["prompt"])
+        self.assertIn("--- page.html", review["prompt"])
+        self.assertNotIn("--- app.py", review["prompt"])  # M1 is context: its files are not sent again
+        self.assertNotIn("Заодно переписать модель.", review["prompt"])
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["plan"]["revision"]), ("awaiting_approval", 2))
+        self.assertEqual([note["answer"] for note in value["plan"]["review_notes"]], ["Шапка есть в page.html."])
+        document = json.loads((card.directory(self.root, "T-1") / "plan.json").read_text())
+        self.assertEqual(document["milestones"][0], PLAN["milestones"][0])  # carried over as it was
+        self.assertEqual(document["milestones"][1]["stages"][0]["steps"], ["вставить в header"])
+        text = self.cli("plan", "T-1", "--diff").stdout
+        self.assertIn("Changed milestones: M2", text)
+        self.assertIn("-- **M2.1** Вывести на страницу (~20 lines)", text)
+        self.assertIn("+  step: вставить в header", text)
+        self.assertNotIn("Функция greet", text)
+
+    def test_decision_without_reopen_lets_the_planner_choose_and_an_unchanged_plan_is_not_reviewed(self):
+        self.calls(("p", PLAN), ("r", {"verdict": "ok", "findings": []}))
+        self.start()
+        self.assertIn("no previous revision", self.cli("plan", "T-1", "--diff").stderr)
+        self.calls(("p2", PLAN))
+        result = self.cli("decide", "T-1", "tone", "Use the formal address.")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("The planner changed no milestone.", result.stdout)
+        self.assertIn("Only added to the context of milestones (M1, M2)", result.stdout)
+        self.assertNotIn("--diff", result.stdout)
+        self.assertIn("Change only the milestones the decision affects", self.call(0)["prompt"])
+        self.assertEqual((self.fake / "counter").read_text(), "1")
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["plan"]["revision"]), ("awaiting_approval", 1))
+        changed = copy.deepcopy(PLAN)
+        changed["milestones"][0]["stages"][0]["steps"] = ["обращаться на «вы»"]
+        self.calls(("p3", changed), ("r3", {"verdict": "ok", "findings": []}))
+        self.assertEqual(plan.amend(self.root, "T-1", self.profile, "Use the formal address."), (["M1"], []))
+        self.assertIn("changed milestones M1:", self.call(1)["prompt"])
+
+    def test_failed_revision_by_a_decision_leaves_the_plan_waiting_and_the_decision_recorded_once(self):
+        self.calls(("p", PLAN), ("r", {"verdict": "ok", "findings": []}))
+        self.start()
+        dropped = dict(copy.deepcopy(PLAN), milestones=[self.decided()["milestones"][1]])
+        dropped["milestones"][0]["depends_on"] = []
+        for _ in range(2):
+            self.calls(("p2", dropped), ("p3", dropped))  # M1 is not named, yet the planner drops it twice
+            result = self.cli("decide", "T-1", "header", "Greeting in the header.", "--reopen", "M2")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("M1 is outside the owner's decision", result.stderr)
+        self.assertIn("M1 is outside the owner's decision", self.call(1)["prompt"])
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["plan"]["revision"], len(value["decisions"])), ("awaiting_approval", 1, 1))
+        self.assertEqual(json.loads((card.directory(self.root, "T-1") / "plan.json").read_text())["milestones"], PLAN["milestones"])
+        plan.approve(self.root, "T-1")
+        with self.assertRaises(FridayError):
+            plan.amend(self.root, "T-1", self.profile, "Поздно.")
 
     def test_auto_approval_skips_the_owner(self):
         self.calls(("p", PLAN), ("r", {"verdict": "ok", "findings": []}))

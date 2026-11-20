@@ -4,6 +4,20 @@ All notable changes to Friday are listed here. The format follows [Keep a Change
 
 ## [Unreleased]
 
+### Added
+
+- Project toolset: `"toolset": {"plan": "project", "execute": "project"}` lets the project's own commands plan and run a task in an ordinary Claude Code session, while Friday keeps the gate, browser acceptance, final review and delivery (ADR 0015).
+- `friday serve`: one queue of approved tasks per machine with `max_workers`, recovery of tasks whose process died and system notifications; `friday service print|install|uninstall|check` runs it as a launchd or systemd user service (ADR 0014).
+- Profile steps (`steps`, `friday step`) for project procedures only the owner runs, such as building the gate image; `gate_image_step` stops a task for this step when the image was built for another lockfile (ADR 0011).
+- `decide` revises a plan that awaits approval and reviews only the changed milestones; `friday plan KEY --diff` shows what changed (ADR 0016).
+- Component showcase (`stories`), design tools (`design`: Figma, /impeccable), `executor_tiers`, `budget`, `max_parallel_milestones`, `final_review_roles`, `project_lessons`, `journal` `page`, `resume --brief`.
+
+### Changed
+
+- A milestone nothing checked is shown as "done, not verified" with its reasons (ADR 0009).
+- Branches are named `<repository>/{key}` by default.
+- The gate excerpt keeps the failure lines of a long section, failed TAP tests first.
+
 ## [0.3.0] - unreleased
 
 ### Added

@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=b45badbf640b -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo neon" width="900">
 </p>
@@ -22,7 +22,7 @@ tugas → rencana (model kuat) → review rencana (vendor lain) → persetujuan 
       → review akhir + pemeriksaan buta → draft MR
 ```
 
-Anda terlibat dua kali: menyetujui rencana dan menerima draft MR. Di antara kedua titik ini pipeline tidak berhenti: temuan review yang disengketakan dikirim kepada Anda bersama MR.
+Anda menyetujui rencana dan menerima draft MR. Pipeline menjalankan rencana dalam anggaran yang ditetapkan; anggaran yang habis atau lingkungan yang rusak dikembalikan kepada pemilik. Temuan review yang disengketakan dikirim kepada Anda bersama MR.
 
 ## Poin utama
 
@@ -30,6 +30,9 @@ Anda terlibat dua kali: menyetujui rencana dan menerima draft MR. Di antara kedu
 - **Eksekutor murah dengan umpan balik cepat.** Eksekutor menjalankan linter, pemeriksaan tipe, dan tes sendiri di sandbox tanpa akses jaringan, dan gate hanya memberinya pemeriksaan yang gagal.
 - **Anda bisa melihat apa yang terjadi.** `friday status` menampilkan fase, model, sudah berapa lama agen diam, dan berapa banyak yang telah dikeluarkan untuk setiap tugas.
 - **Beberapa tugas sekaligus.** Setiap tugas memiliki branch dan worktree sendiri. Pengaturan mesin menentukan berapa banyak gate, browser, dan proses dari satu vendor yang boleh berjalan bersamaan.
+- **Branch bernama sesuai proyek.** Secara bawaan `start` membuat `<repository>/<task key>`, misalnya `octis/31`. Namanya diambil dari `origin` Git; profil dapat menetapkan templatnya sendiri.
+- **Pengeluaran yang dibatasi.** Profil dapat menyingkirkan eksekutor tingkat frontier dengan `executor_tiers` dan membatasi ukuran seluruh rencana serta jumlah proses model dengan `budget`; `resume` tidak mengatur ulang penghitung. Review akhir disimpan per peran, sehingga melanjutkan dengan masukan yang tidak berubah tidak menjalankannya lagi.
+- **Milestone paralel.** Milestone independen yang sudah siap berjalan di worktree-nya masing-masing, secara bawaan dua sekaligus; berkas yang berubah dan dipakai bersama oleh milestone tersebut memblokir integrasi.
 
 ## Memulai dengan cepat
 
@@ -54,12 +57,14 @@ Friday berbicara dalam sepuluh bahasa: `friday --lang ru …`, `FRIDAY_LANG=ru`,
 
 | Perintah | Fungsinya |
 | --- | --- |
-| `start KEY --profile P [--brief F]` | Membuat worktree dan rencana, lalu meminta model lain mereview rencana |
-| `plan KEY` | Menampilkan rencana beserta temuan yang belum terselesaikan |
+| `start KEY --profile P [--brief F] [--no-design]` | Membuat worktree dan rencana, lalu meminta model lain mereview rencana; jika profil memiliki `design`, rencana diperiksa terhadap frame Figma dari tiket |
+| `plan KEY [--diff]` | Menampilkan rencana beserta temuan yang belum terselesaikan; `--diff` menampilkan apa yang diubah revisi terbaru |
 | `approve KEY [--no-run]` | Menyetujui rencana dan menjalankan pipeline di latar belakang |
 | `status [KEY] [--json]` | Menampilkan apa yang sedang dikerjakan tugas dan berapa pengeluarannya |
-| `decide KEY name "text" [--reopen M2]` | Mencatat keputusan pemilik; hanya membuka kembali milestone yang disebutkan |
-| `run KEY` / `resume KEY` / `stop KEY` | Menjalankan di terminal ini, melanjutkan, menghentikan |
+| `decide KEY name "text" [--reopen M2]` | Mencatat keputusan pemilik. Selama rencana menunggu persetujuan, perencana merevisi milestone yang disebutkan berdasarkan keputusan itu (tanpa `--reopen` ia memilihnya sendiri), dan hanya milestone yang berubah yang direview lagi ([ADR 0016](../adr/0016-decision-revises-the-plan.md)); setelah persetujuan, hanya milestone yang disebutkan yang dibuka kembali |
+| `run KEY` / `resume KEY [--brief F]` / `stop KEY` | Menjalankan di terminal ini, melanjutkan, menghentikan; `--brief` memulihkan pernyataan asli tugas lama berdasarkan sidik jari perencanaannya |
+| `serve` / `service print\|install\|uninstall\|check` | Antrean tugas mesin: memulai tugas bergiliran, mengembalikan tugas yang gagal ke antrean, mengirim notifikasi; berjalan sebagai layanan launchd atau systemd ([panduan](guide.md#antrean-tugas-friday-serve)) |
+| `step [NAME] [KEY] [--profile P] [--dry-run]` | Menjalankan langkah profil (`steps`): langkah tugas dengan kunci tugas, langkah profil dengan `--profile`; tanpa nama, menampilkan daftar langkah beserta statusnya. Profil menjelaskan apa yang dilakukan sebuah langkah (membangun image, bundle, dan sebagainya) ([ADR 0011](../adr/0011-profile-steps.md)) |
 | `archive KEY [--force]` | Menghapus worktree dan kartu; branch tetap ada |
 | `journal KEY` | Memperbarui jurnal tugas (Obsidian, jsonl) |
 | `doctor --profile P` | Memeriksa apakah mesin dan profil sudah siap |

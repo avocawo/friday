@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import json
 import tempfile
@@ -30,7 +32,8 @@ class JournalTests(unittest.TestCase):
             value.update(state="running", branch="friday/T-1",
                          milestones=[{"id": "M1", "state": "done", "summary": "Добавил кнопку и тест.", "executor": "glm-5.3",
                                       "stages": [{"id": "M1.1", "commit": "abcdef1234567"}],
-                                      "minor_findings": [{"file": "page.html", "problem": "Отступы."}], "outside_files": ["notes.md"]},
+                                      "minor_findings": [{"file": "page.html", "problem": "Отступы."}], "outside_files": ["notes.md"],
+                                      "browser_minor": [{"file": "design", "problem": "Иконка правее макета."}]},
                                      {"id": "M2", "state": "pending", "stages": []}],
                          disputes=[{"milestone": "M1", "file": "page.html", "problem": "Нужен компонент.", "reviewer": "claude-opus-5-5",
                                     "executor_reason": "В проекте так не делают."}],
@@ -51,7 +54,7 @@ class JournalTests(unittest.TestCase):
         text = self.page()
         self.assertTrue(text.startswith("---\nfriday_generated: T-1\nkey: T-1\nstate: running"))  # front matter stays first
         for expected in ("# T-1 — Кнопка приветствия", "Running · branch `friday/T-1`", "### M1. Кнопка — done",
-                         "> Executor (glm-5.3): Добавил кнопку и тест.", "- M1.1 `abcdef1234`", "Minor: `page.html` Отступы.",
+                         "> Executor (glm-5.3): Добавил кнопку и тест.", "- M1.1 `abcdef1234`", "Minor: `page.html` Отступы.", "Minor in the browser: `design` Иконка правее макета.",
                          "Outside the plan: `notes.md`", "### M2. Имя — ahead", "Нужен компонент.", "В проекте так не делают.",
                          "**names**: Пустое имя — ошибка. (reopened: M2)", "Open review note (M1/M1.1): Шаблон.",
                          "| development | 1 | 1k | $0.12 |", "review (claude-opus-5-5): quota usage limit", "Assumption: Язык — русский."):
@@ -62,6 +65,29 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(json.loads(lines[0])["task"], "T-1")
         self.assertEqual(len(lines), len(card.events(self.root, "T-1")))
 
+    def test_a_folder_per_task_keeps_the_owners_notes_and_writes_beside_them(self):
+        self.profile_path.write_text(json.dumps({"name": "demo", "repository": str(self.repo), "journal_dir": "vault",
+                                                 "journal_page": "{key}/Friday.md"}))
+        folder = self.vault / "T-1"
+        folder.mkdir(parents=True)
+        (folder / "Журнал.md").write_text("# Ручной журнал\n")
+        written = journal.sync(self.root, "T-1")
+        self.assertEqual(written, [str((folder / "Friday.md").resolve())])
+        self.assertEqual((folder / "Журнал.md").read_text(), "# Ручной журнал\n")
+        self.assertIn("friday_generated: T-1", (folder / "Friday.md").read_text())
+        self.assertIn("[[T-1/Friday\\|T-1]]", (self.vault / "Friday — now.md").read_text())
+        for bad in ("Friday.md", "../{key}.md", "{key}/x.txt"):
+            self.profile_path.write_text(json.dumps({"name": "demo", "repository": str(self.repo), "journal_dir": "vault",
+                                                     "journal_page": bad}))
+            with self.assertRaises(FridayError):
+                journal.sync(self.root, "T-1")
+
+    def test_role_cost_and_model_time_keep_unknown_runs_visible(self):
+        journal.sync(self.root, "T-1")
+        text = self.page()
+        self.assertIn("| review | 1 | 0 | unknown (1 unpriced) |", text)
+        self.assertIn("1 without duration", text)
+
     def test_owner_notes_survive_and_foreign_pages_are_left_alone(self):
         journal.sync(self.root, "T-1")
         page = self.root.parent / "vault" / "T-1.md"
@@ -69,9 +95,10 @@ class JournalTests(unittest.TestCase):
         journal.sync(self.root, "T-1")
         self.assertIn("<!-- friday:notes -->\nПроверить на iPhone.\n<!-- /friday:notes -->", self.page())
         page.write_text("# Мои заметки о задаче\n")
-        with self.assertRaises(FridayError) as error:
-            journal.sync(self.root, "T-1")
-        self.assertEqual(error.exception.code, "journal_conflict")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual([path for path in journal.sync(self.root, "T-1") if path.endswith(".md")], [])
+        self.assertIn("Skipped", errors.getvalue())
         card.record(self.root, "T-1", "milestone_done", milestone="M1")  # the pipeline goes on regardless
         self.assertEqual(page.read_text(), "# Мои заметки о задаче\n")
 

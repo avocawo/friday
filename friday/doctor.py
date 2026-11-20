@@ -3,7 +3,7 @@ import shutil
 import subprocess
 import sys
 
-from . import codex_policy, i18n, models, profile as profiles, resources, state, tracker
+from . import codex_policy, design, i18n, models, profile as profiles, resources, state, steps, stories, tracker
 from .errors import FridayError
 from .i18n import N_, _
 
@@ -50,6 +50,8 @@ def inspect(path):
             if not executable:
                 raise FridayError("missing", "Codex CLI is not installed.")
             codex_policy.verify_sandbox(executable)
+            from . import codex_git
+            codex_git.verify(executable)
         check("codex_cli_and_sandbox", codex)
     for name, entry in catalog.items():
         if models.endpoint(entry):
@@ -69,8 +71,12 @@ def inspect(path):
             from . import gate
             gate.image_id(selected.get("gate_image"))
         check("gate_image", gate_image)
+    elif isinstance(selected.get("preview"), dict) or stories.settings(selected):
+        # A UI kit has nothing else that checks a milestone's build: without a gate every milestone ends unverified.
+        checks.append({"name": "gate", "status": "missing", "reason": "No gate: a profile with a preview must set gate and "
+                       "gate_image, or every milestone ends unverified (lint, types and build never run in isolation)."})
     else:
-        checks.append({"name": "gate", "status": "warning", "reason": N_("No gate: milestones are reviewed without an isolated check.")})
+        checks.append({"name": "gate", "status": "warning", "reason": N_("No gate: milestones are reviewed without an isolated check and end unverified.")})
     if isinstance(selected.get("browser"), dict):
         def browser():
             from . import browser_probe, browser_session
@@ -82,6 +88,22 @@ def inspect(path):
             resources.release_port(state.home(), "doctor-probe")
             return "free ports from %d" % value
         check("preview_port", port)
+    if stories.settings(selected):
+        config = stories.settings(selected)
+        def showcase():
+            repository = config["repository"]
+            result = subprocess.run(["git", "-C", repository, "check-ignore", "-q", stories.mount(selected) + "/package.json"],
+                                    capture_output=True)
+            if result.returncode:
+                raise FridayError("missing", "%s is not a git repository that ignores %s." % (repository, stories.mount(selected)))
+        check("stories_repository", showcase)
+    for name, step in sorted((selected.get("steps") or {}).items()):
+        if step.get("secrets") and "check" not in step:
+            check("step:" + name, lambda step=step: steps.secrets_present(step))
+        if "check" in step:
+            step_check(checks, name, selected)
+    for name, operation, warning in design.doctor_checks(selected):
+        check(name, operation, warning)
     delivery = (selected.get("delivery") or {}).get("transport", "none")
     if delivery == "github":
         check("delivery_github", lambda: tool_version("gh"))
@@ -94,6 +116,17 @@ def inspect(path):
     if selected.get("tracker") is None:
         checks.append({"name": "tracker", "status": "warning", "reason": N_("No tracker: start needs --brief.")})
     return {"ready": all(item["status"] != "missing" for item in checks), "checks": checks, "cast": layout}
+
+
+def step_check(checks, name, selected):
+    """A step's readiness: missing blocks, out of date only warns; both name the command that runs the step."""
+    try:
+        state, reason = steps.check(selected, name)
+    except (FridayError, OSError, subprocess.SubprocessError) as exc:
+        state, reason = "missing", "%s. Run: %s" % (exc, steps.hint(selected, name))
+    entry = {"name": "step:" + name, "status": {"ok": "ok", "stale": "warning"}.get(state, "missing")}
+    entry["detail" if state == "ok" else "reason"] = reason
+    checks.append(entry)
 
 
 def tool_version(name):

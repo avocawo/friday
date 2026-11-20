@@ -21,6 +21,7 @@ ROLES = ("plan", "plan-review", "develop", "review", "final-review", "blind-code
 REVIEWS = {"plan-review": "plan", "review": "develop", "final-review": "develop", "blind-code": "develop", "browser": "develop"}
 # Code is reviewed only by frontier models; the browser check only needs to match its author.
 CODE_REVIEWS = ("review", "final-review", "blind-code")
+FINAL_REVIEW_ROLES = ("final-review", "blind-code")
 # Tier preference when the profile gives no order for a role.
 DEFAULT_TIERS = {"develop": ("strong", "efficient", "frontier"), "translate": ("efficient", "strong", "frontier")}
 QUOTA_FALLBACK = 3600
@@ -33,6 +34,28 @@ def rank(tier):
 def level(entry):
     """Comparable strength: tier first, then the optional strength within the tier (Fable above Opus)."""
     return rank(entry["tier"]), entry.get("strength", 0)
+
+
+def executor_tiers(profile):
+    """Allowed writing-model tiers; role preferences never override this optional hard limit."""
+    if "executor_tiers" not in profile:
+        return TIERS
+    selected = profile["executor_tiers"]
+    if (not isinstance(selected, list) or not selected or any(tier not in TIERS for tier in selected)
+            or len(set(selected)) != len(selected)):
+        raise FridayError("invalid_profile", "executor_tiers must be a non-empty array of unique model tiers.")
+    return tuple(selected)
+
+
+def require_executor(profile, entry):
+    """Guard every writing call against a capped profile, including stale card layouts."""
+    if "executor_tiers" not in profile:
+        return
+    permitted = executor_tiers(profile)
+    definition = catalog(profile).get(entry.get("name"))
+    if (definition is None or definition["tier"] not in permitted
+            or entry.get("model") != definition["model"]):
+        raise FridayError("cast_impossible", "Executor does not satisfy executor_tiers: " + str(entry.get("name", "unknown")))
 
 
 def catalog(profile):
@@ -68,6 +91,7 @@ def catalog(profile):
     for role, names in preferences.items():
         if not isinstance(names, list) or any(name not in result for name in names):
             raise FridayError("invalid_profile", "roles.{role} must list models from the catalog.", role=role)
+    executor_tiers(profile)
     return result
 
 
@@ -77,7 +101,9 @@ def candidates(profile, role, available):
     listed = [models[name] for name in profile.get("roles", {}).get(role, [])]
     tiers = DEFAULT_TIERS.get(role, ("frontier", "strong", "efficient"))
     rest = sorted((entry for entry in models.values() if entry not in listed), key=lambda entry: tiers.index(entry["tier"]))
-    return [entry for entry in listed + rest if available(entry["vendor"])]
+    permitted = executor_tiers(profile)
+    return [entry for entry in listed + rest if available(entry["vendor"])
+            and (role != "develop" or entry["tier"] in permitted)]
 
 
 def allowed(role, entry, author):
@@ -149,6 +175,8 @@ def cast(profile, available=lambda vendor: True, planner=None):
     roles, notes = {"plan": best[1]}, []
     roles["develop"], _ = choose(profile, "develop", available=available)
     for role, author in REVIEWS.items():
+        if role == "blind-code" and role not in profile.get("final_review_roles", FINAL_REVIEW_ROLES):
+            continue
         used = {entry["model"] for entry in roles.values()}
         roles[role], note = choose(profile, role, roles[author], available, planner=roles["plan"], used=used)
         if note:
@@ -161,19 +189,23 @@ def public(entry):
 
 
 def executor(profile, layout, complexity="clear", failures=0, previous=None, available=lambda vendor: True):
-    """The executor of a milestone: the cast one for clear work, frontier for complex work, a tier up after two failures."""
+    """Choose writing models within the hard tier limit, including complexity, escalation and quota replacement."""
     models = catalog(profile)
     current = models[(previous or layout["develop"])["name"]]
-    floor = rank("frontier") if complexity == "complex" else rank(current["tier"])
+    permitted = executor_tiers(profile)
+    ceiling = max(rank(tier) for tier in permitted)
+    floor = ceiling if complexity == "complex" else min(rank(current["tier"]), ceiling)
     if failures >= 2:
-        floor = max(floor, min(rank(current["tier"]) + 1, rank("frontier")))
-    if rank(current["tier"]) >= floor and available(current["vendor"]):
+        floor = max(floor, min(rank(current["tier"]) + 1, ceiling))
+    if current["tier"] in permitted and rank(current["tier"]) >= floor and available(current["vendor"]):
         return public(current), None
     options = [entry for entry in candidates(profile, "develop", available) if rank(entry["tier"]) >= floor]
     if not options:
         raise FridayError("cast_impossible", "No available executor of tier {value} or higher.", value=TIERS[floor])
     chosen = min(options, key=lambda entry: rank(entry["tier"]))
-    if rank(current["tier"]) >= floor:
+    if current["tier"] not in permitted:
+        reason = "executor_tiers"
+    elif rank(current["tier"]) >= floor:
         reason = message("vendor quota")
     elif failures >= 2:
         reason = message("two failures in a row")
@@ -184,9 +216,12 @@ def executor(profile, layout, complexity="clear", failures=0, previous=None, ava
 
 def reviewer(profile, layout, role, author, available=lambda vendor: True, planner=None):
     """The reviewer for actual work: the cast one unless the real author outranks it, shares its vendor or is it."""
-    planned = catalog(profile)[layout[role]["name"]]
+    planned = catalog(profile).get((layout.get(role) or {}).get("name"))
     planner = planner or layout.get("plan")
     used = {entry["model"] for name, entry in layout.items() if name != role}
+    if planned is None:
+        chosen, note = choose(profile, role, author, available, planner, used)
+        return public(chosen), note
     if (allowed(role, planned, author) and available(planned["vendor"])
             and closeness(role, planned, author, planner, used) == (0, 0, 0)):
         return public(planned), None
@@ -219,7 +254,10 @@ def estimate(entry, profile, usage):
     price = catalog(profile)[entry["name"]].get("price")
     if not price:
         return None
-    return sum(usage.get(kind, 0) * price.get(kind, 0) for kind in ("input", "output", "cache_read", "cache_write")) / 1e6
+    kinds = ("input", "output", "cache_read", "cache_write")
+    if any(usage.get(kind, 0) and kind not in price for kind in kinds):
+        return None
+    return sum(usage.get(kind, 0) * price.get(kind, 0) for kind in kinds) / 1e6
 
 
 def quota_path(root):

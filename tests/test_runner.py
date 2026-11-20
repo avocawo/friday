@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from friday import runner
+from friday.errors import FridayError
 
 # Idle timeout for tests that read files the fake agent writes on start: a loaded machine starts Python slower
 # than a sub-second timeout, and the agent would be killed before writing them.
@@ -95,6 +96,22 @@ class RunnerTests(unittest.TestCase):
         status = json.loads((self.root / "logs" / "status.json").read_text())
         self.assertEqual((status["state"], status["session"], status["usage"]["cost_usd"]), ("ok", "s-1", 0.25))
 
+    def test_codex_duration_is_measured_when_the_driver_reports_none(self):
+        self.scenario([{"emit": {"type": "thread.started", "thread_id": "th-1"}},
+                       {"emit": {"type": "turn.completed", "usage": {}}}])
+        with patch("friday.runner.time.monotonic", side_effect=[100.0, 101.75]):
+            result = runner.run(self.spec(driver="codex"))
+        self.assertEqual(result.duration_ms, 1750)
+        recorded = json.loads((self.root / "logs" / "status.json").read_text())
+        self.assertEqual(recorded["duration_ms"], 1750)
+
+    def test_crashed_agent_still_has_a_measured_duration(self):
+        self.scenario([{"stderr": "broken"}, {"exit": 3}])
+        with patch("friday.runner.time.monotonic", side_effect=[100.0, 102.5]):
+            result = runner.run(self.spec())
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.duration_ms, 2500)
+
     def test_live_events_and_status_arrive_before_the_agent_exits(self):
         self.scenario([{"emit": INIT}, {"emit": ANSWER}, {"sleep": 1.2}, {"emit": RESULT}])
         seen = []
@@ -167,6 +184,29 @@ class RunnerTests(unittest.TestCase):
         self.assertNotIn("--permission-mode", argv)
         self.assertNotIn("allow", json.loads(argv[argv.index("--settings") + 1])["permissions"])
 
+    def test_several_mcp_servers_stdio_and_http_are_scoped_to_their_tools(self):
+        self.scenario([{"emit": RESULT}])
+        servers = [{"name": "graphify", "command": ["graphify-mcp", "graph.json"], "tools": ["query_graph"]},
+                   {"name": "figma", "url": "http://127.0.0.1:3845/mcp", "tools": ["get_metadata", "get_screenshot"]}]
+        runner.run(self.spec(mcp=servers))
+        argv = self.invocation()["argv"]
+        config = json.loads(argv[argv.index("--mcp-config") + 1])["mcpServers"]
+        self.assertEqual(config["graphify"], {"command": "graphify-mcp", "args": ["graph.json"]})
+        self.assertEqual(config["figma"], {"type": "http", "url": "http://127.0.0.1:3845/mcp"})
+        allowed = ["mcp__graphify__query_graph", "mcp__figma__get_metadata", "mcp__figma__get_screenshot"]
+        self.assertEqual(argv[argv.index("--allowedTools") + 1], ",".join(allowed))
+        self.assertEqual(argv[argv.index("--tools") + 1], ",".join(["Read", "Glob", "Grep"] + allowed))
+        self.assertIn("--strict-mcp-config", argv)
+        self.assertIn("--restricted", argv)
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["permissions"]["allow"], allowed)
+        self.scenario([{"emit": {"type": "turn.completed", "usage": {}}}])
+        runner.run(self.spec(driver="codex", mcp=servers))
+        argv = self.invocation()["argv"]
+        self.assertIn('mcp_servers.figma.url="http://127.0.0.1:3845/mcp"', argv)
+        self.assertIn('mcp_servers.graphify.command="graphify-mcp"', argv)
+        self.assertIn('mcp_servers.figma.tools.get_screenshot.approval_mode="approve"', argv)
+        self.assertNotIn("mcp_servers.figma.command", " ".join(argv))
+
     def test_session_id_is_known_before_the_agent_reports_it(self):
         self.scenario([{"sleep": 300}])
         result = runner.run(self.spec(idle_timeout=STARTUP_SLACK))
@@ -178,6 +218,38 @@ class RunnerTests(unittest.TestCase):
         self.scenario([{"emit": value}])
         result = runner.run(self.spec(schema={"type": "object"}))
         self.assertEqual((result.structured, result.denials), ({"verdict": "pass"}, [{"tool_name": "Bash"}]))
+
+    def test_project_session_gets_project_tools_and_only_friday_model_session_mode_and_schema(self):
+        self.scenario([{"emit": INIT}, {"emit": RESULT}])
+        runner.run(self.spec(toolset="project", effort="high", schema={"type": "object"}, disallowed_tools=["mcp__browser"],
+                             commands=["npm test"], write=True))
+        argv = self.invocation()["argv"]
+        for absent in ("--tools", "--settings", "--restricted", "--strict-mcp-config", "--no-chrome"):
+            self.assertNotIn(absent, argv)
+        self.assertEqual(argv[argv.index("--permission-mode") + 1], "auto")
+        self.assertEqual(argv[argv.index("--model") + 1], "model-a")
+        self.assertEqual(argv[argv.index("--effort") + 1], "high")
+        self.assertEqual(argv[argv.index("--disallowedTools") + 1], "mcp__browser")
+        self.assertEqual(json.loads(argv[argv.index("--json-schema") + 1]), {"type": "object"})
+        self.assertIn("--session-id", argv)
+
+    def test_project_session_answer_is_the_last_result_after_a_silent_pause(self):
+        early = dict(RESULT, result="waiting for review")
+        self.scenario([{"emit": INIT}, {"emit": early}, {"sleep": 1.5}, {"emit": RESULT}])
+        with patch.object(runner, "LINGER", 0.5):
+            project = runner.run(self.spec(toolset="project"))
+            builtin = runner.run(self.spec(log_dir=str(self.root / "logs-builtin")))
+        self.assertEqual((project.status, project.text, project.duration_ms), ("ok", "hello", 2400))  # both turns count
+        self.assertEqual(builtin.text, "waiting for review")
+
+    def test_project_session_quiet_after_its_answer_is_done_not_idle(self):
+        self.scenario([{"emit": INIT}, {"emit": RESULT}, {"sleep": STARTUP_SLACK + 2}])
+        result = runner.run(self.spec(toolset="project", idle_timeout=STARTUP_SLACK))
+        self.assertEqual((result.status, result.text), ("ok", "hello"))
+
+    def test_project_toolset_needs_claude(self):
+        with self.assertRaises(FridayError):
+            runner.run(self.spec(driver="codex", toolset="project"))
 
     def test_rate_limit_rejection_is_reported_as_quota(self):
         limit = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1793622000}}

@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from . import design, models, steps, stories
 from .errors import FridayError
 
 
@@ -27,6 +28,78 @@ def merge(base, override):
     return result
 
 
+def positive_integer(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def execution_limits(selected):
+    """Validate optional runtime and task limits without changing defaults of existing profiles."""
+    models.executor_tiers(selected)
+    if "max_parallel_milestones" in selected and not positive_integer(selected["max_parallel_milestones"]):
+        raise FridayError("invalid_profile", "max_parallel_milestones must be a positive integer.")
+    if "budget" in selected:
+        budget = selected["budget"]
+        if (not isinstance(budget, dict) or set(budget) - {"max_model_runs", "max_milestone_runs"}
+                or any(not positive_integer(value) for value in budget.values())):
+            raise FridayError("invalid_profile", "budget supports positive integer max_model_runs and max_milestone_runs.")
+    if "final_review_roles" in selected and selected["final_review_roles"] not in (
+            ["final-review"], list(models.FINAL_REVIEW_ROLES)):
+        raise FridayError("invalid_profile", "final_review_roles must be ['final-review'] or ['final-review', 'blind-code'].")
+    if "limits" in selected:
+        limits = selected["limits"]
+        if not isinstance(limits, dict):
+            raise FridayError("invalid_profile", "limits must be an object.")
+        for key in ("stage_files", "stage_lines", "task_milestones", "task_stages"):
+            if key in limits and not positive_integer(limits[key]):
+                raise FridayError("invalid_profile", "limits.%s must be a positive integer." % key)
+
+
+PHASES = ("plan", "execute")
+TIMEOUTS = {"idle": "idle_timeout", "tool": "tool_timeout", "total": "total_timeout"}
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def toolset(selected, phase):
+    """friday or project: who runs the phase (ADR 0015)."""
+    return (selected.get("toolset") or {}).get(phase, "friday")
+
+
+def project_toolset(selected):
+    """Validate toolset and the project block it needs; profiles without toolset are unchanged."""
+    modes = selected.get("toolset")
+    if modes is None:
+        return
+    if not isinstance(modes, dict) or set(modes) - set(PHASES) or any(mode not in ("friday", "project") for mode in modes.values()):
+        raise FridayError("invalid_profile", "toolset maps plan and execute to friday or project.")
+    if "project" not in modes.values():
+        return
+    project = selected.get("project")
+    if not isinstance(project, dict):
+        raise FridayError("invalid_profile", "toolset project needs a project object with the project's commands.")
+    def text(name, required, placeholder=None):
+        value = project.get(name)
+        if value is None and not required:
+            return
+        if not isinstance(value, str) or not value.strip() or (placeholder and placeholder not in value):
+            raise FridayError("invalid_profile", "project.%s must be a non-empty string%s." % (
+                name, " with " + placeholder if placeholder else ""))
+    text("plan_command", modes.get("plan") == "project", "{statement}")
+    text("execute_command", modes.get("execute") == "project")
+    text("stage_argument", False, "{stages}")
+    plan_file = project.get("plan_file")
+    if not isinstance(plan_file, str) or not plan_file or plan_file.startswith("/") or ".." in Path(plan_file).parts:
+        raise FridayError("invalid_profile", "project.plan_file must be a path relative to the worktree.")
+    for name in ("session_env", "disallowed_tools"):
+        value = project.get(name, [])
+        if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+            raise FridayError("invalid_profile", "project.%s must be an array of non-empty strings." % name)
+    if any(not ENV_NAME.fullmatch(name) for name in project.get("session_env", [])):
+        raise FridayError("invalid_profile", "project.session_env must name environment variables.")
+    timeouts = project.get("timeouts", {})
+    if not isinstance(timeouts, dict) or set(timeouts) - set(TIMEOUTS) or any(not positive_integer(v) for v in timeouts.values()):
+        raise FridayError("invalid_profile", "project.timeouts supports positive integer idle, tool and total seconds.")
+
+
 def read_layers(path, seen):
     if path in seen:
         raise FridayError("invalid_profile", "Profile inheritance contains a cycle: {path}", path=str(path))
@@ -37,6 +110,12 @@ def read_layers(path, seen):
     if not isinstance(layer, dict):
         raise FridayError("invalid_profile", "Profile must contain a JSON object.")
     parent = layer.pop("extends", None)
+    showcase = layer.get("stories")
+    if isinstance(showcase, dict):
+        for field in ("repository", "worktree_root"):
+            if isinstance(showcase.get(field), str) and showcase[field]:
+                showcase[field] = str((path.parent / Path(showcase[field]).expanduser()).resolve())
+    steps.resolve_paths(layer, path.parent)
     if parent is not None and (not isinstance(parent, str) or not parent):
         raise FridayError("invalid_profile", "extends must be a non-empty profile path.")
     for field in ("repository", "journal_dir", "worktree_root", "dor_file"):
@@ -71,6 +150,9 @@ def load(path):
     policy = profile.get("engineering_policy", [])
     if not isinstance(policy, list) or any(not isinstance(item, str) or not item.strip() for item in policy):
         raise FridayError("invalid_profile", "engineering_policy must be an array of non-empty instructions.")
+    lessons = profile.get("project_lessons", [])
+    if not isinstance(lessons, list) or any(not isinstance(item, str) or not item.strip() for item in lessons):
+        raise FridayError("invalid_profile", "project_lessons must be an array of non-empty instructions.")
     docs = profile.get("rules_docs", [])
     if not isinstance(docs, list) or any(not isinstance(item, str) or not item or item.startswith("/") or ".." in item.split("/")
                                          for item in docs):
@@ -84,5 +166,15 @@ def load(path):
         raise FridayError("invalid_profile", "repo_map_mcp is a boolean and needs repo_map graphify.")
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
+    execution_limits(profile)
+    project_toolset(profile)
+    design.validate(profile.get("design"))
+    stories.validate(profile.get("stories"))
+    steps.validate(profile.get("steps"))
+    if "gate_image_step" in profile and ((profile.get("steps") or {}).get(profile["gate_image_step"]) or {}).get("scope") != "profile":
+        raise FridayError("invalid_profile", "gate_image_step must name a step of scope profile.")
+    if isinstance(profile.get("preview"), dict) and profile["preview"].get("backend") == "storybook":
+        from . import isolated_preview
+        isolated_preview.validate_storybook(profile["preview"])
     profile["path"] = str(path)
     return profile

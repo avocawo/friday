@@ -45,7 +45,7 @@ class TaskCommandTests(unittest.TestCase):
         result = tasks.archive(self.root, "T-1", self.profile, force=True)
         self.assertFalse(Path(self.worktree).exists())
         self.assertTrue((Path(result["archive"]) / "card.json").is_file())
-        self.assertIn("friday/T-1", git("branch", "--list", "friday/T-1", cwd=self.repo))
+        self.assertIn("origin/T-1", git("branch", "--list", "origin/T-1", cwd=self.repo))
         self.assertNotIn("T-1", json.loads((self.root / "ports.json").read_text()))
         card.create(self.root, "T-1", str(self.profile_path))  # the key can start again
         self.assertEqual(resources.port(self.root, "T-1"), port)

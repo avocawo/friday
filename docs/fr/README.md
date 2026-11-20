@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=b45badbf640b -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logo néon" width="900">
 </p>
@@ -22,7 +22,7 @@ tâche → plan (modèle puissant) → revue du plan (autre fournisseur) → vot
       → revue finale + vérification à l'aveugle → MR en brouillon
 ```
 
-Vous intervenez deux fois : vous approuvez le plan et vous acceptez le MR en brouillon. Entre ces deux points, le pipeline ne s'arrête pas : les constats de revue contestés vous sont envoyés avec le MR.
+Vous approuvez le plan et vous acceptez le MR en brouillon. Le pipeline exécute le plan dans la limite du budget configuré ; un budget épuisé ou un environnement défaillant revient au propriétaire. Les constats de revue contestés vous sont envoyés avec le MR.
 
 ## Points clés
 
@@ -30,6 +30,9 @@ Vous intervenez deux fois : vous approuvez le plan et vous acceptez le MR en bro
 - **Un exécutant économique avec un retour rapide.** L'exécutant lance lui-même le linter, la vérification des types et les tests dans une sandbox sans accès au réseau, et le gate ne lui transmet que les contrôles en échec.
 - **Vous voyez ce qui se passe.** `friday status` affiche la phase, le modèle, depuis combien de temps l'agent est silencieux et combien chaque tâche a coûté.
 - **Plusieurs tâches en parallèle.** Chaque tâche a sa propre branche et son propre worktree. Les réglages de la machine définissent combien de gates, de navigateurs et d'exécutions d'un même fournisseur peuvent tourner en même temps.
+- **Des branches nommées d'après le projet.** Par défaut, `start` crée `<repository>/<task key>`, par exemple `octis/31`. Le nom vient du `origin` de Git ; le profil peut définir son propre modèle.
+- **Des dépenses bornées.** Un profil peut exclure les exécutants de niveau frontier avec `executor_tiers` et plafonner la taille de l'ensemble du plan et le nombre d'exécutions de modèles avec `budget` ; `resume` ne remet pas les compteurs à zéro. La revue finale est enregistrée par rôle, si bien qu'une reprise sur des entrées inchangées ne la relance pas.
+- **Des jalons en parallèle.** Les jalons indépendants et prêts s'exécutent dans leurs propres worktrees, deux à la fois par défaut ; les fichiers modifiés qu'ils ont en commun bloquent l'intégration.
 
 ## Démarrage rapide
 
@@ -54,12 +57,14 @@ Friday parle dix langues : `friday --lang ru …`, `FRIDAY_LANG=ru` ou `friday c
 
 | Commande | Ce qu'elle fait |
 | --- | --- |
-| `start KEY --profile P [--brief F]` | Crée le worktree et le plan, et fait relire le plan par un autre modèle |
-| `plan KEY` | Affiche le plan avec les constats non résolus |
+| `start KEY --profile P [--brief F] [--no-design]` | Crée le worktree et le plan, et fait relire le plan par un autre modèle ; avec `design` dans le profil, le plan est vérifié par rapport au cadre Figma du ticket |
+| `plan KEY [--diff]` | Affiche le plan avec les constats non résolus ; `--diff` montre ce que la dernière révision a changé |
 | `approve KEY [--no-run]` | Approuve le plan et lance le pipeline en arrière-plan |
 | `status [KEY] [--json]` | Affiche ce que font les tâches et combien elles ont coûté |
-| `decide KEY name "text" [--reopen M2]` | Enregistre une décision du propriétaire ; ne rouvre que les jalons indiqués |
-| `run KEY` / `resume KEY` / `stop KEY` | Lance dans ce terminal, reprend, arrête |
+| `decide KEY name "text" [--reopen M2]` | Enregistre une décision du propriétaire. Tant que le plan attend l'approbation, le planificateur révise les jalons indiqués en conséquence (sans `--reopen`, il les choisit lui-même), et seuls ceux qui ont changé sont relus ([ADR 0016](../adr/0016-decision-revises-the-plan.md)) ; après l'approbation, ne rouvre que les jalons indiqués |
+| `run KEY` / `resume KEY [--brief F]` / `stop KEY` | Lance dans ce terminal, reprend, arrête ; `--brief` rétablit l'énoncé d'origine d'une ancienne tâche grâce à son empreinte de planification |
+| `serve` / `service print\|install\|uninstall\|check` | La file de tâches de la machine : lance les tâches à tour de rôle, remet en file celles qui ont échoué, notifie ; tourne comme service launchd ou systemd ([guide](guide.md#file-des-tâches--friday-serve)) |
+| `step [NAME] [KEY] [--profile P] [--dry-run]` | Exécute une étape de profil (`steps`) : une étape de tâche avec la clé de la tâche, une étape de profil avec `--profile` ; sans nom, liste les étapes et leur état. Le profil décrit ce que fait une étape (construire une image, un bundle, etc.) ([ADR 0011](../adr/0011-profile-steps.md)) |
 | `archive KEY [--force]` | Supprime le worktree et la fiche ; la branche reste |
 | `journal KEY` | Met à jour les journaux des tâches (Obsidian, jsonl) |
 | `doctor --profile P` | Vérifie que la machine et le profil sont prêts |

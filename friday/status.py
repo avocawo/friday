@@ -1,4 +1,6 @@
 """What every task is doing right now, and what it has cost so far."""
+import datetime
+import math
 import time
 
 from . import card as cards
@@ -20,31 +22,71 @@ def state_name(value, lang=None):
     return i18n.tr(lang or i18n.language(), STATE_NAMES[value]) if value in STATE_NAMES else value
 
 
+def card_state_name(card, lang=None):
+    """A queued task, and a finished task that nothing actually checked, are not shown by their plain state."""
+    if card.get("queued"):
+        return i18n.tr(lang or i18n.language(), N_("queued"))
+    if card.get("state") == "done" and card.get("unverified"):
+        return i18n.tr(lang or i18n.language(), N_("done, not verified"))
+    return state_name(card.get("state"), lang)
+
+
+def run_seconds(event, started):
+    """Prefer recorded execution time; legacy pairs include any wait for a vendor slot."""
+    milliseconds = event.get("duration_ms")
+    if (isinstance(milliseconds, (int, float)) and not isinstance(milliseconds, bool)
+            and math.isfinite(milliseconds) and milliseconds >= 0):
+        return milliseconds / 1000, False
+    # Recovery may happen long after the agent died. Its timestamp is not an end time.
+    if started is None or event.get("status") == "lost" or "execution_started" in event:
+        return None, False
+    try:
+        begin = datetime.datetime.fromisoformat(started["at"])
+        end = datetime.datetime.fromisoformat(event["at"])
+        seconds = (end - begin).total_seconds()
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None, False
+    return (seconds, True) if seconds >= 0 else (None, False)
+
+
 def totals(events):
-    spent = {"runs": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_runs": 0, "seconds": 0.0, "by_role": {}}
+    spent = {"runs": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_runs": 0, "seconds": 0.0,
+             "unmeasured_runs": 0, "duration_estimated_runs": 0, "by_role": {}}
+    starts = {}
     for event in events:
+        if event.get("type") == "run_started" and event.get("run"):
+            starts[event["run"]] = event
         if event.get("type") != "run_finished":
             continue
         usage = event.get("usage") or {}
         tokens = sum(usage.get(name, 0) for name in ("input", "output", "cache_read", "cache_write"))
-        role = spent["by_role"].setdefault(event.get("role", "?"), {"runs": 0, "tokens": 0, "cost_usd": 0.0})
+        role = spent["by_role"].setdefault(event.get("role", "?"), {
+            "runs": 0, "tokens": 0, "cost_usd": 0.0, "unpriced_runs": 0,
+            "seconds": 0.0, "unmeasured_runs": 0, "duration_estimated_runs": 0})
         spent["runs"] += 1
         role["runs"] += 1
         spent["tokens"] += tokens
         role["tokens"] += tokens
         if usage.get("cost_usd") is None:
             spent["unpriced_runs"] += 1
+            role["unpriced_runs"] += 1
         else:
             spent["cost_usd"] += usage["cost_usd"]
             role["cost_usd"] += usage["cost_usd"]
-        spent["seconds"] += (event.get("duration_ms") or 0) / 1000
+        seconds, estimated = run_seconds(event, starts.get(event.get("run")))
+        for total in (spent, role):
+            if seconds is None:
+                total["unmeasured_runs"] += 1
+            else:
+                total["seconds"] += seconds
+                total["duration_estimated_runs"] += int(estimated)
     return spent
 
 
 def task(root, key, now=None):
     now = now or time.time()
     card = cards.read(root, key)
-    row = {"key": key, "state": card["state"], "now": [], "waiting": [], "spent": totals(cards.events(root, key))}
+    row = {"key": key, "state": card["state"], "state_name": card_state_name(card), "unverified": card.get("unverified", []), "now": [], "waiting": [], "spent": totals(cards.events(root, key))}
     for current in cards.running(card).values():
         status = cards.run_status(root, key, current["run"])
         if status.get("state") == "waiting":
@@ -78,9 +120,21 @@ def duration(seconds, lang=None):
 
 def money(spent, lang=None):
     cost = spent["cost_usd"]
+    if cost == 0 and spent["unpriced_runs"]:
+        return i18n.tr(lang or i18n.language(), "unknown ({count} unpriced)", count=spent["unpriced_runs"])
     text = "$%.4f" % cost if 0 < cost < 0.01 else "$%.2f" % cost
     if spent["unpriced_runs"]:
         text += " " + i18n.tr(lang or i18n.language(), "+{count} unpriced", count=spent["unpriced_runs"])
+    return text
+
+
+def work_time(spent, lang=None):
+    lang = lang or i18n.language()
+    text = duration(spent["seconds"], lang)
+    if spent.get("duration_estimated_runs"):
+        text += " " + i18n.tr(lang, "({count} from events)", count=spent["duration_estimated_runs"])
+    if spent.get("unmeasured_runs"):
+        text += " " + i18n.tr(lang, "+{count} without duration", count=spent["unmeasured_runs"])
     return text
 
 
@@ -106,6 +160,15 @@ def describe_wait(wait):
     return " · ".join(parts + [_("waiting for a slot: {resource}", resource=wait["resource"])])
 
 
+def server_line(root):
+    from . import serve
+    pid = serve.running_server(root)
+    if not pid:
+        return _("friday serve is not running: tasks run as separate background processes")
+    return _("friday serve: running (process {pid}, tasks at once: {workers}), queued: {queue}", pid=pid,
+             workers=serve.max_workers(root), queue=", ".join(serve.queue(root)) or _("none"))
+
+
 def render(rows, width=110):
     if not rows:
         return _("No active tasks.")
@@ -113,7 +176,7 @@ def render(rows, width=110):
     table = [header]
     for row in rows:
         live = sum(now["tokens"] for now in row["now"])
-        first = (row["key"], state_name(row["state"]))
+        first = (row["key"], row.get("state_name") or state_name(row["state"]))
         totals_cells = (tokens(row["spent"]["tokens"] + live), money(row["spent"]))
         activity = [(duration(now["elapsed"]), duration(now["quiet"]), describe(now)) for now in row["now"]]
         activity += [(duration(wait["elapsed"]), "—", describe_wait(wait)) for wait in row["waiting"]]
@@ -134,7 +197,20 @@ def render(rows, width=110):
 def render_task(root, key, recent=10):
     row = task(root, key)
     card = cards.read(root, key)
-    lines = ["%s — %s" % (key, state_name(card["state"]))]
+    lines = ["%s — %s" % (key, card_state_name(card))]
+    for item in card["milestones"]:
+        if item.get("state") == "blocked" and item.get("blocked_reason"):
+            lines.append(_("Blocked {milestone}: {reason}", milestone=item["id"], reason=item["blocked_reason"]))
+        for reason in item.get("unverified") or []:
+            lines.append(_("Not verified {milestone}: {reason}", milestone=item["id"], reason=reason))
+    if card.get("owner_step"):
+        lines.append(_("Owner step needed: {step}", step=card["owner_step"]))
+    for question in card.get("questions") or []:
+        lines.append(_("Question for the owner: {question} (answer: friday decide {key} <name> \"text\")", question=question, key=key))
+    from . import steps
+    for item in steps.attention_of(card):
+        lines.append(_("Step {state}: {name} — {command}", state=_(steps.STATES[item["state"]]), name=item["name"],
+                       command=item["command"]))
     if card.get("branch"):
         lines.append(_("Branch: {branch}  Worktree: {worktree}", branch=card["branch"], worktree=card.get("worktree") or "—"))
     if card["cast"]:
@@ -147,11 +223,11 @@ def render_task(root, key, recent=10):
         lines.append(_("Waiting: {activity} ({elapsed})", activity=describe_wait(wait), elapsed=duration(wait["elapsed"])))
     spent = row["spent"]
     lines.append(_("Spent: {money}, {tokens} tokens, {runs}, {seconds} of model work", money=money(spent), tokens=tokens(spent["tokens"]),
-                   runs=ngettext("{n} run", "{n} runs", spent["runs"]), seconds=duration(spent["seconds"])))
+                   runs=ngettext("{n} run", "{n} runs", spent["runs"]), seconds=work_time(spent)))
     for role, value in sorted(spent["by_role"].items(), key=lambda item: -item[1]["tokens"]):
         lines.append("  " + _("{role}: {runs}, {tokens} tokens, {money}", role=role_name(role),
                               runs=ngettext("{n} run", "{n} runs", value["runs"]), tokens=tokens(value["tokens"]),
-                              money=money({"cost_usd": value["cost_usd"], "unpriced_runs": 0})))
+                              money=money(value)))
     history = cards.events(root, key)[-recent:]
     if history:
         lines.append(_("Recent events:"))

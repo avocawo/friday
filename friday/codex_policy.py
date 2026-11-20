@@ -74,12 +74,17 @@ def verify_sandbox(executable):
             server.close()
 
 
-def options(role, runtime_directory):
+def options(role, runtime_directory, git_directory=None, export_directory=None):
     workspace_mode = "write" if role == "develop" else "read"
     parent = ":workspace" if role == "develop" else ":read-only"
     filesystem = '{":root"="deny", ":minimal"="read", ":tmpdir"="deny", ":slash_tmp"="deny", '
     filesystem += '":workspace_roots"={"."=' + json.dumps(workspace_mode) + ', "**/.env"="deny", "**/.env.*"="deny", "**/.npmrc"="deny"}, '
-    filesystem += json.dumps(os.path.realpath(runtime_directory)) + '="read"}'
+    filesystem += json.dumps(os.path.realpath(runtime_directory)) + '="read"'
+    if git_directory:
+        filesystem += ', ' + json.dumps(os.path.realpath(git_directory)) + '=' + json.dumps(workspace_mode)
+    if export_directory:
+        filesystem += ', ' + json.dumps(os.path.realpath(export_directory)) + '="write"'
+    filesystem += '}'
     return ["-c", 'default_permissions="friday"', "-c", 'permissions.friday.extends=' + json.dumps(parent),
             "-c", "permissions.friday.filesystem=" + filesystem,
             "-c", "permissions.friday.network.enabled=false"]

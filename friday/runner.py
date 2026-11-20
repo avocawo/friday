@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import codex_policy
+from . import codex_policy, codex_git
 from .errors import FridayError
 
 BASE_ENV = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "SHELL", "USER")
@@ -23,6 +23,8 @@ CREDENTIALS = ["~/.ssh", "~/.aws", "~/.config", "~/.netrc", "~/.npmrc", "~/.dock
                "~/.codex", "~/.claude", "~/.local/share/friday", "~/Library/Keychains"]
 # Set by the orchestrator to stop every agent this process runs, e.g. parallel milestones after Ctrl-C.
 CANCEL = threading.Event()
+# Seconds a process may stay silent after its final result before Friday takes it for cleanup and stops it.
+LINGER = 30
 QUOTA_TEXT = re.compile(r"(?i)usage limit|rate limit|quota|too many requests")
 
 
@@ -38,8 +40,11 @@ class Spec:
     schema: dict = None              # structured final answer
     effort: str = None               # reasoning effort, e.g. "medium" or "max"
     deny_read: list = field(default_factory=list)  # extra paths the executor's shell may not read
-    mcp: dict = None                 # one scoped MCP server: {"name", "command": [...], "tools": [...]}
+    add_dirs: list = field(default_factory=list)   # more directories the agent works in, e.g. a second repository
+    mcp: object = None               # scoped MCP server(s): {"name", "command": [...] or "url", "tools": [...]}, or a list
     resume: str = None               # session id of a previous run to continue
+    toolset: str = "friday"          # "project": a plain Claude Code session with the project's own tools (ADR 0015)
+    disallowed_tools: list = field(default_factory=list)  # project toolset: tools the session may not use
     env: dict = field(default_factory=dict)
     idle_timeout: float = 600        # seconds without output while no tool call is open
     tool_timeout: float = 1800       # seconds a single tool call may stay open
@@ -83,15 +88,18 @@ class Claude:
 
     def command(self, directory):
         spec = self.spec
+        if spec.toolset == "project":
+            return self.project_command()
         tools = ["Read", "Glob", "Grep"] + (["Edit", "Write"] if spec.write else []) + (["Bash"] if spec.commands else [])
         permissions = {"deny": SECRET_FILES + ["mcp__*"]}
         servers = []
         if spec.mcp:
-            # Only the named server, only its listed tools; every other MCP tool stays denied.
-            allowed = ["mcp__%s__%s" % (spec.mcp["name"], tool) for tool in spec.mcp["tools"]]
+            # Only the named servers, only their listed tools: --tools offers nothing else and --strict-mcp-config
+            # ignores every other MCP configuration.
+            allowed = ["mcp__%s__%s" % (server["name"], tool) for server in mcp_servers(spec) for tool in server["tools"]]
             permissions = {"deny": SECRET_FILES, "allow": allowed}
             tools += allowed
-            config = {"mcpServers": {spec.mcp["name"]: {"command": spec.mcp["command"][0], "args": spec.mcp["command"][1:]}}}
+            config = {"mcpServers": {server["name"]: claude_server(server) for server in mcp_servers(spec)}}
             servers = ["--mcp-config", json.dumps(config), "--allowedTools", ",".join(allowed)]
         settings = {"permissions": permissions}
         # The allowlist only scopes the executor: under acceptEdits Claude Code also auto-approves read-only and in-cwd
@@ -103,15 +111,34 @@ class Claude:
                                    "autoAllowBashIfSandboxed": False, "excludedCommands": [],
                                    "network": {"allowedDomains": [], "strictAllowlist": True},
                                    "filesystem": {"denyRead": CREDENTIALS + list(spec.deny_read)}}
+            if spec.add_dirs:
+                settings["sandbox"]["filesystem"]["allowWrite"] = [str(Path(path).resolve()) for path in spec.add_dirs]
         args = [shutil.which("claude") or "claude", "-p", "--output-format", "stream-json", "--verbose",
                 "--restricted", "--strict-mcp-config", "--no-chrome", "--model", spec.model,
                 "--tools", ",".join(tools), "--settings", json.dumps(settings)]
         args += servers
+        for path in spec.add_dirs:
+            args += ["--add-dir", str(Path(path).resolve())]
         args += ["--resume", self.session] if spec.resume else ["--session-id", self.session]
         if spec.write:
             args += ["--permission-mode", "acceptEdits"]
         if spec.effort:
             args += ["--effort", spec.effort]
+        if spec.schema is not None:
+            args += ["--json-schema", json.dumps(spec.schema)]
+        return args
+
+    def project_command(self):
+        """A session as the owner's own: project settings, hooks, skills, agents and MCP; Friday sets only the model,
+        effort, session, permission mode and report schema (ADR 0015)."""
+        spec = self.spec
+        args = [shutil.which("claude") or "claude", "-p", "--output-format", "stream-json", "--verbose",
+                "--model", spec.model, "--permission-mode", "auto"]
+        args += ["--resume", self.session] if spec.resume else ["--session-id", self.session]
+        if spec.effort:
+            args += ["--effort", spec.effort]
+        if spec.disallowed_tools:
+            args += ["--disallowedTools", ",".join(spec.disallowed_tools)]
         if spec.schema is not None:
             args += ["--json-schema", json.dumps(spec.schema)]
         return args
@@ -161,7 +188,9 @@ class Claude:
             result.session = event.get("session_id") or result.session
             result.text = event.get("result") or ""
             result.structured = event.get("structured_output")
-            result.duration_ms = event.get("duration_ms")
+            # A project session may report several results; its work is the sum of their turns.
+            if event.get("duration_ms") is not None:
+                result.duration_ms = (result.duration_ms or 0) + event["duration_ms"]
             result.turns = event.get("num_turns")
             result.denials = event.get("permission_denials") or []
             if event.get("is_error"):
@@ -188,6 +217,8 @@ class Codex:
         if not executable:
             raise FridayError("runner_unavailable", "Codex CLI is unavailable.")
         codex_policy.verify_environment(executable, Path(spec.cwd).resolve())
+        self.git = (codex_git.Runtime(spec.cwd, directory, spec.log_dir, spec.write)
+                    if (Path(spec.cwd) / '.git').exists() else None)
         # The sandbox profile grants read access to the runtime directory, so Codex runs from a copy placed there.
         source = Path(os.path.realpath(executable))
         local = Path(directory) / "codex"
@@ -201,16 +232,24 @@ class Codex:
         options = ["--json", "--ignore-user-config", "--skip-git-repo-check",
                    "--disable", "hooks", "--disable", "plugins", "--disable", "apps",
                    "--disable", "browser_use", "--disable", "computer_use",
-                   *codex_policy.options("develop" if spec.write else "review", directory),
+                   *codex_policy.options("develop" if spec.write else "review", directory,
+                                         git_directory=str(self.git.gitdir) if self.git else None),
+                   *[option for path in spec.add_dirs for option in ("--add-dir", str(Path(path).resolve()))],
                    "-c", 'web_search="disabled"', "-c", 'approval_policy="never"', "--model", spec.model]
+        if self.git:
+            for name, value in self.git.environment.items():
+                options += ['-c', 'shell_environment_policy.set.' + name + '=' + json.dumps(value)]
         if spec.effort:
             options += ["-c", "model_reasoning_effort=" + json.dumps(spec.effort)]
-        if spec.mcp:
-            name = spec.mcp["name"]
-            options += ["-c", "mcp_servers.%s.command=%s" % (name, json.dumps(spec.mcp["command"][0])),
-                        "-c", "mcp_servers.%s.args=%s" % (name, json.dumps(spec.mcp["command"][1:])),
-                        "-c", "mcp_servers.%s.required=true" % name, "-c", "mcp_servers.%s.startup_timeout_sec=180" % name]
-            for tool in spec.mcp["tools"]:
+        for server in mcp_servers(spec):
+            name = server["name"]
+            if server.get("url"):
+                options += ["-c", "mcp_servers.%s.url=%s" % (name, json.dumps(server["url"]))]
+            else:
+                options += ["-c", "mcp_servers.%s.command=%s" % (name, json.dumps(server["command"][0])),
+                            "-c", "mcp_servers.%s.args=%s" % (name, json.dumps(server["command"][1:]))]
+            options += ["-c", "mcp_servers.%s.required=true" % name, "-c", "mcp_servers.%s.startup_timeout_sec=180" % name]
+            for tool in server["tools"]:
                 options += ["-c", 'mcp_servers.%s.tools.%s.approval_mode="approve"' % (name, tool)]
         if spec.schema is not None:
             schema = Path(directory) / "schema.json"
@@ -219,6 +258,10 @@ class Codex:
         if spec.resume:
             return [str(local), "exec", "resume", *options, spec.resume, "-"]
         return [str(local), "exec", *options, "-"]
+
+    def finish(self):
+        if getattr(self, 'git', None):
+            self.git.finish()
 
     def busy(self):
         return bool(self.open_tools)
@@ -267,6 +310,19 @@ class Codex:
 DRIVERS = {"claude": Claude, "codex": Codex}
 
 
+def mcp_servers(spec):
+    """Spec.mcp is one server or a list of them; each has a stdio command or a streamable HTTP url."""
+    if not spec.mcp:
+        return []
+    return list(spec.mcp) if isinstance(spec.mcp, (list, tuple)) else [spec.mcp]
+
+
+def claude_server(server):
+    if server.get("url"):
+        return {"type": "http", "url": server["url"]}
+    return {"command": server["command"][0], "args": server["command"][1:]}
+
+
 def brief(value, limit=120):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     text = " ".join(text.split())
@@ -298,6 +354,8 @@ def kill_group(process, grace=5):
 def run(spec, on_event=None):
     if spec.driver not in DRIVERS:
         raise FridayError("invalid_runner", "Unknown agent driver: {driver}", driver=str(spec.driver))
+    if spec.toolset == "project" and spec.driver != "claude":
+        raise FridayError("invalid_runner", "The project toolset runs only Claude Code sessions.")
     driver = DRIVERS[spec.driver](spec)
     logs = Path(spec.log_dir)
     logs.mkdir(parents=True, exist_ok=True)
@@ -306,6 +364,7 @@ def run(spec, on_event=None):
     result.usage = usage
     status_path = logs / "status.json"
     started = time.time()
+    monotonic_started = time.monotonic()
     status = {"driver": spec.driver, "model": spec.model, "state": "starting", "session": getattr(driver, "session", spec.resume),
               "pid": None, "owner": os.getpid(), "started_at": started, "last_activity_at": started, "last_event": None, "usage": usage}
     write_status(status_path, status)
@@ -345,9 +404,13 @@ def run(spec, on_event=None):
                 if now - started > spec.total_timeout:
                     result.status, result.error = "timeout", "The agent exceeded %ss in total." % spec.total_timeout
                     break
-                if finished and now - last_output > 30:
+                # A project session may end a turn while its background task runs and go on when the task is done,
+                # so its answer is the last result before the process exits, not the first one.
+                if finished and now - last_output > LINGER and spec.toolset != "project":
                     break  # the final result is in; a process that lingers after it is only cleanup
                 if now - last_output > limit:
+                    if finished:
+                        break  # a project session that went quiet after its answer is done, not stuck
                     result.status = "idle"
                     result.error = "No agent output for %ss%s." % (int(limit), " during a tool call" if driver.busy() else "")
                     break
@@ -380,14 +443,21 @@ def run(spec, on_event=None):
                 if reader is not None:
                     reader.join(5)
                 process.stdout.close()
+            if isinstance(driver, Codex):
+                try:
+                    driver.finish()
+                except FridayError as exc:
+                    result.status, result.error = 'failed', str(exc)
             if previous_handler is not None:
                 signal.signal(signal.SIGTERM, previous_handler)
             result.session = result.session or status["session"]
             failure = sys.exc_info()[1]
             if failure is not None:
                 result.error = result.error or "Friday stopped the agent: %s: %s" % (type(failure).__name__, failure)
+            if result.duration_ms is None:
+                result.duration_ms = max(0, round((time.monotonic() - monotonic_started) * 1000))
             status.update(state=result.status if process is not None else "failed", session=result.session,
-                          finished_at=time.time(), error=result.error)
+                          finished_at=time.time(), duration_ms=result.duration_ms, error=result.error)
             write_status(status_path, status)
     if result.status == "ok" and result.exit_code not in (0, -signal.SIGTERM, -signal.SIGKILL):
         result.status, result.error = "failed", "The agent exited with status %s." % result.exit_code

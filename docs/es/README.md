@@ -1,4 +1,4 @@
-<!-- i18n: source=README.md sha256=a008f1f30688 -->
+<!-- i18n: source=README.md sha256=b45badbf640b -->
 <p align="center">
   <img src="../../assets/friday-logo.png" alt="Friday — logotipo de neón" width="900">
 </p>
@@ -22,7 +22,7 @@ tarea → plan (modelo potente) → revisión del plan (otro proveedor) → tu a
       → revisión final + comprobación a ciegas → MR en borrador
 ```
 
-Participas dos veces: apruebas el plan y aceptas el MR en borrador. Entre estos dos puntos el pipeline no se detiene: los hallazgos en disputa de las revisiones se te envían junto con el MR.
+Apruebas el plan y aceptas el MR en borrador. El pipeline ejecuta el plan dentro del presupuesto configurado; si el presupuesto se agota o el entorno falla, la tarea vuelve al propietario. Los hallazgos en disputa de las revisiones se te envían junto con el MR.
 
 ## Puntos clave
 
@@ -30,6 +30,9 @@ Participas dos veces: apruebas el plan y aceptas el MR en borrador. Entre estos 
 - **Un ejecutor económico con retroalimentación rápida.** El ejecutor ejecuta por sí mismo el linter, las comprobaciones de tipos y las pruebas en un sandbox sin acceso a la red, y el gate solo le entrega las comprobaciones que fallaron.
 - **Ves lo que ocurre.** `friday status` muestra la fase, el modelo, cuánto tiempo lleva en silencio el agente y cuánto se ha gastado en cada tarea.
 - **Varias tareas a la vez.** Cada tarea tiene su propia rama y su propio worktree. La configuración de la máquina define cuántos gates, navegadores y ejecuciones de un mismo proveedor pueden correr al mismo tiempo.
+- **Ramas con el nombre del proyecto.** Por defecto `start` crea `<repository>/<task key>`, por ejemplo `octis/31`. El nombre sale del `origin` de Git; el perfil puede definir su propia plantilla.
+- **Gasto acotado.** Un perfil puede excluir a los ejecutores frontier con `executor_tiers` y limitar el tamaño de todo el plan y el número de ejecuciones de modelos con `budget`; `resume` no reinicia los contadores. La revisión final se guarda por rol, así que un resume con las mismas entradas no la ejecuta de nuevo.
+- **Hitos en paralelo.** Los hitos independientes que están listos se ejecutan en sus propios worktrees, de dos en dos por defecto; los archivos modificados que comparten bloquean la integración.
 
 ## Inicio rápido
 
@@ -54,12 +57,15 @@ Friday habla diez idiomas: `friday --lang ru …`, `FRIDAY_LANG=ru` o `friday co
 
 | Comando | Qué hace |
 | --- | --- |
-| `start KEY --profile P [--brief F]` | Crea el worktree y el plan, y hace que otro modelo revise el plan |
-| `plan KEY` | Muestra el plan con los hallazgos sin resolver |
+| `start KEY --profile P [--brief F] [--no-design]` | Crea el worktree y el plan, y hace que otro modelo revise el plan; con `design` en el perfil, el plan se comprueba contra el frame de Figma del ticket |
+| `plan KEY [--diff]` | Muestra el plan con los hallazgos sin resolver; `--diff` muestra qué cambió la última revisión |
+
 | `approve KEY [--no-run]` | Aprueba el plan e inicia el pipeline en segundo plano |
 | `status [KEY] [--json]` | Muestra qué hacen las tareas y cuánto se ha gastado |
-| `decide KEY name "text" [--reopen M2]` | Registra una decisión del propietario; reabre solo los hitos indicados |
-| `run KEY` / `resume KEY` / `stop KEY` | Ejecuta en esta terminal, continúa, detiene |
+| `decide KEY name "text" [--reopen M2]` | Registra una decisión del propietario. Mientras el plan espera aprobación, el planificador revisa por ella los hitos indicados (sin `--reopen` los elige él mismo) y solo los modificados se vuelven a revisar ([ADR 0016](../adr/0016-decision-revises-the-plan.md)); después de la aprobación reabre solo los hitos indicados |
+| `run KEY` / `resume KEY [--brief F]` / `stop KEY` | Ejecuta en esta terminal, continúa, detiene; `--brief` restaura el enunciado original de una tarea antigua por la huella de su planificación |
+| `serve` / `service print\|install\|uninstall\|check` | La cola de tareas de la máquina: inicia las tareas por turno, devuelve a la cola las fallidas, notifica; funciona como servicio de launchd o systemd ([guía](guide.md#cola-de-tareas-friday-serve)) |
+| `step [NAME] [KEY] [--profile P] [--dry-run]` | Ejecuta un paso del perfil (`steps`): un paso de tarea con la clave de la tarea, un paso de perfil con `--profile`; sin nombre, lista los pasos y su estado. El perfil describe qué hace un paso (construir una imagen, un bundle y similares) ([ADR 0011](../adr/0011-profile-steps.md)) |
 | `archive KEY [--force]` | Elimina el worktree y la ficha; la rama se conserva |
 | `journal KEY` | Actualiza los diarios de las tareas (Obsidian, jsonl) |
 | `doctor --profile P` | Comprueba que la máquina y el perfil están listos |

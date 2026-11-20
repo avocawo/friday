@@ -18,7 +18,24 @@ TOOLS = {
     "take_screenshot": {"format", "quality", "uid", "fullPage"},
     "list_network_requests": {"pageSize", "pageIdx", "resourceTypes", "includePreservedRequests"},
     "navigate_page": {"type", "url", "ignoreCache", "timeout"},
+    "hover": {"uid", "includeSnapshot"},
 }
+# Friday's own read-only tools, built on evaluate_script with a fixed function; the agent never gets evaluate_script.
+STYLE = {
+    "name": "computed_style",
+    "description": "Read the computed CSS of one element from the latest snapshot in its current state (hover or focus it "
+                   "first to read that state): its rendered width and height plus the listed properties.",
+    "inputSchema": {"type": "object", "additionalProperties": False, "required": ["uid", "properties"],
+                    "properties": {"uid": {"type": "string", "description": "The uid of an element from take_snapshot"},
+                                   "properties": {"type": "array", "maxItems": 40, "items": {"type": "string"},
+                                                  "description": "CSS properties, e.g. border-radius, border-color, padding, font-size"}}}}
+STYLE_SCRIPT = """(element) => {
+    const style = getComputedStyle(element);
+    const box = element.getBoundingClientRect();
+    const result = {width: box.width, height: box.height};
+    for (const name of NAMES) result[name] = style.getPropertyValue(name);
+    return result;
+}"""
 
 
 def configuration(spec, preview):
@@ -157,9 +174,20 @@ class Session:
             schema["required"] = [key for key in schema.get("required", []) if key != "pageId"]
             schema["additionalProperties"] = False
             result.append(tool)
-        return result
+        return result + [json.loads(json.dumps(STYLE))]
+
+    def computed_style(self, arguments):
+        uid, names = arguments.get("uid"), arguments.get("properties")
+        if (set(arguments) - {"uid", "properties"} or not isinstance(uid, str) or not re.fullmatch(r"[A-Za-z0-9_:.-]{1,64}", uid)
+                or not isinstance(names, list) or len(names) > 40
+                or any(not isinstance(name, str) or not re.fullmatch(r"-?[a-z][a-z-]{0,63}", name) for name in names)):
+            raise FridayError("browser_unavailable", "computed_style takes a snapshot uid and CSS property names.")
+        script = STYLE_SCRIPT.replace("NAMES", json.dumps(names))
+        return self.client.tool("evaluate_script", {"pageId": self.page, "function": script, "args": [uid]})
 
     def call(self, name, arguments):
+        if name == STYLE["name"] and isinstance(arguments, dict):
+            return self.computed_style(arguments)
         if name not in TOOLS or not isinstance(arguments, dict) or set(arguments) - TOOLS[name]:
             raise FridayError("browser_unavailable", "Browser tool or arguments are not permitted.")
         if name == "navigate_page":

@@ -43,7 +43,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(Path(passed["log"]).read_text(), "ok")
         self.assertEqual(self.run_gate(1, "error TS2307")["status"], "failed")
         self.assertEqual(self.run_gate(1, "Could not resolve host registry")["status"], "environment_unavailable")
-        self.assertEqual(self.run_gate(125, "FRIDAY_ENVIRONMENT_UNAVAILABLE: image lockfile differs")["status"], "environment_unavailable")
+        self.assertEqual(self.run_gate(125, "FRIDAY_IMAGE_STALE: image lockfile differs")["status"], "image_stale")
         moved = self.run_gate(0, "ok", change=lambda: (self.repo / "source").write_text("changed\n"))
         self.assertEqual((moved["status"], moved["unchanged"]), ("failed", False))
 
@@ -109,6 +109,27 @@ class GateTests(unittest.TestCase):
         plain = gate.failures("line\n" * 50 + "Error: boom\n" + "line\n" * 50)
         self.assertIn("Error: boom", plain)
         self.assertLess(len(plain.splitlines()), 10)
+
+    def test_failures_longSectionWithTapFailureInTheMiddle_keepsTheFailedTestAndItsDiagnostics(self):
+        build = "\n".join("building module %d, no error found" % i for i in range(400))
+        passing = "\n".join("ok %d Chrome - [1 ms] - Unit | test %d" % (i, i) for i in range(1, 1023))
+        failed = ("not ok 1023 Chrome - [2 ms] - Unit | Utils | replace: MarksNextAsReplaceChain\n    ---\n"
+                  "        actual: >\n            true\n        expected: >\n            false\n"
+                  "        message: >\n            chain continues\n    ...")
+        after = "\n".join("ok %d Chrome - [1 ms] - Unit | test %d" % (i, i) for i in range(1024, 3000))
+        log = "—→ lint\n—→ test\n" + build + "\n" + passing + "\n" + failed + "\n" + after + "\n# fail  1\n"
+        text = gate.failures(log)
+        self.assertIn(failed, text)  # the test name, actual and expected survive a section far over the budget
+        self.assertLessEqual(len(text), 12000)
+
+    def test_python_failure_feedback_preserves_the_traceback_body(self):
+        body = ('  File "/workspace/tests/test_export.py", line 18, in setUp\n'
+                '    self.git("add", "source.py")\n'
+                '  File "/usr/lib/python3/subprocess.py", line 571, in run\n'
+                '    raise CalledProcessError(retcode, process.args)\n'
+                'subprocess.CalledProcessError: git add returned exit status 128.\n')
+        log = 'passing output\n' * 100 + 'ERROR: test_export\n--------\nTraceback (most recent call last):\n' + body + '\nRan 1 test\nFAILED (errors=1)\n'
+        self.assertIn(body.strip(), gate.failures(log))
 
 
 if __name__ == "__main__":
