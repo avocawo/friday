@@ -155,7 +155,8 @@ def container(profile, image, head, archive):
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 SECTION = re.compile(r"^\s*—→\s+(.+)$")
 SUMMARY = re.compile(r"(?i)\d+ of \d+ checks failed|\b0 (errors?|failed)\b")
-FAILURE = re.compile(r"(?i)\b(error|errors|failed|fail|failing)\b|✗|×|\bTS\d{4}\b")
+FAILURE = re.compile(r"(?i)\b(error|errors|failed|fail|failing)\b|✗|×|\bTS\d{4}\b|^\s*not ok\b")
+TAP_FAILURE = re.compile(r"^\s*not ok\b")  # a failed test in TAP output (testem, QUnit): its diagnostics follow, indented
 
 
 def check(root, profile, worktree, base, log_path, on_wait=None):
@@ -217,5 +218,35 @@ def failures(output, limit=12000):
     parts = []
     for block in chunks:
         text = "\n".join(block)
+        if len(text) > budget:
+            text = focused(block, budget)
         parts.append(text if len(text) <= budget else text[:budget // 2] + "\n…\n" + text[-budget // 2:])
     return "\n\n".join(parts)
+
+
+def focused(block, budget):
+    """A section over the budget: its header and failure lines with context, failed TAP tests first, so a failure in
+    the middle of a long log is not cut away with the middle."""
+    excerpts = []
+    for index, line in enumerate(block):
+        if TAP_FAILURE.match(line):
+            end = index + 1
+            while end < len(block) and block[end][:1] in (" ", "\t"):
+                end += 1
+            excerpts.append((0, index, end))
+        elif FAILURE.search(line) and not SUMMARY.search(line):
+            excerpts.append((1, max(index - 2, 0), min(index + 3, len(block))))
+    kept, size = set(), len(block[0])
+    for _, start, end in sorted(excerpts):
+        cost = sum(len(block[i]) + 1 for i in range(start, end) if i not in kept)
+        if size + cost > budget:
+            continue
+        kept.update(range(start, end))
+        size += cost
+    lines, previous = [block[0]], 0
+    for index in sorted(kept - {0}):
+        if index > previous + 1:
+            lines.append("…")
+        lines.append(block[index])
+        previous = index
+    return "\n".join(lines)

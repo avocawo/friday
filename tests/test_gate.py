@@ -90,6 +90,18 @@ class GateTests(unittest.TestCase):
         self.assertIn("Error: boom", plain)
         self.assertLess(len(plain.splitlines()), 10)
 
+    def test_failures_longSectionWithTapFailureInTheMiddle_keepsTheFailedTestAndItsDiagnostics(self):
+        build = "\n".join("building module %d, no error found" % i for i in range(400))
+        passing = "\n".join("ok %d Chrome - [1 ms] - Unit | test %d" % (i, i) for i in range(1, 1023))
+        failed = ("not ok 1023 Chrome - [2 ms] - Unit | Utils | replace: MarksNextAsReplaceChain\n    ---\n"
+                  "        actual: >\n            true\n        expected: >\n            false\n"
+                  "        message: >\n            chain continues\n    ...")
+        after = "\n".join("ok %d Chrome - [1 ms] - Unit | test %d" % (i, i) for i in range(1024, 3000))
+        log = "—→ lint\n—→ test\n" + build + "\n" + passing + "\n" + failed + "\n" + after + "\n# fail  1\n"
+        text = gate.failures(log)
+        self.assertIn(failed, text)  # the test name, actual and expected survive a section far over the budget
+        self.assertLessEqual(len(text), 12000)
+
     def test_python_failure_feedback_preserves_the_traceback_body(self):
         body = ('  File "/workspace/tests/test_export.py", line 18, in setUp\n'
                 '    self.git("add", "source.py")\n'
