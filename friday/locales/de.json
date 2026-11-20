@@ -554,5 +554,6 @@
   "stories.theme_query is required with themes: the URL parameter that selects a theme, with {theme} where its name goes (for example name={theme}).": "stories.theme_query ist mit themes erforderlich: der URL-Parameter, der ein Theme auswählt, mit {theme} an der Stelle seines Namens (zum Beispiel name={theme}).",
   "stories.setup must be a list of argument arrays.": "stories.setup muss eine Liste von Argument-Arrays sein.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "Der erfasste Showcase-Worktree ist nicht verfügbar oder steht im Konflikt mit dem Profil.",
-  "Cannot derive a repository name; set branch_template explicitly.": "Ein Repository-Name lässt sich nicht ableiten; setze branch_template explizit."
+  "Cannot derive a repository name; set branch_template explicitly.": "Ein Repository-Name lässt sich nicht ableiten; setze branch_template explizit.",
+  "Browser auth token_field must name a field of the stored JSON record.": "Browser-Auth: token_field muss ein Feld des gespeicherten JSON-Datensatzes benennen."
 }

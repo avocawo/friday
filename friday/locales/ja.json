@@ -552,5 +552,6 @@
   "stories.theme_query is required with themes: the URL parameter that selects a theme, with {theme} where its name goes (for example name={theme}).": "themes を使う場合は stories.theme_query が必要です: テーマを選ぶ URL パラメータで、テーマ名が入る位置に {theme} と書きます（例: name={theme}）。",
   "stories.setup must be a list of argument arrays.": "stories.setup は引数配列のリストでなければなりません。",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "記録されたショーケースのワークツリーが利用できないか、プロファイルと競合しています。",
-  "Cannot derive a repository name; set branch_template explicitly.": "リポジトリ名を導出できません。branch_template を明示的に設定してください。"
+  "Cannot derive a repository name; set branch_template explicitly.": "リポジトリ名を導出できません。branch_template を明示的に設定してください。",
+  "Browser auth token_field must name a field of the stored JSON record.": "ブラウザ認証の token_field には、保存された JSON レコードのフィールド名を指定してください。"
 }

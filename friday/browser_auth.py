@@ -30,7 +30,7 @@ def probe_script(spec, source_check=False):
         if (!match || new URL(match[1]).origin !== __ORIGIN__) return null;"""
               .replace("__CHECK_PATH__", json.dumps(check["path"])).replace("__CHECK_VARIABLE__", json.dumps(check["variable"]))
               if check else "")
-    result = "token" if source_check else "true"
+    result = "bearer" if source_check else "true"
     fingerprint = settings.get("fingerprint")
     fingerprint_script = ""
     if fingerprint:
@@ -41,7 +41,10 @@ def probe_script(spec, source_check=False):
         __SOURCE__
         const token = localStorage.getItem(__KEY__);
         if (!token) return null;
-        const headers = {'Content-Type':'application/json','Authorization':'Bearer ' + token};
+        const field = __FIELD__;
+        const bearer = field && token.startsWith('{') ? JSON.parse(token)?.[field] : token;
+        if (typeof bearer !== 'string' || !bearer) return null;
+        const headers = {'Content-Type':'application/json','Authorization':'Bearer ' + bearer};
         __FINGERPRINT__
         const response = await fetch(__ORIGIN__ + __PATH__, {
           method:'POST', credentials:'omit',
@@ -56,6 +59,7 @@ def probe_script(spec, source_check=False):
     return (script.replace("__SOURCE__", source).replace("__RESULT__", result).replace("__FINGERPRINT__", fingerprint_script)
             .replace("__ORIGIN__", json.dumps(spec["stage_origin"]))
             .replace("__KEY__", json.dumps(settings["storage_key"]))
+            .replace("__FIELD__", json.dumps(settings.get("token_field")))
             .replace("__PATH__", json.dumps(settings["api_path"]))
             .replace("__QUERY__", json.dumps(settings["query"]))
             .replace("__DATA_PATH__", json.dumps(settings["data_path"])))
@@ -73,6 +77,9 @@ def capture(spec):
     query, data_path = settings.get("query"), settings.get("data_path")
     if not read_only_query(query) or not isinstance(data_path, list) or not data_path or any(not isinstance(part, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part) for part in data_path):
         raise FridayError("invalid_profile", "Browser auth requires a read-only query and response path.")
+    field = settings.get("token_field")
+    if field is not None and (not isinstance(field, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", field)):
+        raise FridayError("invalid_profile", "Browser auth token_field must name a field of the stored JSON record.")
     fingerprint = settings.get("fingerprint")
     if fingerprint is not None:
         if not isinstance(fingerprint, dict):

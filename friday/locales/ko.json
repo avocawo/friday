@@ -552,5 +552,6 @@
   "stories.theme_query is required with themes: the URL parameter that selects a theme, with {theme} where its name goes (for example name={theme}).": "themes를 쓰면 stories.theme_query가 필요합니다: 테마를 선택하는 URL 매개변수이며, 테마 이름이 들어갈 자리에 {theme}를 씁니다(예: name={theme}).",
   "stories.setup must be a list of argument arrays.": "stories.setup은 인수 배열의 목록이어야 합니다.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "기록된 쇼케이스 워크트리를 사용할 수 없거나 프로필과 충돌합니다.",
-  "Cannot derive a repository name; set branch_template explicitly.": "저장소 이름을 유추할 수 없습니다. branch_template을 직접 지정하세요."
+  "Cannot derive a repository name; set branch_template explicitly.": "저장소 이름을 유추할 수 없습니다. branch_template을 직접 지정하세요.",
+  "Browser auth token_field must name a field of the stored JSON record.": "브라우저 인증의 token_field에는 저장된 JSON 레코드의 필드 이름을 지정해야 합니다."
 }

@@ -552,5 +552,6 @@
   "stories.theme_query is required with themes: the URL parameter that selects a theme, with {theme} where its name goes (for example name={theme}).": "使用 themes 时必须提供 stories.theme_query：用于选择主题的 URL 参数，主题名所在位置写 {theme}（例如 name={theme}）。",
   "stories.setup must be a list of argument arrays.": "stories.setup 必须是参数数组的列表。",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "记录的展示 worktree 不可用或与配置档案冲突。",
-  "Cannot derive a repository name; set branch_template explicitly.": "无法推导仓库名称；请显式设置 branch_template。"
+  "Cannot derive a repository name; set branch_template explicitly.": "无法推导仓库名称；请显式设置 branch_template。",
+  "Browser auth token_field must name a field of the stored JSON record.": "浏览器认证的 token_field 必须是已存储 JSON 记录中的字段名。"
 }

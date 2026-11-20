@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -51,6 +53,35 @@ class BrowserAuthTests(unittest.TestCase):
             with self.assertRaises(FridayError) as error:
                 browser_auth.capture(self.spec)
         self.assertEqual(error.exception.code, "stage_auth_unavailable")
+
+    def bearer(self, stored, source_check=False):
+        harness = ("""const sent = [];
+            globalThis.localStorage = {getItem: () => STORED};
+            globalThis.fetch = async (url, options) => { if (url === '/src/app/main.ts') return {text: async () => "VITE_API_APOLLO_URI: 'https://gql.stage.test/gql'"};
+              sent.push(options.headers.Authorization);
+              return {ok: true, json: async () => ({data: {viewer: {id: 'user'}}})}; };
+            (SCRIPT)().then((result) => console.log(JSON.stringify({result, sent})));"""
+                   .replace("STORED", json.dumps(stored)).replace("SCRIPT", browser_auth.probe_script(self.spec, source_check)))
+        output = subprocess.run(["node", "-e", harness], capture_output=True, text=True, check=True, timeout=30).stdout
+        return json.loads(output)
+
+    @unittest.skipUnless(shutil.which("node"), "node is required to run the browser probe")
+    def test_probe_reads_token_field_of_stored_record_and_keeps_bare_tokens(self):
+        self.spec["auth"]["token_field"] = "b2b"
+        self.assertEqual(self.bearer('{"b2b":"record-token"}'), {"result": True, "sent": ["Bearer record-token"]})
+        self.assertEqual(self.bearer("bare-token"), {"result": True, "sent": ["Bearer bare-token"]})
+        self.assertEqual(self.bearer('{"b2c":"other-token"}'), {"result": None, "sent": []})
+        self.assertEqual(self.bearer("{broken"), {"result": None, "sent": []})
+        # The preview gets the bare JWT: nfront reads both formats, prototypes copied before the record format read only this one.
+        self.assertEqual(self.bearer('{"b2b":"record-token"}', source_check=True)["result"], "record-token")
+
+    def test_rejects_token_field_that_is_not_a_plain_name(self):
+        self.spec["auth"]["token_field"] = "b2b']; alert(1); ['"
+        with patch("friday.browser_auth.browser_protocol.Client") as client:
+            with self.assertRaises(FridayError) as error:
+                browser_auth.capture(self.spec)
+        self.assertEqual(error.exception.code, "invalid_profile")
+        client.assert_not_called()
 
     def test_profiles_without_auth_remain_optional(self):
         self.assertIsNone(browser_auth.capture({"stage_origin": "https://gql.stage.test"}))
