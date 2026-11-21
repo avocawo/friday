@@ -553,5 +553,11 @@
   "stories.setup must be a list of argument arrays.": "stories.setup은 인수 배열의 목록이어야 합니다.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "기록된 쇼케이스 워크트리를 사용할 수 없거나 프로필과 충돌합니다.",
   "Cannot derive a repository name; set branch_template explicitly.": "저장소 이름을 유추할 수 없습니다. branch_template을 직접 지정하세요.",
-  "Browser auth token_field must name a field of the stored JSON record.": "브라우저 인증의 token_field에는 저장된 JSON 레코드의 필드 이름을 지정해야 합니다."
+  "Browser auth token_field must name a field of the stored JSON record.": "브라우저 인증의 token_field에는 저장된 JSON 레코드의 필드 이름을 지정해야 합니다.",
+  "Task {key} has no analysis question waiting for an answer.": "작업 {key}에는 답변을 기다리는 분석 질문이 없습니다.",
+  "The project's check fails after the analysis:\n{output}": "분석 후 프로젝트 검사가 실패합니다:\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis는 프로젝트 세션을 실행합니다: toolset plan을 project로 설정하세요.",
+  "kind must be delivery or analysis.": "kind는 delivery 또는 analysis여야 합니다.",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check는 비어 있지 않은 인수 배열이어야 합니다.",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command는 {key}를 포함한 비어 있지 않은 문자열이어야 합니다."
 }

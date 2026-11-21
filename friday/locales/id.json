@@ -553,5 +553,11 @@
   "stories.setup must be a list of argument arrays.": "stories.setup harus berupa daftar array argumen.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "Worktree showcase yang tercatat tidak tersedia atau bertentangan dengan profil.",
   "Cannot derive a repository name; set branch_template explicitly.": "Tidak dapat menurunkan nama repositori; atur branch_template secara eksplisit.",
-  "Browser auth token_field must name a field of the stored JSON record.": "Pada autentikasi browser, token_field harus menyebut nama field dari record JSON yang tersimpan."
+  "Browser auth token_field must name a field of the stored JSON record.": "Pada autentikasi browser, token_field harus menyebut nama field dari record JSON yang tersimpan.",
+  "Task {key} has no analysis question waiting for an answer.": "Tugas {key} tidak memiliki pertanyaan analisis yang menunggu jawaban.",
+  "The project's check fails after the analysis:\n{output}": "Pemeriksaan proyek gagal setelah analisis:\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis menjalankan sesi proyek: atur toolset plan ke project.",
+  "kind must be delivery or analysis.": "kind harus delivery atau analysis.",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check harus berupa array argumen yang tidak kosong.",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command harus berupa string tidak kosong dengan {key}."
 }

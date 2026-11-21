@@ -557,5 +557,11 @@
   "stories.setup must be a list of argument arrays.": "stories.setup — список массивов аргументов.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "Записанная рабочая копия витрины недоступна или противоречит профилю.",
   "Cannot derive a repository name; set branch_template explicitly.": "Не удаётся вывести имя репозитория; задайте branch_template явно.",
-  "Browser auth token_field must name a field of the stored JSON record.": "В token_field авторизации браузера должно быть имя поля сохранённой JSON-записи."
+  "Browser auth token_field must name a field of the stored JSON record.": "В token_field авторизации браузера должно быть имя поля сохранённой JSON-записи.",
+  "Task {key} has no analysis question waiting for an answer.": "У задачи {key} нет вопроса анализа, ждущего ответа.",
+  "The project's check fails after the analysis:\n{output}": "Проверка проекта не проходит после анализа:\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis запускает сессию проекта: задайте toolset plan = project.",
+  "kind must be delivery or analysis.": "kind должен быть delivery или analysis.",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check должен быть непустым массивом аргументов.",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command должен быть непустой строкой с {key}."
 }

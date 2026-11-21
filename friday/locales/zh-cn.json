@@ -553,5 +553,11 @@
   "stories.setup must be a list of argument arrays.": "stories.setup 必须是参数数组的列表。",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "记录的展示 worktree 不可用或与配置档案冲突。",
   "Cannot derive a repository name; set branch_template explicitly.": "无法推导仓库名称；请显式设置 branch_template。",
-  "Browser auth token_field must name a field of the stored JSON record.": "浏览器认证的 token_field 必须是已存储 JSON 记录中的字段名。"
+  "Browser auth token_field must name a field of the stored JSON record.": "浏览器认证的 token_field 必须是已存储 JSON 记录中的字段名。",
+  "Task {key} has no analysis question waiting for an answer.": "任务 {key} 没有等待回答的分析问题。",
+  "The project's check fails after the analysis:\n{output}": "分析后项目检查失败：\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis 运行项目会话：请将 toolset 的 plan 设为 project。",
+  "kind must be delivery or analysis.": "kind 必须是 delivery 或 analysis。",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check 必须是非空的参数数组。",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command 必须是包含 {key} 的非空字符串。"
 }

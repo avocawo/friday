@@ -555,5 +555,11 @@
   "stories.setup must be a list of argument arrays.": "stories.setup muss eine Liste von Argument-Arrays sein.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "Der erfasste Showcase-Worktree ist nicht verfügbar oder steht im Konflikt mit dem Profil.",
   "Cannot derive a repository name; set branch_template explicitly.": "Ein Repository-Name lässt sich nicht ableiten; setze branch_template explizit.",
-  "Browser auth token_field must name a field of the stored JSON record.": "Browser-Auth: token_field muss ein Feld des gespeicherten JSON-Datensatzes benennen."
+  "Browser auth token_field must name a field of the stored JSON record.": "Browser-Auth: token_field muss ein Feld des gespeicherten JSON-Datensatzes benennen.",
+  "Task {key} has no analysis question waiting for an answer.": "Aufgabe {key} hat keine Analysefrage, die auf eine Antwort wartet.",
+  "The project's check fails after the analysis:\n{output}": "Die Projektprüfung schlägt nach der Analyse fehl:\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis führt die Sitzung des Projekts aus: Setzen Sie toolset plan auf project.",
+  "kind must be delivery or analysis.": "kind muss delivery oder analysis sein.",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check muss ein nicht leeres Array von Argumenten sein.",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command muss eine nicht leere Zeichenkette mit {key} sein."
 }

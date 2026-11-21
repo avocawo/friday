@@ -6,6 +6,7 @@ All notable changes to Friday are listed here. The format follows [Keep a Change
 
 ### Added
 
+- Analysis tasks: a profile with `"kind": "analysis"` runs the project's `analysis_command` in a project session, takes the owner's answers through `decide` and ends when `analysis_check` passes, without milestones or an MR (ADR 0017).
 - Project toolset: `"toolset": {"plan": "project", "execute": "project"}` lets the project's own commands plan and run a task in an ordinary Claude Code session, while Friday keeps the gate, browser acceptance, final review and delivery (ADR 0015).
 - `friday serve`: one queue of approved tasks per machine with `max_workers`, recovery of tasks whose process died and system notifications; `friday service print|install|uninstall|check` runs it as a launchd or systemd user service (ADR 0014).
 - Profile steps (`steps`, `friday step`) for project procedures only the owner runs, such as building the gate image; `gate_image_step` stops a task for this step when the image was built for another lockfile (ADR 0011).

@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import __version__, card, doctor, i18n, journal, milestone, plan, profile, serve, service, state, status, steps, tasks, tracker, workspace
+from . import __version__, analysis, card, doctor, i18n, journal, milestone, plan, profile, serve, service, state, status, steps, tasks, tracker, workspace
 from .errors import FridayError
 from .i18n import _
 
@@ -233,8 +233,14 @@ def manage_service(root, args):
 def record_decision(root, args):
     named = [x for x in args.reopen.split(",") if x]
     selected = task_profile(root, args.key)
+    if selected.get("kind") == "analysis":
+        analysis.ensure_waiting(root, args.key)
     reopened = milestone.decide(root, args.key, args.name, args.text, named, profile=selected)
     print(_("Decision recorded."))
+    if selected.get("kind") == "analysis":
+        analysis.answer(root, args.key, selected, args.text)  # ADR 0017
+        print(analysis.render(root, args.key, selected))
+        return 0
     value = card.read(root, args.key)
     if value["state"] == "awaiting_approval":
         if profile.toolset(selected, "plan") == "project":
@@ -288,6 +294,11 @@ def start_task(root, args):
         raise FridayError("invalid_state", "Task {key} is already {state}.", key=args.key, state=existing["state"])
     try:
         workspace.create(root, args.key, selected)
+        if selected.get("kind") == "analysis":
+            # The project's session reads the ticket itself; a brief stands in for a ticket that does not exist yet (ADR 0017).
+            analysis.start(root, args.key, selected, Path(args.brief).read_text(encoding="utf-8") if args.brief else None)
+            print(analysis.render(root, args.key, selected))
+            return 0
         if args.brief:
             ticket = Path(args.brief).read_text(encoding="utf-8")
         else:

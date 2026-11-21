@@ -56,6 +56,7 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 | `approval` | `owner`（默认）：计划等待 `approve`。`auto`：计划在评审后自动批准，流水线立即启动；日志会记录计划是自动批准的 |
 | `limits` | `stage_files` 和 `stage_lines`：一个阶段的上限（10 和 500）；可选的 `task_milestones` 和 `task_stages` 会在计划运行之前限制整个计划 |
 | `toolset`, `project` | 由谁运行某个环节：`{"plan": "project", "execute": "friday"}` 表示由项目的流程编写计划，由 Friday 来运行它（两个环节默认都是 `friday`）。`project`：带 `{statement}` 的 `plan_command` 是项目的规划命令，例如 `"/plan-stages {statement}"`；`plan_file` 是 worktree 中的计划文件；带 `{stages}` 的 `execute_command` 和 `stage_argument` 用于执行环节；`session_env` 列出会话在通常环境变量之外获得的环境变量（例如用于 `git fetch` 的 `SSH_AUTH_SOCK`）；`disallowed_tools` 是对会话关闭的工具（例如负责人的浏览器：验收由 Friday 的 `browser` 角色完成）；`timeouts` 是 `idle`、`tool`、`total`，单位为秒（[ADR 0015](../adr/0015-project-toolset.md)） |
+| `kind` | `delivery`（默认）或 `analysis`。分析任务在项目会话中运行 `project.analysis_command`（带 `{key}`），通过 `decide` 向负责人提问，并在 `project.analysis_check`（含 `{key}` 和 `{worktree}` 的参数数组）通过后完成；它没有里程碑，也没有 MR。需要 `"toolset": {"plan": "project"}`；不使用 `plan_command` 和 `plan_file`；`--brief` 可代替尚不存在的工单（[ADR 0017](../adr/0017-analysis-kind.md)） |
 | `worktree_setup` | Friday 在规划前于新 worktree 中运行的命令（依赖安装等）：参数数组，可使用替换变量 `{repository}` 和 `{worktree}`；必须可以重复执行。macOS 上 npm 的示例：`["sh", "-c", "[ -e node_modules ] \|\| cp -cR {repository}/node_modules node_modules"]` |
 | `executor_commands` | 执行模型可以自行运行的命令，必须是精确的形式：`"python3 -m pytest"`，而不是 `python` |
 | `executor_deny_read` | 执行模型的 shell 无法读取的额外路径 |
