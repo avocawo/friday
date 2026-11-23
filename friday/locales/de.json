@@ -555,5 +555,35 @@
   "stories.setup must be a list of argument arrays.": "stories.setup muss eine Liste von Argument-Arrays sein.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "Der erfasste Showcase-Worktree ist nicht verfügbar oder steht im Konflikt mit dem Profil.",
   "Cannot derive a repository name; set branch_template explicitly.": "Ein Repository-Name lässt sich nicht ableiten; setze branch_template explizit.",
-  "Browser auth token_field must name a field of the stored JSON record.": "Browser-Auth: token_field muss ein Feld des gespeicherten JSON-Datensatzes benennen."
+  "Browser auth token_field must name a field of the stored JSON record.": "Browser-Auth: token_field muss ein Feld des gespeicherten JSON-Datensatzes benennen.",
+  "Task {key} has no analysis question waiting for an answer.": "Aufgabe {key} hat keine Analysefrage, die auf eine Antwort wartet.",
+  "The project's check fails after the analysis:\n{output}": "Die Projektprüfung schlägt nach der Analyse fehl:\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis führt die Sitzung des Projekts aus: Setzen Sie toolset plan auf project.",
+  "kind must be delivery or analysis.": "kind muss delivery oder analysis sein.",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check muss ein nicht leeres Array von Argumenten sein.",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command muss eine nicht leere Zeichenkette mit {key} sein.",
+  "Task {key} has no finished analysis to reopen.": "Aufgabe {key} hat keine abgeschlossene Analyse zum Wiederaufnehmen.",
+  "Documents: {path}": "Dokumente: {path}",
+  "{n} question waits for the owner.": [
+    "{n} Frage wartet auf den Owner.",
+    "{n} Fragen warten auf den Owner."
+  ],
+  "{n} answer held; the next answer without --hold sends it.": [
+    "{n} Antwort zurückgehalten; die nächste Antwort ohne --hold sendet sie.",
+    "{n} Antworten zurückgehalten; die nächste Antwort ohne --hold sendet sie."
+  ],
+  "Pass the text or --file, one of them.": "Übergib den Text oder --file, eines von beiden.",
+  "The text is empty.": "Der Text ist leer.",
+  "--hold is for analysis tasks.": "--hold ist für Analyseaufgaben.",
+  "read the decision text from a file": "den Text der Entscheidung aus einer Datei lesen",
+  "analysis: keep the answer without a session turn; the next answer without --hold sends all of them": "Analyse: die Antwort ohne Sitzungszug behalten; die nächste Antwort ohne --hold sendet alle",
+  "analysis: continue a finished task in the same session": "Analyse: eine abgeschlossene Aufgabe in derselben Sitzung fortsetzen",
+  "read the instruction from a file": "die Anweisung aus einer Datei lesen",
+  "Only an analysis task is reopened; a delivery task takes friday decide --reopen.": "Nur eine Analyseaufgabe wird wiederaufgenommen; eine Lieferaufgabe nimmt friday decide --reopen.",
+  "project.analysis_dir must be a non-empty path.": "project.analysis_dir muss ein nicht leerer Pfad sein.",
+  "waiting for the owner": "wartet auf den Owner",
+  "Model: {model}": "Modell: {model}",
+  "Running now: {tokens} tokens, about {money}": "Läuft gerade: {tokens} Tokens, etwa {money}",
+  "Running now: {tokens} tokens; the price is known when the run ends": "Läuft gerade: {tokens} Tokens; der Preis ist bekannt, wenn der Lauf endet",
+  "analysis running": "Analyse läuft"
 }

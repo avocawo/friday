@@ -61,7 +61,8 @@ Friday는 10개 언어를 지원합니다. `friday --lang ru …`, `FRIDAY_LANG=
 | `plan KEY [--diff]` | 해결되지 않은 지적과 함께 계획을 보여 줍니다. `--diff`는 최신 수정본에서 바뀐 내용을 보여 줍니다 |
 | `approve KEY [--no-run]` | 계획을 승인하고 파이프라인을 백그라운드에서 시작합니다 |
 | `status [KEY] [--json]` | 각 작업이 무엇을 하고 있는지, 비용이 얼마나 들었는지 보여 줍니다 |
-| `decide KEY name "text" [--reopen M2]` | 오너의 결정을 기록합니다. 계획이 승인을 기다리는 동안에는 플래너가 그 결정에 따라 지정한 마일스톤을 수정하고(`--reopen`이 없으면 직접 고릅니다), 바뀐 마일스톤만 다시 리뷰합니다([ADR 0016](../adr/0016-decision-revises-the-plan.md)). 승인 후에는 지정한 마일스톤만 다시 엽니다 |
+| `decide KEY name "text" [--reopen M2]` | 오너의 결정을 기록합니다. 계획이 승인을 기다리는 동안에는 플래너가 그 결정에 따라 지정한 마일스톤을 수정하고(`--reopen`이 없으면 직접 고릅니다), 바뀐 마일스톤만 다시 리뷰합니다([ADR 0016](../adr/0016-decision-revises-the-plan.md)). 승인 후에는 지정한 마일스톤만 다시 엽니다. `--file PATH`는 텍스트를 파일에서 읽습니다. 분석 작업에서 `--hold`는 세션 턴 없이 답변을 보관하고, 다음 답변이 보관된 답변을 한 턴에 모두 보냅니다 |
+| `reopen KEY "text"` | 완료된 분석 작업을 같은 세션에서 새 지시로 이어갑니다. 검사는 다시 실행됩니다(`--file PATH`는 텍스트를 파일에서 읽습니다) |
 | `run KEY` / `resume KEY [--brief F]` / `stop KEY` | 이 터미널에서 실행, 이어서 실행, 중지. `--brief`는 계획 지문(fingerprint)으로 오래된 작업의 원래 설명을 복원합니다 |
 | `serve` / `service print\|install\|uninstall\|check` | 머신의 작업 큐: 작업을 차례로 시작하고, 실패한 작업을 다시 큐에 넣고, 알림을 보냅니다. launchd 또는 systemd 서비스로 실행됩니다([가이드](guide.md#작업-큐-friday-serve)) |
 | `step [NAME] [KEY] [--profile P] [--dry-run]` | 프로필 단계(`steps`)를 실행합니다. 작업 단계는 작업 키와 함께, 프로필 단계는 `--profile`과 함께 실행하며, 이름이 없으면 단계와 상태의 목록을 보여 줍니다. 단계가 하는 일(이미지나 번들 빌드 등)은 프로필에 기술합니다([ADR 0011](../adr/0011-profile-steps.md)) |

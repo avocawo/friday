@@ -64,6 +64,26 @@ def toolset(selected, phase):
     return (selected.get("toolset") or {}).get(phase, "friday")
 
 
+def analysis(selected):
+    """kind analysis: the project's session writes documents and asks the owner; no milestones and no MR (ADR 0017)."""
+    kind = selected.get("kind", "delivery")
+    if kind not in ("delivery", "analysis"):
+        raise FridayError("invalid_profile", "kind must be delivery or analysis.")
+    if kind != "analysis":
+        return
+    if toolset(selected, "plan") != "project":
+        raise FridayError("invalid_profile", "kind analysis runs the project's session: set toolset plan to project.")
+    command = (selected.get("project") or {}).get("analysis_command")
+    if not isinstance(command, str) or "{key}" not in command:
+        raise FridayError("invalid_profile", "project.analysis_command must be a non-empty string with {key}.")
+    check = selected["project"].get("analysis_check")
+    if check is not None and (not isinstance(check, list) or not check or any(not isinstance(v, str) or not v for v in check)):
+        raise FridayError("invalid_profile", "project.analysis_check must be a non-empty array of arguments.")
+    folder = selected["project"].get("analysis_dir")
+    if folder is not None and (not isinstance(folder, str) or not folder):
+        raise FridayError("invalid_profile", "project.analysis_dir must be a non-empty path.")
+
+
 def project_toolset(selected):
     """Validate toolset and the project block it needs; profiles without toolset are unchanged."""
     modes = selected.get("toolset")
@@ -83,11 +103,12 @@ def project_toolset(selected):
         if not isinstance(value, str) or not value.strip() or (placeholder and placeholder not in value):
             raise FridayError("invalid_profile", "project.%s must be a non-empty string%s." % (
                 name, " with " + placeholder if placeholder else ""))
-    text("plan_command", modes.get("plan") == "project", "{statement}")
+    analysis_kind = selected.get("kind") == "analysis"  # its session runs analysis_command instead of a plan
+    text("plan_command", modes.get("plan") == "project" and not analysis_kind, "{statement}")
     text("execute_command", modes.get("execute") == "project")
     text("stage_argument", False, "{stages}")
     plan_file = project.get("plan_file")
-    if not isinstance(plan_file, str) or not plan_file or plan_file.startswith("/") or ".." in Path(plan_file).parts:
+    if not (analysis_kind and plan_file is None) and (not isinstance(plan_file, str) or not plan_file or plan_file.startswith("/") or ".." in Path(plan_file).parts):
         raise FridayError("invalid_profile", "project.plan_file must be a path relative to the worktree.")
     for name in ("session_env", "disallowed_tools"):
         value = project.get(name, [])
@@ -167,6 +188,7 @@ def load(path):
     if profile.get("approval", "owner") not in ("owner", "auto"):
         raise FridayError("invalid_profile", "approval must be owner or auto.")
     execution_limits(profile)
+    analysis(profile)
     project_toolset(profile)
     design.validate(profile.get("design"))
     stories.validate(profile.get("stories"))

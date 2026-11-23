@@ -553,5 +553,33 @@
   "stories.setup must be a list of argument arrays.": "stories.setup 必须是参数数组的列表。",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "记录的展示 worktree 不可用或与配置档案冲突。",
   "Cannot derive a repository name; set branch_template explicitly.": "无法推导仓库名称；请显式设置 branch_template。",
-  "Browser auth token_field must name a field of the stored JSON record.": "浏览器认证的 token_field 必须是已存储 JSON 记录中的字段名。"
+  "Browser auth token_field must name a field of the stored JSON record.": "浏览器认证的 token_field 必须是已存储 JSON 记录中的字段名。",
+  "Task {key} has no analysis question waiting for an answer.": "任务 {key} 没有等待回答的分析问题。",
+  "The project's check fails after the analysis:\n{output}": "分析后项目检查失败：\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis 运行项目会话：请将 toolset 的 plan 设为 project。",
+  "kind must be delivery or analysis.": "kind 必须是 delivery 或 analysis。",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check 必须是非空的参数数组。",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command 必须是包含 {key} 的非空字符串。",
+  "Task {key} has no finished analysis to reopen.": "任务 {key} 没有可重新打开的已完成分析。",
+  "Documents: {path}": "文档：{path}",
+  "{n} question waits for the owner.": [
+    "{n} 个问题等待负责人。"
+  ],
+  "{n} answer held; the next answer without --hold sends it.": [
+    "已暂存 {n} 个回答；下一个不带 --hold 的回答会一并发送。"
+  ],
+  "Pass the text or --file, one of them.": "请传入文本或 --file，二选一。",
+  "The text is empty.": "文本为空。",
+  "--hold is for analysis tasks.": "--hold 仅用于分析任务。",
+  "read the decision text from a file": "从文件读取决定的文本",
+  "analysis: keep the answer without a session turn; the next answer without --hold sends all of them": "分析：保存回答而不进行会话轮次；下一个不带 --hold 的回答会全部发送",
+  "analysis: continue a finished task in the same session": "分析：在同一会话中继续已完成的任务",
+  "read the instruction from a file": "从文件读取指令",
+  "Only an analysis task is reopened; a delivery task takes friday decide --reopen.": "只有分析任务可以重新打开；交付任务请用 friday decide --reopen。",
+  "project.analysis_dir must be a non-empty path.": "project.analysis_dir 必须是非空路径。",
+  "waiting for the owner": "等待负责人",
+  "Model: {model}": "模型：{model}",
+  "Running now: {tokens} tokens, about {money}": "正在运行：{tokens} 个令牌，约 {money}",
+  "Running now: {tokens} tokens; the price is known when the run ends": "正在运行：{tokens} 个令牌；运行结束后才知道价格",
+  "analysis running": "分析进行中"
 }

@@ -553,5 +553,33 @@
   "stories.setup must be a list of argument arrays.": "stories.setup은 인수 배열의 목록이어야 합니다.",
   "The recorded showcase worktree is unavailable or conflicts with the profile.": "기록된 쇼케이스 워크트리를 사용할 수 없거나 프로필과 충돌합니다.",
   "Cannot derive a repository name; set branch_template explicitly.": "저장소 이름을 유추할 수 없습니다. branch_template을 직접 지정하세요.",
-  "Browser auth token_field must name a field of the stored JSON record.": "브라우저 인증의 token_field에는 저장된 JSON 레코드의 필드 이름을 지정해야 합니다."
+  "Browser auth token_field must name a field of the stored JSON record.": "브라우저 인증의 token_field에는 저장된 JSON 레코드의 필드 이름을 지정해야 합니다.",
+  "Task {key} has no analysis question waiting for an answer.": "작업 {key}에는 답변을 기다리는 분석 질문이 없습니다.",
+  "The project's check fails after the analysis:\n{output}": "분석 후 프로젝트 검사가 실패합니다:\n{output}",
+  "kind analysis runs the project's session: set toolset plan to project.": "kind analysis는 프로젝트 세션을 실행합니다: toolset plan을 project로 설정하세요.",
+  "kind must be delivery or analysis.": "kind는 delivery 또는 analysis여야 합니다.",
+  "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check는 비어 있지 않은 인수 배열이어야 합니다.",
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command는 {key}를 포함한 비어 있지 않은 문자열이어야 합니다.",
+  "Task {key} has no finished analysis to reopen.": "작업 {key}에는 다시 열 완료된 분석이 없습니다.",
+  "Documents: {path}": "문서: {path}",
+  "{n} question waits for the owner.": [
+    "질문 {n}개가 오너를 기다립니다."
+  ],
+  "{n} answer held; the next answer without --hold sends it.": [
+    "답변 {n}개를 보류 중입니다. --hold 없는 다음 답변이 함께 보냅니다."
+  ],
+  "Pass the text or --file, one of them.": "텍스트 또는 --file 중 하나만 전달하세요.",
+  "The text is empty.": "텍스트가 비어 있습니다.",
+  "--hold is for analysis tasks.": "--hold는 분석 작업용입니다.",
+  "read the decision text from a file": "결정 텍스트를 파일에서 읽기",
+  "analysis: keep the answer without a session turn; the next answer without --hold sends all of them": "분석: 세션 턴 없이 답변을 보관; --hold 없는 다음 답변이 모두 보냄",
+  "analysis: continue a finished task in the same session": "분석: 완료된 작업을 같은 세션에서 이어가기",
+  "read the instruction from a file": "지시를 파일에서 읽기",
+  "Only an analysis task is reopened; a delivery task takes friday decide --reopen.": "분석 작업만 다시 열 수 있습니다. 전달 작업은 friday decide --reopen을 사용합니다.",
+  "project.analysis_dir must be a non-empty path.": "project.analysis_dir는 비어 있지 않은 경로여야 합니다.",
+  "waiting for the owner": "오너 대기 중",
+  "Model: {model}": "모델: {model}",
+  "Running now: {tokens} tokens, about {money}": "실행 중: {tokens} 토큰, 약 {money}",
+  "Running now: {tokens} tokens; the price is known when the run ends": "실행 중: {tokens} 토큰; 가격은 실행이 끝나면 알 수 있습니다",
+  "analysis running": "분석 중"
 }
