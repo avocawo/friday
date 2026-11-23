@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from friday import card, profile
+from friday import card, profile, translate
 from friday.errors import FridayError
 from tests import test_plan
 
@@ -102,6 +102,9 @@ class AnalysisTests(unittest.TestCase):
         self.calls(("as-1", {"summary": "Facts collected.", "questions": ["Use the kit's Drawer?"]}),
                    ("as-1", {"summary": "Documents written.", "questions": []}))
         self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        # status translates the session's words for the owner; cached here, so the fake agent keeps its answers
+        translate.remember(self.root, "ru", {translate.fingerprint(text): "перевод" for text in
+                                             ("Facts collected.", "Use the kit's Drawer?", "Documents written.")})
         for state in ("stopped", "done"):
             self.assertEqual(card.read(self.root, "T-1")["state"], state)
             for argv in (["status"], ["status", "T-1"], ["status", "T-1", "--json"], ["journal", "T-1"]):
@@ -123,6 +126,119 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn("no analysis question", result.stderr)
         value = card.read(self.root, "T-1")
         self.assertEqual((value["state"], value["decisions"]), ("done", []))
+
+    # Held answers cost no session turn; the next answer sends them all in one turn, read from a file
+    def test_held_answers_go_with_the_next_answer_in_one_turn(self):
+        self.analysis_profile(check=["true"])
+        self.calls(("as-1", {"summary": "Facts.", "questions": ["Drawer?", "Toast?"]}),
+                   ("as-1", {"summary": "Documents written.", "questions": []}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        held = self.cli("decide", "T-1", "drawer", "Yes, the kit's Drawer", "--hold")
+        self.assertEqual(held.returncode, 0, held.stderr)
+        self.assertIn("1 answer held", held.stdout)
+        self.assertFalse((self.fake / "call-1.json").exists())
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["held_answers"]), ("stopped", [{"name": "drawer", "text": "Yes, the kit's Drawer"}]))
+        answer = Path(self.directory.name) / "answer.md"
+        answer.write_text("Errors as toasts,\nnot banners.")
+        sent = self.cli("decide", "T-1", "toast", "--file", str(answer))
+        self.assertEqual(sent.returncode, 0, sent.stderr)
+        prompt = self.call(1)["prompt"]
+        self.assertIn("drawer: Yes, the kit's Drawer", prompt)
+        self.assertIn("toast: Errors as toasts,\nnot banners.", prompt)
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value.get("held_answers")), ("done", None))
+        self.assertEqual([item["name"] for item in value["decisions"]], ["drawer", "toast"])
+
+    # decide takes the text or --file, not both and not neither
+    def test_decide_text_or_file(self):
+        self.analysis_profile()
+        self.calls(("as-1", {"summary": "Facts.", "questions": ["Drawer?"]}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        answer = Path(self.directory.name) / "answer.md"
+        answer.write_text("Yes")
+        for argv in (["decide", "T-1", "drawer"], ["decide", "T-1", "drawer", "Yes", "--file", str(answer)]):
+            result = self.cli(*argv)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("one of them", result.stderr)
+        self.assertEqual(card.read(self.root, "T-1")["decisions"], [])
+
+    # reopen continues a finished analysis in the same session and runs the check again; a failed turn keeps it done
+    def test_reopen_continues_finished_work_in_the_same_session(self):
+        self.analysis_profile(check=["true"])
+        self.calls(("as-1", {"summary": "Documents written.", "questions": []}),
+                   ("as-1", {"summary": "Subtasks cut to twenty.", "questions": []}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        reopened = self.cli("reopen", "T-1", "Cut the subtasks to about twenty")
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        resumed = self.call(1)
+        self.assertEqual(resumed["argv"][resumed["argv"].index("--resume") + 1], "as-1")
+        self.assertIn("Cut the subtasks to about twenty", resumed["prompt"])
+        value = card.read(self.root, "T-1")
+        self.assertEqual((value["state"], value["analysis_summary"]), ("done", "Subtasks cut to twenty."))
+        failed = self.cli("reopen", "T-1", "Once more")  # the fake has no third answer
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(card.read(self.root, "T-1")["state"], "done")
+
+    # reopen takes a task whose check failed, and the journal reads held answers and reopened work
+    def test_reopen_after_a_failed_check_and_the_journal_reads_it(self):
+        self.profile["journal"] = [{"kind": "markdown", "dir": str(Path(self.directory.name) / "vault"), "page": "{key}/Friday.md"}]
+        self.analysis_profile(check=["false"])
+        self.calls(("as-1", {"summary": "Facts.", "questions": ["Drawer?", "Toast?"]}),
+                   ("as-1", {"summary": "Done.", "questions": []}), ("as-1", {"summary": "Still done.", "questions": []}),
+                   ("as-1", {"summary": "Fixed.", "questions": []}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        self.assertEqual(self.cli("decide", "T-1", "drawer", "Yes", "--hold").returncode, 0)
+        self.assertEqual(self.cli("journal", "T-1").returncode, 0)
+        self.assertNotEqual(self.cli("decide", "T-1", "toast", "Toasts").returncode, 0)  # the check fails twice
+        self.assertEqual(card.read(self.root, "T-1")["state"], "failed")
+        self.analysis_profile(check=["true"])
+        reopened = self.cli("reopen", "T-1", "Fix what the check reports")
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        self.assertEqual(card.read(self.root, "T-1")["state"], "done")
+        self.assertEqual(self.cli("journal", "T-1").returncode, 0)
+
+    # A running turn shows its own state, not a plan, and no questions to answer
+    def test_status_of_a_running_turn(self):
+        self.analysis_profile()
+        self.calls(("as-1", {"summary": "Facts.", "questions": ["Drawer?"]}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        card.update(self.root, "T-1", lambda value: value.update(state="planning"))
+        shown = self.cli("status", "T-1").stdout
+        self.assertIn("T-1 — analysis running", shown)
+        self.assertNotIn("friday decide", shown)
+        self.assertNotIn("wait for the owner", shown)
+
+    # Only a finished analysis is reopened
+    def test_reopen_needs_a_finished_analysis(self):
+        self.analysis_profile()
+        self.calls(("as-1", {"summary": "Facts.", "questions": ["Drawer?"]}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        result = self.cli("reopen", "T-1", "More")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no finished analysis", result.stderr)
+        self.assertEqual(card.read(self.root, "T-1")["state"], "stopped")
+
+    # The session reads the owner's Claude Code memory but may not write it
+    def test_session_may_not_write_the_owners_memory(self):
+        self.analysis_profile()
+        self.calls(("as-1", {"summary": "Done.", "questions": []}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        argv = self.call(0)["argv"]
+        self.assertIn("Edit(~/.claude/projects/*/memory/**)", argv[argv.index("--disallowedTools") + 1])
+
+    # status of an analysis task: the documents, the questions waiting, no milestone layout
+    def test_status_shows_documents_and_questions_without_the_role_layout(self):
+        self.analysis_profile()
+        self.profile["project"]["analysis_dir"] = "/vault/{key}"
+        self.profile_path.write_text(json.dumps({k: v for k, v in self.profile.items() if k != "path"}))
+        self.calls(("as-1", {"summary": "Facts.", "questions": ["Drawer?", "Toast?"]}))
+        self.assertEqual(self.cli("start", "T-1", "--profile", str(self.profile_path)).returncode, 0)
+        shown = self.cli("status", "T-1").stdout
+        for text in ("T-1 — waiting for the owner", "Documents: /vault/T-1", "2 questions wait for the owner",
+                     "Question for the owner: Drawer?", "Model: big-1", "Spent:"):
+            self.assertIn(text, shown)
+        self.assertNotIn("Models:", shown)
 
     # The profile names its analysis command; plan keys are not needed
     def test_profile_validation(self):

@@ -563,5 +563,31 @@
   "kind analysis runs the project's session: set toolset plan to project.": "kind analysis запускает сессию проекта: задайте toolset plan = project.",
   "kind must be delivery or analysis.": "kind должен быть delivery или analysis.",
   "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check должен быть непустым массивом аргументов.",
-  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command должен быть непустой строкой с {key}."
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command должен быть непустой строкой с {key}.",
+  "Task {key} has no finished analysis to reopen.": "У задачи {key} нет завершённого анализа, который можно продолжить.",
+  "Documents: {path}": "Документы: {path}",
+  "{n} question waits for the owner.": [
+    "{n} вопрос ждёт владельца.",
+    "{n} вопроса ждут владельца.",
+    "{n} вопросов ждут владельца."
+  ],
+  "{n} answer held; the next answer without --hold sends it.": [
+    "{n} ответ отложен; следующий ответ без --hold отправит его.",
+    "{n} ответа отложено; следующий ответ без --hold отправит их.",
+    "{n} ответов отложено; следующий ответ без --hold отправит их."
+  ],
+  "Pass the text or --file, one of them.": "Передайте текст или --file, что-то одно.",
+  "The text is empty.": "Текст пустой.",
+  "--hold is for analysis tasks.": "--hold — только для задач анализа.",
+  "read the decision text from a file": "прочитать текст решения из файла",
+  "analysis: keep the answer without a session turn; the next answer without --hold sends all of them": "анализ: сохранить ответ без хода сессии; следующий ответ без --hold отправит все",
+  "analysis: continue a finished task in the same session": "анализ: продолжить завершённую задачу в той же сессии",
+  "read the instruction from a file": "прочитать указание из файла",
+  "Only an analysis task is reopened; a delivery task takes friday decide --reopen.": "Продолжить можно только задачу анализа; задаче поставки — friday decide --reopen.",
+  "project.analysis_dir must be a non-empty path.": "project.analysis_dir должен быть непустым путём.",
+  "waiting for the owner": "ждёт владельца",
+  "Model: {model}": "Модель: {model}",
+  "Running now: {tokens} tokens, about {money}": "Идёт сейчас: {tokens} токенов, около {money}",
+  "Running now: {tokens} tokens; the price is known when the run ends": "Идёт сейчас: {tokens} токенов; цена станет известна по окончании запуска",
+  "analysis running": "идёт анализ"
 }

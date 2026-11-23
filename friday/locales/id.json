@@ -559,5 +559,27 @@
   "kind analysis runs the project's session: set toolset plan to project.": "kind analysis menjalankan sesi proyek: atur toolset plan ke project.",
   "kind must be delivery or analysis.": "kind harus delivery atau analysis.",
   "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check harus berupa array argumen yang tidak kosong.",
-  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command harus berupa string tidak kosong dengan {key}."
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command harus berupa string tidak kosong dengan {key}.",
+  "Task {key} has no finished analysis to reopen.": "Tugas {key} tidak punya analisis selesai untuk dibuka kembali.",
+  "Documents: {path}": "Dokumen: {path}",
+  "{n} question waits for the owner.": [
+    "{n} pertanyaan menunggu pemilik."
+  ],
+  "{n} answer held; the next answer without --hold sends it.": [
+    "{n} jawaban ditahan; jawaban berikutnya tanpa --hold mengirimkannya."
+  ],
+  "Pass the text or --file, one of them.": "Berikan teks atau --file, salah satunya.",
+  "The text is empty.": "Teksnya kosong.",
+  "--hold is for analysis tasks.": "--hold untuk tugas analisis.",
+  "read the decision text from a file": "baca teks keputusan dari berkas",
+  "analysis: keep the answer without a session turn; the next answer without --hold sends all of them": "analisis: simpan jawaban tanpa giliran sesi; jawaban berikutnya tanpa --hold mengirim semuanya",
+  "analysis: continue a finished task in the same session": "analisis: lanjutkan tugas yang selesai dalam sesi yang sama",
+  "read the instruction from a file": "baca instruksi dari berkas",
+  "Only an analysis task is reopened; a delivery task takes friday decide --reopen.": "Hanya tugas analisis yang dibuka kembali; tugas pengiriman memakai friday decide --reopen.",
+  "project.analysis_dir must be a non-empty path.": "project.analysis_dir harus berupa path yang tidak kosong.",
+  "waiting for the owner": "menunggu pemilik",
+  "Model: {model}": "Model: {model}",
+  "Running now: {tokens} tokens, about {money}": "Berjalan sekarang: {tokens} token, sekitar {money}",
+  "Running now: {tokens} tokens; the price is known when the run ends": "Berjalan sekarang: {tokens} token; harga diketahui saat eksekusi selesai",
+  "analysis running": "analisis berjalan"
 }

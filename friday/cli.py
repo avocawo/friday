@@ -61,9 +61,16 @@ def parser():
     decide = commands.add_parser("decide", help=_("record an owner decision; a plan awaiting approval is revised by it"))
     decide.add_argument("key")
     decide.add_argument("name")
-    decide.add_argument("text")
+    decide.add_argument("text", nargs="?")
+    decide.add_argument("--file", help=_("read the decision text from a file"))
+    decide.add_argument("--hold", action="store_true", help=_("analysis: keep the answer without a session turn; the next "
+                                                                "answer without --hold sends all of them"))
     decide.add_argument("--reopen", default="", help=_("milestones the decision changes, comma-separated; before approval "
                                                          "without them the planner chooses the milestones"))
+    reopen = commands.add_parser("reopen", help=_("analysis: continue a finished task in the same session"))
+    reopen.add_argument("key")
+    reopen.add_argument("text", nargs="?")
+    reopen.add_argument("--file", help=_("read the instruction from a file"))
     archive = commands.add_parser("archive", help=_("remove the worktree and the card to start the task over"))
     archive.add_argument("key")
     archive.add_argument("--force", action="store_true", help=_("also remove uncommitted changes"))
@@ -182,6 +189,12 @@ def dispatch(root, args):
         return manage_service(root, args)
     elif args.command == "decide":
         return record_decision(root, args)
+    elif args.command == "reopen":
+        selected = task_profile(root, args.key)
+        if selected.get("kind") != "analysis":
+            raise FridayError("invalid_state", "Only an analysis task is reopened; a delivery task takes friday decide --reopen.")
+        analysis.reopen(root, args.key, selected, text_of(args))  # ADR 0017
+        print(analysis.render(root, args.key, selected))
     elif args.command == "archive":
         result = tasks.archive(root, args.key, task_profile(root, args.key), force=args.force)
         print(_("Task archived: {archive}. Branch {branch} is kept.", archive=result["archive"], branch=result["branch"]))
@@ -230,15 +243,31 @@ def manage_service(root, args):
     return 0
 
 
+def text_of(args):
+    """The text argument or the content of --file, exactly one of them."""
+    if (args.text is None) == (args.file is None):
+        raise FridayError("invalid_value", "Pass the text or --file, one of them.")
+    text = Path(args.file).read_text(encoding="utf-8") if args.file else args.text
+    if not text.strip():
+        raise FridayError("invalid_value", "The text is empty.")
+    return text
+
+
 def record_decision(root, args):
     named = [x for x in args.reopen.split(",") if x]
     selected = task_profile(root, args.key)
+    text = text_of(args)
+    if args.hold and selected.get("kind") != "analysis":
+        raise FridayError("invalid_value", "--hold is for analysis tasks.")
     if selected.get("kind") == "analysis":
         analysis.ensure_waiting(root, args.key)
-    reopened = milestone.decide(root, args.key, args.name, args.text, named, profile=selected)
+    reopened = milestone.decide(root, args.key, args.name, text, named, profile=selected)
     print(_("Decision recorded."))
     if selected.get("kind") == "analysis":
-        analysis.answer(root, args.key, selected, args.text)  # ADR 0017
+        if args.hold:
+            analysis.hold(root, args.key, args.name, text)
+        else:
+            analysis.answer(root, args.key, selected, text, args.name)  # ADR 0017
         print(analysis.render(root, args.key, selected))
         return 0
     value = card.read(root, args.key)
@@ -246,9 +275,9 @@ def record_decision(root, args):
         if profile.toolset(selected, "plan") == "project":
             before = milestone.load_plan(root, args.key)
             # The project's planning session continues with the answer.
-            revised = plan.changes(before, plan.answer(root, args.key, selected, args.text))
+            revised = plan.changes(before, plan.answer(root, args.key, selected, text))
         else:
-            revised = plan.amend(root, args.key, selected, args.text, named)  # ADR 0016
+            revised = plan.amend(root, args.key, selected, text, named)  # ADR 0016
         print(plan.render(root, args.key) + "\n\n" + decision_report(card.read(root, args.key), reopened, revised) +
               ("\n" + _("What changed: friday plan {key} --diff", key=args.key) if any(revised) else "") +
               "\n" + _("To approve and run: friday approve {key}", key=args.key))
@@ -256,7 +285,7 @@ def record_decision(root, args):
     print(decision_report(value, reopened))
     if value["state"] == "stopped" and value.get("questions") and profile.toolset(selected, "execute") == "project":
         # The project's execution session continues with the answer in the background, as approve starts it.
-        card.update(root, args.key, lambda current: current.update(pending_answer=args.text))
+        card.update(root, args.key, lambda current: current.update(pending_answer=text))
         print(_("The answer is passed to the execution session, {launched}", launched=launch(root, args.key, first=True)))
     return 0
 

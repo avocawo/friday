@@ -79,6 +79,9 @@ def analysis(selected):
     check = selected["project"].get("analysis_check")
     if check is not None and (not isinstance(check, list) or not check or any(not isinstance(v, str) or not v for v in check)):
         raise FridayError("invalid_profile", "project.analysis_check must be a non-empty array of arguments.")
+    folder = selected["project"].get("analysis_dir")
+    if folder is not None and (not isinstance(folder, str) or not folder):
+        raise FridayError("invalid_profile", "project.analysis_dir must be a non-empty path.")
 
 
 def project_toolset(selected):

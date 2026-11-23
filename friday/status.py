@@ -28,6 +28,10 @@ def card_state_name(card, lang=None):
         return i18n.tr(lang or i18n.language(), N_("queued"))
     if card.get("state") == "done" and card.get("unverified"):
         return i18n.tr(lang or i18n.language(), N_("done, not verified"))
+    if card.get("state") == "stopped" and card.get("questions"):
+        return i18n.tr(lang or i18n.language(), N_("waiting for the owner"))
+    if card.get("state") == "planning" and (card.get("kind") == "analysis" or "analysis_session" in card):
+        return i18n.tr(lang or i18n.language(), N_("analysis running"))
     return state_name(card.get("state"), lang)
 
 
@@ -83,6 +87,16 @@ def totals(events):
     return spent
 
 
+def live_cost(card, current, usage):
+    """An estimate of a running session's spending from the catalog price; None without a price or a profile."""
+    from . import models, profile
+    try:
+        entry = next((value for value in (card.get("cast") or {}).values() if value.get("model") == current["model"]), None)
+        return models.estimate(entry, profile.load(card["profile"]), usage) if entry and entry.get("name") else None
+    except Exception:  # status never fails on a profile that moved or changed
+        return None
+
+
 def task(root, key, now=None):
     now = now or time.time()
     card = cards.read(root, key)
@@ -97,7 +111,8 @@ def task(root, key, now=None):
                            "elapsed": now - current["started_at"],
                            "quiet": now - status.get("last_activity_at", current["started_at"]),
                            "last_event": status.get("last_event"), "lost": cards.lost(root, key, current),
-                           "tokens": sum(usage.get(name, 0) for name in ("input", "output", "cache_read", "cache_write"))})
+                           "tokens": sum(usage.get(name, 0) for name in ("input", "output", "cache_read", "cache_write")),
+                           "cost_usd": usage["cost_usd"] if usage.get("cost_usd") is not None else live_cost(card, current, usage)})
     for where, item in (card.get("waiting") or {}).items():
         row["waiting"].append({"milestone": None if where == "task" else where, "resource": item["resource"],
                                "elapsed": now - item["since"]})
@@ -194,9 +209,61 @@ def render(rows, width=110):
     return "\n".join(lines)
 
 
+def spent_lines(row):
+    """Finished runs, then the sessions still running: their tokens now, their price when it is known."""
+    spent = row["spent"]
+    lines = [_("Spent: {money}, {tokens} tokens, {runs}, {seconds} of model work", money=money(spent), tokens=tokens(spent["tokens"]),
+               runs=ngettext("{n} run", "{n} runs", spent["runs"]), seconds=work_time(spent))]
+    if row["now"]:
+        live = sum(now["tokens"] for now in row["now"])
+        costs = [now.get("cost_usd") for now in row["now"]]
+        lines.append(_("Running now: {tokens} tokens, about {money}", tokens=tokens(live), money="$%.2f" % sum(costs))
+                     if all(cost is not None for cost in costs) else
+                     _("Running now: {tokens} tokens; the price is known when the run ends", tokens=tokens(live)))
+    return lines
+
+
+def render_analysis(root, key, row, recent):
+    """An analysis task: its documents, the owner's questions in the owner's language, and what it costs."""
+    from . import analysis, profile
+    card = cards.read(root, key)
+    try:
+        selected = profile.load(card["profile"])
+        lines = analysis.render(root, key, selected).split("\n")
+    except Exception:  # without its profile the card still shows, untranslated
+        lines = ["%s — %s" % (key, card_state_name(card)), "", card.get("analysis_summary") or ""]
+        lines += [_("Question for the owner: {question} (answer: friday decide {key} <name> \"text\")", question=question, key=key)
+                  for question in card.get("questions") or []]
+    lines.append("")
+    plan_model = (card.get("cast") or {}).get("plan", {}).get("model")
+    if plan_model:
+        lines.append(_("Model: {model}", model=plan_model))
+    for now in row["now"]:
+        # One session does all the work, so its role says nothing; its model and last step do.
+        activity = " · ".join([now["model"]] + ([_("LOST: the Friday process has exited")] if now["lost"] else
+                                                [now["last_event"]] if now["last_event"] else []))
+        lines.append(_("Now: {activity} (running {elapsed}, quiet {quiet})", activity=activity,
+                       elapsed=duration(now["elapsed"]), quiet=duration(now["quiet"])))
+    for wait in row["waiting"]:
+        lines.append(_("Waiting: {activity} ({elapsed})", activity=describe_wait(wait), elapsed=duration(wait["elapsed"])))
+    return lines + spent_lines(row) + recent_lines(root, key, recent)
+
+
+def recent_lines(root, key, recent):
+    history = cards.events(root, key)[-recent:]
+    lines = [_("Recent events:")] if history else []
+    for event in history:
+        detail = " ".join(str(event[name]) for name in ("role", "status", "model") if event.get(name))
+        lines.append("  %s %s %s" % (event["at"][11:19], event["type"], detail))
+    return lines
+
+
 def render_task(root, key, recent=10):
+    from . import analysis
     row = task(root, key)
     card = cards.read(root, key)
+    if analysis.is_analysis(card):
+        return "\n".join(render_analysis(root, key, row, recent))
     lines = ["%s — %s" % (key, card_state_name(card))]
     for item in card["milestones"]:
         if item.get("state") == "blocked" and item.get("blocked_reason"):
@@ -222,16 +289,9 @@ def render_task(root, key, recent=10):
     for wait in row["waiting"]:
         lines.append(_("Waiting: {activity} ({elapsed})", activity=describe_wait(wait), elapsed=duration(wait["elapsed"])))
     spent = row["spent"]
-    lines.append(_("Spent: {money}, {tokens} tokens, {runs}, {seconds} of model work", money=money(spent), tokens=tokens(spent["tokens"]),
-                   runs=ngettext("{n} run", "{n} runs", spent["runs"]), seconds=work_time(spent)))
+    lines += spent_lines(row)
     for role, value in sorted(spent["by_role"].items(), key=lambda item: -item[1]["tokens"]):
         lines.append("  " + _("{role}: {runs}, {tokens} tokens, {money}", role=role_name(role),
                               runs=ngettext("{n} run", "{n} runs", value["runs"]), tokens=tokens(value["tokens"]),
                               money=money(value)))
-    history = cards.events(root, key)[-recent:]
-    if history:
-        lines.append(_("Recent events:"))
-        for event in history:
-            detail = " ".join(str(event[name]) for name in ("role", "status", "model") if event.get(name))
-            lines.append("  %s %s %s" % (event["at"][11:19], event["type"], detail))
-    return "\n".join(lines)
+    return "\n".join(lines + recent_lines(root, key, recent))

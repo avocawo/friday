@@ -571,7 +571,7 @@ def ready_for_approval(root, key, profile, document, open_notes, plan_file=None)
 
 
 def project_session(root, key, profile, prompt, resume=None, role="plan", entry=None, schema=PROJECT_PLAN_SCHEMA,
-                    session_field="plan_session"):
+                    session_field="plan_session", disallowed=()):
     """One session of the project's own process in the task's worktree (ADR 0015): its plan or its execution."""
     card = cards.read(root, key)
     entry = entry or card["cast"]["plan"]
@@ -583,7 +583,7 @@ def project_session(root, key, profile, prompt, resume=None, role="plan", entry=
     timeouts = {profiles.TIMEOUTS[name]: value for name, value in settings.get("timeouts", {}).items()}
     spec = runner.Spec(driver="claude", model=entry["model"], effort=entry.get("effort"), prompt=prompt, cwd=card["worktree"],
                        log_dir="", schema=schema, env=env, resume=resume, toolset="project",
-                       disallowed_tools=settings.get("disallowed_tools", []), **timeouts)
+                       disallowed_tools=settings.get("disallowed_tools", []) + list(disallowed), **timeouts)
     result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
     if result.status != "ok" or not isinstance(result.structured, dict):
         raise FridayError("agent_failed", "%s did not return a result (%s): %s" % (role, result.status, result.error or "no structured answer"))

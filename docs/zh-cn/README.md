@@ -61,7 +61,8 @@ Friday 支持十种语言：`friday --lang ru …`、`FRIDAY_LANG=ru`，或 `fri
 | `plan KEY [--diff]` | 显示计划及尚未解决的发现；`--diff` 显示最近一次修订改动了什么 |
 | `approve KEY [--no-run]` | 批准计划，并在后台启动流水线 |
 | `status [KEY] [--json]` | 显示各任务的进展和已花费的金额 |
-| `decide KEY name "text" [--reopen M2]` | 记录负责人的决定。计划等待批准期间，规划模型会按该决定修订指定的里程碑（不带 `--reopen` 时由它自行选择），并且只重新评审有改动的里程碑（[ADR 0016](../adr/0016-decision-revises-the-plan.md)）；批准之后，只重新打开指定的里程碑 |
+| `decide KEY name "text" [--reopen M2]` | 记录负责人的决定。计划等待批准期间，规划模型会按该决定修订指定的里程碑（不带 `--reopen` 时由它自行选择），并且只重新评审有改动的里程碑（[ADR 0016](../adr/0016-decision-revises-the-plan.md)）；批准之后，只重新打开指定的里程碑。`--file PATH` 从文件读取文本。在分析任务上，`--hold` 保存回答而不进行会话轮次，下一个回答会在一个轮次中发送所有暂存的回答 |
+| `reopen KEY "text"` | 在同一会话中用新指令继续已完成的分析任务；检查会重新运行（`--file PATH` 从文件读取文本） |
 | `run KEY` / `resume KEY [--brief F]` / `stop KEY` | 在当前终端中运行、继续、停止；`--brief` 按规划指纹还原旧任务的原始描述 |
 | `serve` / `service print\|install\|uninstall\|check` | 本机的任务队列：依次启动任务、把失败的任务放回队列、发送通知；作为 launchd 或 systemd 服务运行（[指南](guide.md#任务队列friday-serve)） |
 | `step [NAME] [KEY] [--profile P] [--dry-run]` | 运行配置文件步骤（`steps`）：任务步骤需给出任务 key，配置文件步骤使用 `--profile`；不带名称时列出各步骤及其状态。步骤的具体内容（构建镜像、构建包等）由配置文件描述（[ADR 0011](../adr/0011-profile-steps.md)） |

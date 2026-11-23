@@ -561,5 +561,29 @@
   "kind analysis runs the project's session: set toolset plan to project.": "kind analysis executa a sessão do projeto: defina toolset plan como project.",
   "kind must be delivery or analysis.": "kind deve ser delivery ou analysis.",
   "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check deve ser um array não vazio de argumentos.",
-  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command deve ser uma string não vazia com {key}."
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command deve ser uma string não vazia com {key}.",
+  "Task {key} has no finished analysis to reopen.": "A tarefa {key} não tem uma análise concluída para reabrir.",
+  "Documents: {path}": "Documentos: {path}",
+  "{n} question waits for the owner.": [
+    "{n} pergunta aguarda o dono.",
+    "{n} perguntas aguardam o dono."
+  ],
+  "{n} answer held; the next answer without --hold sends it.": [
+    "{n} resposta retida; a próxima resposta sem --hold a envia.",
+    "{n} respostas retidas; a próxima resposta sem --hold as envia."
+  ],
+  "Pass the text or --file, one of them.": "Passe o texto ou --file, um dos dois.",
+  "The text is empty.": "O texto está vazio.",
+  "--hold is for analysis tasks.": "--hold é para tarefas de análise.",
+  "read the decision text from a file": "ler o texto da decisão de um arquivo",
+  "analysis: keep the answer without a session turn; the next answer without --hold sends all of them": "análise: guardar a resposta sem um turno da sessão; a próxima resposta sem --hold envia todas",
+  "analysis: continue a finished task in the same session": "análise: continuar uma tarefa concluída na mesma sessão",
+  "read the instruction from a file": "ler a instrução de um arquivo",
+  "Only an analysis task is reopened; a delivery task takes friday decide --reopen.": "Só uma tarefa de análise é reaberta; uma tarefa de entrega usa friday decide --reopen.",
+  "project.analysis_dir must be a non-empty path.": "project.analysis_dir deve ser um caminho não vazio.",
+  "waiting for the owner": "aguardando o dono",
+  "Model: {model}": "Modelo: {model}",
+  "Running now: {tokens} tokens, about {money}": "Em andamento: {tokens} tokens, cerca de {money}",
+  "Running now: {tokens} tokens; the price is known when the run ends": "Em andamento: {tokens} tokens; o preço é conhecido quando a execução termina",
+  "analysis running": "análise em andamento"
 }

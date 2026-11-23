@@ -559,5 +559,27 @@
   "kind analysis runs the project's session: set toolset plan to project.": "kind analysis はプロジェクトのセッションを実行します: toolset の plan を project にしてください。",
   "kind must be delivery or analysis.": "kind は delivery または analysis でなければなりません。",
   "project.analysis_check must be a non-empty array of arguments.": "project.analysis_check は空でない引数の配列でなければなりません。",
-  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command は {key} を含む空でない文字列でなければなりません。"
+  "project.analysis_command must be a non-empty string with {key}.": "project.analysis_command は {key} を含む空でない文字列でなければなりません。",
+  "Task {key} has no finished analysis to reopen.": "タスク {key} には再開できる完了済みの分析がありません。",
+  "Documents: {path}": "ドキュメント: {path}",
+  "{n} question waits for the owner.": [
+    "{n} 件の質問がオーナーを待っています。"
+  ],
+  "{n} answer held; the next answer without --hold sends it.": [
+    "{n} 件の回答を保留中です。--hold なしの次の回答で送られます。"
+  ],
+  "Pass the text or --file, one of them.": "テキストか --file のどちらか一方を渡してください。",
+  "The text is empty.": "テキストが空です。",
+  "--hold is for analysis tasks.": "--hold は分析タスク用です。",
+  "read the decision text from a file": "決定のテキストをファイルから読む",
+  "analysis: keep the answer without a session turn; the next answer without --hold sends all of them": "分析: セッションのターンなしで回答を保持する。--hold なしの次の回答ですべて送られる",
+  "analysis: continue a finished task in the same session": "分析: 完了したタスクを同じセッションで続ける",
+  "read the instruction from a file": "指示をファイルから読む",
+  "Only an analysis task is reopened; a delivery task takes friday decide --reopen.": "再開できるのは分析タスクだけです。デリバリータスクは friday decide --reopen を使います。",
+  "project.analysis_dir must be a non-empty path.": "project.analysis_dir は空でないパスにしてください。",
+  "waiting for the owner": "オーナー待ち",
+  "Model: {model}": "モデル: {model}",
+  "Running now: {tokens} tokens, about {money}": "実行中: {tokens} トークン、約 {money}",
+  "Running now: {tokens} tokens; the price is known when the run ends": "実行中: {tokens} トークン。料金は実行の終了時にわかります",
+  "analysis running": "分析中"
 }

@@ -76,5 +76,27 @@ class AccountingTests(unittest.TestCase):
             self.assertNotIn("$0.00", line)
 
 
+    # A running session shows its tokens now, and its price from the catalog while the vendor has not reported one
+    def test_running_session_is_shown_before_it_ends(self):
+        import json
+        import time
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile_path = root / "profile.json"
+            models = {"big": {"model": "big-1", "vendor": "alpha", "driver": "claude", "tier": "frontier"}}
+            profile_path.write_text(json.dumps({"name": "demo", "repository": directory, "base_branch": "main",
+                                                "worktree_root": directory, "models": models, "roles": {"plan": ["big"]}}))
+            card.create(root, "T-1", str(profile_path))
+            current = {"run": "r1", "role": "plan", "model": "big-1", "driver": "claude", "owner": 1, "started_at": time.time()}
+            card.update(root, "T-1", lambda value: value.update(current={"r1": current}, cast={"plan": dict(models["big"], name="big")}))
+            runs = card.directory(root, "T-1") / "runs" / "r1"
+            runs.mkdir(parents=True)
+            (runs / "status.json").write_text(json.dumps({"state": "running", "owner": 1, "usage": {"input": 2_000_000, "output": 0}}))
+            self.assertIn("Running now: 2.0M tokens; the price is known when the run ends", status.render_task(root, "T-1"))
+            models["big"]["price"] = {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}
+            profile_path.write_text(json.dumps(dict(json.loads(profile_path.read_text()), models=models)))
+            self.assertIn("Running now: 2.0M tokens, about $6.00", status.render_task(root, "T-1"))
+
+
 if __name__ == "__main__":
     unittest.main()
