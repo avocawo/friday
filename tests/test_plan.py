@@ -221,6 +221,18 @@ class PlanTests(unittest.TestCase):
         self.assertIn("digest_reused", [event["type"] for event in card.events(self.root, "T-2")])
         self.assertEqual(plan.rules_sources(dict(self.profile, rules_docs=["docs/**/*.md"]), self.repo), ["docs/GUIDE.md", "docs/ideas/one.md"])
 
+    def test_planner_weighs_options_by_size_and_the_reviewer_looks_for_a_smaller_one(self):
+        self.calls(("p1", PLAN), ("r1", {"verdict": "ok", "findings": []}))
+        self.start("T-1")
+        planner, reviewer = self.call(0)["prompt"], self.call(1)["prompt"]
+        self.assertIn("record in assumptions every option you considered with its estimated files and added lines", planner)
+        self.assertIn("unless a project rule you cite or a failure you can show rules it out", planner)
+        self.assertIn("\"it is cleaner\" is not such a reason", planner)
+        self.assertIn("is an assumption too: record it with the lines it costs", planner)
+        self.assertIn("a simpler design with fewer new modules or lines that the plan did not consider", reviewer)
+        self.assertIn("blocking when the plan's design is larger than the alternative by more than about a third", reviewer)
+        self.assertIn("every option considered with its estimated files and added lines", plan.PROJECT_PLAN_RULES)
+
     def test_repository_map_reaches_the_planner_and_the_reviewer_gets_the_files_of_the_plan(self):
         (self.repo / ".gitignore").write_text("node_modules/\n")
         (self.repo / "node_modules").mkdir()
