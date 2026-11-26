@@ -449,7 +449,8 @@ class FinalTests(unittest.TestCase):
         argv = browser["argv"]
         config = json.loads(argv[argv.index("--mcp-config") + 1])
         self.assertIn("browser_mcp.py", config["mcpServers"]["friday"]["args"][0])
-        self.assertEqual(config["mcpServers"]["friday"]["args"][-1], "http://t1.localhost:5201/")
+        self.assertEqual(config["mcpServers"]["friday"]["args"][2], "http://t1.localhost:5201/")
+        self.assertTrue(config["mcpServers"]["friday"]["args"][3].endswith("start-error.txt"))
         self.assertIn("mcp__friday__take_snapshot", argv[argv.index("--allowedTools") + 1])
         self.assertNotIn("в коде есть кнопка", browser["prompt"])
         self.assertIn("browser acceptance check saw", self.log("develop")[1]["prompt"])
@@ -461,3 +462,27 @@ class FinalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrowserServerTests(unittest.TestCase):
+    def test_the_browser_server_started_by_path_imports_the_standard_library(self):
+        # The agent CLI runs browser_mcp.py by its path; friday/http.py must not shadow the standard http package.
+        import subprocess
+        import sys
+        script = Path(final.__file__).resolve().parent / "browser_mcp.py"
+        done = subprocess.run([sys.executable, str(script), json.dumps({"mode": "local"}), "http://127.0.0.1:1/"],
+                              input="", capture_output=True, text=True, timeout=60)
+        self.assertNotIn("ModuleNotFoundError", done.stderr)
+        self.assertIn("local HTTP origin", done.stderr)  # it got as far as checking the preview address
+
+    def test_a_failed_start_leaves_its_reason_in_the_named_file(self):
+        import subprocess
+        import sys
+        import tempfile
+        script = Path(final.__file__).resolve().parent / "browser_mcp.py"
+        with tempfile.TemporaryDirectory() as directory:
+            failure = Path(directory) / "start-error.txt"
+            done = subprocess.run([sys.executable, str(script), json.dumps({"mode": "local"}), "http://127.0.0.1:1/", str(failure)],
+                                  input="", capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(done.returncode, 0)
+            self.assertIn("FridayError: Browser preview must be a local HTTP origin", failure.read_text(encoding="utf-8"))

@@ -75,16 +75,21 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
         cards.stop_waiting(root, key, item["id"])
         if spec.get("mode") != "local":
             browser_auth.capture(spec)
-        with isolated_preview.open_preview(profile, worktree) as url, tempfile.TemporaryDirectory(prefix="friday-browser-") as empty:
+        with isolated_preview.open_preview(profile, worktree) as url, tempfile.TemporaryDirectory(prefix="friday-browser-") as empty, \
+                tempfile.TemporaryDirectory(prefix="friday-browser-log-") as logs:
+            failure = Path(logs) / "start-error.txt"
             document = json.loads((cards.directory(root, key) / "plan.json").read_text(encoding="utf-8"))
             shots = design.copy_screenshots(root, key, cards.read(root, key), empty)
             prompt = (BROWSER_RULES + "\n\nPreview: " + url + "\n\n" + json.dumps(
                 {"milestone": {k: item[k] for k in ("id", "title", "goal")}, "criteria": checks,
                  "test_policy": profile.get("behavior_test_policy", "")}, ensure_ascii=False, indent=2) +
                 design.browser_text(document, shots) + stories.browser_text(profile))
-            mcp = {"name": "friday", "command": [sys.executable, str(Path(__file__).resolve().parent / "browser_mcp.py"), json.dumps(spec), url],
+            mcp = {"name": "friday", "command": [sys.executable, str(Path(__file__).resolve().parent / "browser_mcp.py"), json.dumps(spec), url,
+                                                 str(failure)],
                    "tools": sorted(list(browser_session.TOOLS) + [browser_session.STYLE["name"]])}
             result = run_role(root, key, profile, "browser", entry, empty, prompt, schema, item["id"], mcp=mcp)
+            if result.status != "ok" and failure.is_file():
+                result.error = "Browser session did not start: " + failure.read_text(encoding="utf-8") + "\n" + (result.error or "")
     return result
 
 
