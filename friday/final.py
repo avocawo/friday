@@ -23,7 +23,9 @@ BROWSER_RULES = (
     "(navigate_page back or forward) is allowed within the preview. A login screen or 401 seen while loading is checked again after loading before it counts. "
     "Never bypass authorization and never open get_network_request on authenticated requests. Judge each criterion pass, "
     "fail or unverifiable with what you actually observed; when the preview or a tool is unavailable say unverifiable, do "
-    "not infer a defect. Report a blocking finding only for behaviour you saw fail. Write in English.")
+    "not infer a defect. Report a blocking finding only for behaviour you saw fail. Owner decisions refine the criteria: "
+    "judge each criterion as the decisions change it, skip what they removed, and do not report as a defect what they "
+    "accepted. Write in English.")
 FINAL_RULES = (
     "You do the final review of a whole task before its draft merge request. You get the plan summary, every milestone "
     "with its criteria, the project rules the plan chose, the project guidance and the diff of the whole task against its "
@@ -82,7 +84,8 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
             shots = design.copy_screenshots(root, key, cards.read(root, key), empty)
             prompt = (BROWSER_RULES + "\n\nPreview: " + url + "\n\n" + json.dumps(
                 {"milestone": {k: item[k] for k in ("id", "title", "goal")}, "criteria": checks,
-                 "test_policy": profile.get("behavior_test_policy", "")}, ensure_ascii=False, indent=2) +
+                 "test_policy": profile.get("behavior_test_policy", ""),
+                 "owner_decisions": cards.for_agents(cards.read(root, key)["decisions"])}, ensure_ascii=False, indent=2) +
                 design.browser_text(document, shots) + stories.browser_text(profile))
             mcp = {"name": "friday", "command": [sys.executable, str(Path(__file__).resolve().parent / "browser_mcp.py"), json.dumps(spec), url,
                                                  str(failure)],

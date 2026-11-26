@@ -443,6 +443,8 @@ class FinalTests(unittest.TestCase):
         self.answers(develop=[{"answer": DONE, "write": {"page.html": "<button>hi</button>\n"}, "commit": ["T-1 M1.1: button"]},
                               {"answer": DONE, "write": {"page.html": "<button onclick=x>hi</button>\n"}, "commit": ["T-1 M1.1: click"]}],
                      review=[{"answer": PASS}, {"answer": PASS}], browser=[{"answer": failing}, {"answer": unverifiable}])
+        card.update(self.root, "T-1", lambda value: value["decisions"].append(
+            {"name": "theme", "text": "Тёмную тему проверять тулбаром", "reopen": []}))
         with patch("friday.isolated_preview.open_preview", side_effect=preview):
             milestone.run(self.root, "T-1", self.profile, "M1")
         browser = self.log("browser")[0]
@@ -453,6 +455,7 @@ class FinalTests(unittest.TestCase):
         self.assertTrue(config["mcpServers"]["friday"]["args"][3].endswith("start-error.txt"))
         self.assertIn("mcp__friday__take_snapshot", argv[argv.index("--allowedTools") + 1])
         self.assertNotIn("в коде есть кнопка", browser["prompt"])
+        self.assertIn("Тёмную тему проверять тулбаром", browser["prompt"])  # owner decisions refine the criteria
         self.assertIn("browser acceptance check saw", self.log("develop")[1]["prompt"])
         self.assertIn("По клику ничего не видно.", self.log("develop")[1]["prompt"])
         types = [event["type"] for event in card.events(self.root, "T-1")]
