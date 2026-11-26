@@ -610,9 +610,9 @@ def project_session(root, key, profile, prompt, resume=None, role="plan", entry=
 
 def project_checked(root, key, profile, result, retries=1):
     """The feasibility checks of Friday's own plans; the session gets its errors and continues once."""
-    worktree = cards.read(root, key)["worktree"]
+    task = cards.read(root, key)
     for attempt in range(retries + 1):
-        errors = validate(result.structured, worktree, profile.get("limits"))
+        errors = validate(result.structured, task["worktree"], profile.get("limits"), stories.worktree(task))
         if not errors:
             return result.structured
         cards.record(root, key, "plan_invalid", errors=errors)
