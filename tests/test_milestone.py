@@ -595,5 +595,38 @@ class MilestoneTests(unittest.TestCase):
             milestone.run_task(self.root, "T-1", self.profile)
 
 
+class ProjectStageSourcesTests(unittest.TestCase):
+    def repo(self, name, files):
+        path = Path(self.tmp.name) / name
+        path.mkdir()
+        git("init", "-q", "-b", "main", cwd=path)
+        git("commit", "-q", "--allow-empty", "-m", "base", cwd=path)
+        base = git("rev-parse", "HEAD", cwd=path).strip()
+        for message, written in files:
+            for file, text in written.items():
+                (path / file).write_text(text)
+            git("add", "-A", cwd=path)
+            git("commit", "-q", "-m", message, cwd=path)
+        return str(path), base
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_stage_committed_in_the_showcase_counts_with_its_stories_paths(self):
+        kit, kit_base = self.repo("kit", [("S1: kit", {"Bar.vue": "a\n"})])
+        showcase, showcase_base = self.repo("showcase", [("S2: story", {"Bar.stories.ts": "a\nb\n"})])
+        document = {"milestones": [{"id": "M1", "files": ["Bar.vue"], "stages": [{"id": "S1"}]},
+                                   {"id": "M2", "files": ["stories:Bar.stories.ts"], "stages": [{"id": "S2"}]}]}
+        kit_only = [(kit, kit_base, "")]
+        self.assertEqual(milestone.project_size(kit_only, document), ["Stage S2 has no commit with \"S2:\" in its subject."])
+        sources = milestone.stage_sources({"worktree": kit, "base": kit_base,
+                                           "stories": {"worktree": showcase, "base": showcase_base}})
+        self.assertEqual(milestone.project_size(sources, document), [])
+        self.assertEqual(milestone.project_size(sources, document, {"stage_lines": 1}),
+                         ["Stage S2: 1 files and 2 added lines over the limits of %d and 1." % plan.LIMITS["stage_files"]])
+        self.assertEqual([prefix for _, _, prefix in milestone.source_commits(sources, "S2")], ["stories:"])
+
+
 if __name__ == "__main__":
     unittest.main()
