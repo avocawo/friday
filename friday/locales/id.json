@@ -410,6 +410,7 @@
   "The recorded worktree is unavailable or conflicts with the profile.": "Worktree yang tercatat tidak tersedia atau berkonflik dengan profil.",
   "Worktree path already exists: {target}": "Path worktree sudah ada: {target}",
   "computed_style takes a snapshot uid and CSS property names.": "computed_style menerima uid snapshot dan nama properti CSS.",
+  "element_attributes takes a snapshot uid and aria-*, data-* or markup attribute names.": "element_attributes menerima uid snapshot dan nama atribut aria-*, data-*, atau markup.",
   "the pipeline is running in the background (friday serve is not running). Follow it: friday status {key}, log: {log}": "pipeline berjalan di latar belakang (friday serve tidak berjalan). Pantau: friday status {key}, log: {log}",
   "the task is queued in friday serve (position {position}). Follow it: friday status {key}": "tugas masuk antrean friday serve (posisi {position}). Pantau: friday status {key}",
   "No milestone will get the decision: all are done. To redo them, name them in --reopen.": "Tidak ada milestone yang akan menerima keputusan: semuanya sudah selesai. Untuk mengulangnya, sebutkan di --reopen.",

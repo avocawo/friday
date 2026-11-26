@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=c8ffd811b55e -->
+<!-- i18n: source=docs/guide.md sha256=21bda6e09dc0 -->
 # Guia do Friday
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · **Português (Brasil)** · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -140,7 +140,7 @@ Para o servidor, uma tarefa é um único trabalho: os marcos não são divididos
 - **Git no Codex.** O Friday coloca o Git instalado e uma cópia separada dos metadados do Git no ambiente de execução da tarefa. As configurações globais do Git e os perfis de shell do usuário não são carregados; os dados de serviço do repositório de origem não são expostos ao agente. O executor salva as etapas com commits comuns do Git. Quando o processo dele termina, o Friday pega os commits por meio de um bundle verificado e os devolve à branch de origem se o HEAD e o índice dela não mudaram. Em caso de conflito de estado, o bundle fica no log da execução como `git-recovery.bundle`; nada é sobrescrito automaticamente. Um revisor recebe os metadados do Git somente para leitura. `doctor` verifica o cenário real de três commits em um worktree vinculado sem chamar um modelo, e que as proibições de ler segredos e de escrever para o revisor valem.
 - **Os revisores** apenas leem. A verificação cega roda em uma pasta vazia.
 - **O gate** roda em um contêiner sem acesso à rede, sobre um snapshot do commit montado como somente leitura.
-- **O navegador** recebe apenas as ferramentas do Friday para um preview (incluindo `hover` e `computed_style`, que lê estilos com um script fixo, sem `evaluate_script`); contornar a autorização e ler os cabeçalhos de requisições autorizadas é proibido.
+- **O navegador** recebe apenas as ferramentas do Friday para um preview (incluindo `hover` e `computed_style`, que lê estilos com um script fixo, e `element_attributes`, que lê do mesmo jeito os atributos `aria-*`, `data-*` e alguns de marcação, tudo sem `evaluate_script`; com um preview local, também o console da aba do preview, `list_console_messages`); contornar a autorização e ler os cabeçalhos de requisições autorizadas é proibido.
 - **O Figma** só é lido pelo planejador e pelo revisor do plano, e só com as ferramentas de leitura do servidor local do Figma desktop. O skill /impeccable não roda dentro dos papéis: o Friday coloca os textos dele no prompt.
 - **Publicação.** O Friday faz push apenas da branch da própria tarefa e abre apenas um MR/PR em rascunho. Ele não sobrescreve a branch de outra pessoa, não faz merge nem deploy.
 - **Ainda não verificado ao vivo:** a aceitação no navegador e a publicação no GitLab foram verificadas por testes com simulações. O Git no ambiente do Codex também é verificado por um laboratório local real sem chamar um modelo; a execução de um papel pelo modelo é verificada separadamente em cada tarefa.

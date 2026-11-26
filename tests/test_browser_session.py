@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import Mock, patch
 
@@ -84,7 +85,49 @@ class BrowserSessionTests(unittest.TestCase):
         session.client.tool.assert_called_once_with('hover', {'pageId': 7, 'uid': '1_23'})
         session.client.request.return_value = {'tools': [{'name': 'hover', 'inputSchema': {'properties': {'uid': {}, 'pageId': {}}}},
                                                          {'name': 'evaluate_script', 'inputSchema': {'properties': {}}}]}
-        self.assertEqual([tool['name'] for tool in session.tools()], ['hover', 'computed_style'])
+        self.assertEqual([tool['name'] for tool in session.tools()], ['hover', 'computed_style', 'element_attributes'])
+
+    def test_element_attributes_reads_only_listed_markup_attributes_with_a_fixed_script(self):
+        session = browser_session.Session.__new__(browser_session.Session)
+        session.client = Mock()
+        session.page = 7
+        session.call('element_attributes', {'uid': '1_23', 'names': ['aria-current', 'data-link-component', 'href']})
+        name, arguments = session.client.tool.call_args.args
+        self.assertEqual((name, arguments['pageId'], arguments['args']), ('evaluate_script', 7, ['1_23']))
+        self.assertIn('["aria-current", "data-link-component", "href"]', arguments['function'])
+        self.assertIn('getAttribute(name)', arguments['function'])
+        session.client.reset_mock()
+        for arguments in ({'uid': '1', 'names': ['value']}, {'uid': '1', 'names': ['onclick']}, {'uid': '1', 'names': ['src']},
+                          {'uid': '1', 'names': ['aria-x"); fetch("//evil']}, {'uid': 'a b', 'names': []},
+                          {'uid': '1', 'names': ['role'], 'function': '()=>1'}, {'uid': '1', 'names': 'role'}):
+            with self.subTest(arguments=arguments), self.assertRaises(FridayError):
+                session.call('element_attributes', arguments)
+        session.client.tool.assert_not_called()
+
+    def test_console_is_listed_for_the_preview_tab_only_in_local_mode(self):
+        upstream = {'tools': [{'name': 'list_console_messages', 'inputSchema': {'properties': {'types': {}, 'pageId': {}, 'serviceWorkerId': {}}}},
+                              {'name': 'get_console_message', 'inputSchema': {'properties': {}}}]}
+        local = browser_session.Session.__new__(browser_session.Session)
+        local.client, local.page, local.stage = Mock(), 7, None
+        local.client.request.return_value = json.loads(json.dumps(upstream))
+        tools = {tool['name']: tool for tool in local.tools()}
+        self.assertNotIn('get_console_message', tools)
+        self.assertEqual(set(tools['list_console_messages']['inputSchema']['properties']), {'types'})
+        local.call('list_console_messages', {'types': ['error']})
+        local.client.tool.assert_called_once_with('list_console_messages', {'pageId': 7, 'types': ['error']})
+        for arguments in ({'serviceWorkerId': 'sw-1'}, {'pageId': 3}):
+            with self.subTest(arguments=arguments), self.assertRaises(FridayError):
+                local.call('list_console_messages', arguments)
+        staging = browser_session.Session.__new__(browser_session.Session)
+        staging.client, staging.page, staging.stage = Mock(), 7, 'https://app.stage.example.com'
+        staging.client.request.return_value = json.loads(json.dumps(upstream))
+        self.assertNotIn('list_console_messages', [tool['name'] for tool in staging.tools()])
+        with self.assertRaises(FridayError):
+            staging.call('list_console_messages', {})
+        staging.client.tool.assert_not_called()
+        self.assertIn('list_console_messages', browser_session.agent_tools({'mode': 'local'}))
+        self.assertNotIn('list_console_messages', browser_session.agent_tools({'mode': 'staging'}))
+        self.assertIn('element_attributes', browser_session.agent_tools({'mode': 'staging'}))
 
     def test_emulation_is_cleared_before_navigation_and_history_stays_on_the_preview(self):
         session = browser_session.Session.__new__(browser_session.Session)

@@ -21,7 +21,11 @@ BROWSER_RULES = (
     "requests. To check a phone or desktop layout, call emulate with a viewport on the current page; Friday clears it "
     "before any navigation, because a page loaded under another viewport loses the staging session. Browser history "
     "(navigate_page back or forward) is allowed within the preview. A login screen or 401 seen while loading is checked again after loading before it counts. "
-    "Never bypass authorization and never open get_network_request on authenticated requests. Judge each criterion pass, "
+    "Never bypass authorization and never open get_network_request on authenticated requests. When a criterion names "
+    "an attribute the accessibility tree does not show (aria-current, aria-disabled, a data-* marker, href, tabindex), "
+    "read it with element_attributes on the element's snapshot uid; when it names console errors and "
+    "list_console_messages is available, read the console with it. Use these tools before calling such a criterion "
+    "unverifiable. Judge each criterion pass, "
     "fail or unverifiable with what you actually observed; when the preview or a tool is unavailable say unverifiable, do "
     "not infer a defect. Report a blocking finding only for behaviour you saw fail. Owner decisions refine the criteria: "
     "judge each criterion as the decisions change it, skip what they removed, and do not report as a defect what they "
@@ -89,7 +93,7 @@ def browser(root, key, profile, entry, worktree, item, run_role, schema):
                 design.browser_text(document, shots) + stories.browser_text(profile))
             mcp = {"name": "friday", "command": [sys.executable, str(Path(__file__).resolve().parent / "browser_mcp.py"), json.dumps(spec), url,
                                                  str(failure)],
-                   "tools": sorted(list(browser_session.TOOLS) + [browser_session.STYLE["name"]])}
+                   "tools": browser_session.agent_tools(spec)}
             result = run_role(root, key, profile, "browser", entry, empty, prompt, schema, item["id"], mcp=mcp)
             if result.status != "ok" and failure.is_file():
                 result.error = "Browser session did not start: " + failure.read_text(encoding="utf-8") + "\n" + (result.error or "")

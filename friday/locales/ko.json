@@ -410,6 +410,7 @@
   "The recorded worktree is unavailable or conflicts with the profile.": "기록된 작업 트리를 사용할 수 없거나 프로필과 충돌합니다.",
   "Worktree path already exists: {target}": "작업 트리 경로가 이미 존재합니다: {target}",
   "computed_style takes a snapshot uid and CSS property names.": "computed_style은 스냅샷 uid와 CSS 속성 이름을 받습니다.",
+  "element_attributes takes a snapshot uid and aria-*, data-* or markup attribute names.": "element_attributes에는 스냅샷 uid와 aria-*, data-* 또는 마크업 속성 이름을 전달합니다.",
   "the pipeline is running in the background (friday serve is not running). Follow it: friday status {key}, log: {log}": "파이프라인이 백그라운드에서 실행 중입니다(friday serve가 실행 중이 아닙니다). 확인: friday status {key}, 로그: {log}",
   "the task is queued in friday serve (position {position}). Follow it: friday status {key}": "작업이 friday serve 큐에 들어갔습니다(순번 {position}). 확인: friday status {key}",
   "No milestone will get the decision: all are done. To redo them, name them in --reopen.": "결정을 받을 마일스톤이 없습니다. 모두 완료되었습니다. 다시 하려면 --reopen에 마일스톤을 지정하세요.",

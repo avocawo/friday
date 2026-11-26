@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=c8ffd811b55e -->
+<!-- i18n: source=docs/guide.md sha256=21bda6e09dc0 -->
 # Friday 指南
 
 [English](../guide.md) · [Русский](../ru/guide.md) · **简体中文** · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -144,7 +144,7 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 - **Codex 中的 Git。** Friday 会把已安装的 Git 和一份单独的 Git 元数据副本放入任务的运行环境。全局 Git 配置和用户的 shell 配置文件不会被加载；源仓库的服务数据不会暴露给代理。执行模型用普通的 Git 命令保存阶段。在它的进程结束之后，Friday 通过经过验证的 bundle 取回这些提交，如果源分支的 HEAD 和索引没有变化，就把它们放回源分支。出现状态冲突时，bundle 会以 `git-recovery.bundle` 留在运行日志中；不会自动覆盖任何内容。评审模型只能以只读方式获得 Git 元数据。`doctor` 会在不调用模型的情况下，检查在关联 worktree 中提交三次的真实场景，并检查禁止读取密钥以及禁止评审模型写入的限制是否生效。
 - **评审模型**只读。盲审在空目录中运行。
 - **关卡**在没有网络的容器中运行，使用以只读方式挂载的提交快照。
-- **浏览器**只会获得 Friday 为单个预览环境提供的工具（包括 `hover` 和 `computed_style`，后者用固定的脚本读取样式，不使用 `evaluate_script`）；禁止绕过授权，也禁止读取已授权请求的请求头。
+- **浏览器**只会获得 Friday 为单个预览环境提供的工具（包括 `hover` 和 `computed_style`，后者用固定的脚本读取样式，以及 `element_attributes`，它以同样方式读取 `aria-*`、`data-*` 和少数标记属性，均不使用 `evaluate_script`；本地预览时还包括预览标签页的控制台 `list_console_messages`）；禁止绕过授权，也禁止读取已授权请求的请求头。
 - **Figma** 只由规划模型和计划评审模型读取，并且只使用本地 Figma 桌面版服务器的只读工具。/impeccable skill 不会在这些角色内部运行：Friday 会把它的文本放进提示词。
 - **发布。** Friday 只推送自己任务的分支，并且只创建草稿 MR/PR。它不会覆盖他人的分支、不会合并，也不会部署。
 - **尚未在真实环境验证：** 浏览器验收以及向 GitLab 发布，目前已通过使用假对象的测试验证。Codex 环境中的 Git 还通过一个不调用模型的真实本地实验环境做了检查；模型运行某个角色的情况则在每个任务上单独检查。

@@ -20,6 +20,11 @@ TOOLS = {
     "navigate_page": {"type", "url", "ignoreCache", "timeout"},
     "hover": {"uid", "includeSnapshot"},
 }
+# Console of the preview tab only, and only in local mode: a staging page runs with a borrowed session whose token could
+# be logged. The detail tool (get_console_message) is never given, like get_network_request.
+LOCAL_TOOLS = {
+    "list_console_messages": {"types", "pageSize", "pageIdx", "includePreservedMessages"},
+}
 # Friday's own read-only tools, built on evaluate_script with a fixed function; the agent never gets evaluate_script.
 STYLE = {
     "name": "computed_style",
@@ -29,6 +34,32 @@ STYLE = {
                     "properties": {"uid": {"type": "string", "description": "The uid of an element from take_snapshot"},
                                    "properties": {"type": "array", "maxItems": 40, "items": {"type": "string"},
                                                   "description": "CSS properties, e.g. border-radius, border-color, padding, font-size"}}}}
+ATTRIBUTES = {
+    "name": "element_attributes",
+    "description": "Read attributes of one element from the latest snapshot in its current state, for what the "
+                   "accessibility tree does not show (aria-current, aria-disabled, data-* markers, href, tabindex): its tag "
+                   "name plus the listed attributes, null when absent. Only aria-*, data-* and a few markup attributes.",
+    "inputSchema": {"type": "object", "additionalProperties": False, "required": ["uid", "names"],
+                    "properties": {"uid": {"type": "string", "description": "The uid of an element from take_snapshot"},
+                                   "names": {"type": "array", "maxItems": 40, "items": {"type": "string"},
+                                             "description": "Attribute names, e.g. aria-current, aria-disabled, data-test, href"}}}}
+ATTRIBUTE_NAME = re.compile(r"(aria-[a-z]{1,40}|data-[a-z0-9][a-z0-9-]{0,62}|role|href|tabindex|disabled|type|target|rel|"
+                            r"hidden|inert|lang|dir|for|id|class|title|alt)")
+ATTRIBUTES_SCRIPT = """(element) => {
+    const result = {tagName: element.tagName.toLowerCase()};
+    for (const name of NAMES) result[name] = element.getAttribute(name);
+    return result;
+}"""
+# Friday's own tools the agent may call, besides the upstream ones it passes through.
+OWN = (STYLE, ATTRIBUTES)
+
+
+def agent_tools(spec):
+    """Every tool name the browser agent may call for this browser spec, as the agent CLI's allow list."""
+    local = isinstance(spec, dict) and spec.get("mode") == "local"
+    return sorted(list(TOOLS) + (list(LOCAL_TOOLS) if local else []) + [tool["name"] for tool in OWN])
+
+
 STYLE_SCRIPT = """(element) => {
     const style = getComputedStyle(element);
     const box = element.getBoundingClientRect();
@@ -162,19 +193,24 @@ class Session:
             self.close()
             raise
 
+    def allowed(self):
+        """Upstream tools and their arguments this session passes through; the console only for a local preview."""
+        return dict(TOOLS, **(LOCAL_TOOLS if getattr(self, "stage", None) is None else {}))
+
     def tools(self):
         available = self.client.request("tools/list", {}).get("tools", [])
+        allowed = self.allowed()
         result = []
         for tool in available:
             name = tool.get("name")
-            if name not in TOOLS:
+            if name not in allowed:
                 continue
             schema = tool["inputSchema"]
-            schema["properties"] = {key: value for key, value in schema.get("properties", {}).items() if key in TOOLS[name]}
+            schema["properties"] = {key: value for key, value in schema.get("properties", {}).items() if key in allowed[name]}
             schema["required"] = [key for key in schema.get("required", []) if key != "pageId"]
             schema["additionalProperties"] = False
             result.append(tool)
-        return result + [json.loads(json.dumps(STYLE))]
+        return result + [json.loads(json.dumps(tool)) for tool in OWN]
 
     def computed_style(self, arguments):
         uid, names = arguments.get("uid"), arguments.get("properties")
@@ -185,10 +221,22 @@ class Session:
         script = STYLE_SCRIPT.replace("NAMES", json.dumps(names))
         return self.client.tool("evaluate_script", {"pageId": self.page, "function": script, "args": [uid]})
 
+    def element_attributes(self, arguments):
+        uid, names = arguments.get("uid"), arguments.get("names")
+        if (set(arguments) - {"uid", "names"} or not isinstance(uid, str) or not re.fullmatch(r"[A-Za-z0-9_:.-]{1,64}", uid)
+                or not isinstance(names, list) or len(names) > 40
+                or any(not isinstance(name, str) or not ATTRIBUTE_NAME.fullmatch(name) for name in names)):
+            raise FridayError("browser_unavailable", "element_attributes takes a snapshot uid and aria-*, data-* or markup attribute names.")
+        script = ATTRIBUTES_SCRIPT.replace("NAMES", json.dumps(names))
+        return self.client.tool("evaluate_script", {"pageId": self.page, "function": script, "args": [uid]})
+
     def call(self, name, arguments):
         if name == STYLE["name"] and isinstance(arguments, dict):
             return self.computed_style(arguments)
-        if name not in TOOLS or not isinstance(arguments, dict) or set(arguments) - TOOLS[name]:
+        if name == ATTRIBUTES["name"] and isinstance(arguments, dict):
+            return self.element_attributes(arguments)
+        allowed = self.allowed()
+        if name not in allowed or not isinstance(arguments, dict) or set(arguments) - allowed[name]:
             raise FridayError("browser_unavailable", "Browser tool or arguments are not permitted.")
         if name == "navigate_page":
             kind = arguments.get("type", "url")
