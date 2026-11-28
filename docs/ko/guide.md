@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=c8ffd811b55e -->
+<!-- i18n: source=docs/guide.md sha256=21bda6e09dc0 -->
 # Friday 가이드
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · **한국어** · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · [Bahasa Indonesia](../id/guide.md)
@@ -144,7 +144,7 @@ claude plugin marketplace add "$PWD" && claude plugin install friday@friday --sc
 - **Codex의 Git.** Friday는 설치된 Git과 Git 메타데이터의 별도 사본을 작업의 런타임에 넣습니다. 전역 Git 설정과 사용자 셸 프로필은 로드되지 않으며, 원본 저장소의 서비스 데이터는 에이전트에 노출되지 않습니다. 실행자는 일반 Git 명령으로 단계를 저장합니다. 프로세스가 끝나면 Friday는 검증된 번들로 커밋을 가져오고, HEAD와 인덱스가 바뀌지 않았다면 원본 브랜치로 되돌립니다. 상태가 충돌하면 번들은 `git-recovery.bundle`로 실행 로그에 남으며, 자동으로 덮어쓰는 것은 없습니다. 리뷰어는 Git 메타데이터를 읽기 전용으로 받습니다. `doctor`는 모델을 호출하지 않고 연결된 워크트리에서 커밋 세 개를 만드는 실제 시나리오와, 시크릿 읽기 금지와 리뷰어의 쓰기 금지가 지켜지는지 확인합니다.
 - **리뷰어**는 읽기만 합니다. 블라인드 검사는 빈 폴더에서 실행됩니다.
 - **게이트**는 네트워크가 없는 컨테이너에서, 읽기 전용으로 마운트한 커밋 스냅숏에 대해 실행됩니다.
-- **브라우저**는 프리뷰 하나에 대한 Friday의 도구만 받으며(`hover`와, `evaluate_script` 없이 고정된 스크립트로 스타일을 읽는 `computed_style` 포함), 인증 우회와 인증된 요청의 헤더 읽기는 금지됩니다.
+- **브라우저**는 프리뷰 하나에 대한 Friday의 도구만 받으며(`hover`와, `evaluate_script` 없이 고정된 스크립트로 스타일을 읽는 `computed_style`, 같은 방식으로 `aria-*`, `data-*`와 몇 가지 마크업 속성을 읽는 `element_attributes` 포함, 로컬 프리뷰에서는 프리뷰 탭의 콘솔 `list_console_messages`도 포함), 인증 우회와 인증된 요청의 헤더 읽기는 금지됩니다.
 - **Figma**는 플래너와 계획 리뷰어만 읽으며, 로컬 Figma 데스크톱 서버의 읽기 도구로만 읽습니다. /impeccable 스킬은 역할 안에서 실행되지 않으며, Friday가 그 텍스트를 프롬프트에 넣습니다.
 - **게시.** Friday는 자기 작업의 브랜치만 푸시하고 초안 MR/PR만 엽니다. 다른 사람의 브랜치를 덮어쓰거나, 머지하거나, 배포하지 않습니다.
 - **아직 실제 환경에서 검증하지 않음:** 브라우저 인수 확인과 GitLab 게시는 가짜(fake)를 쓴 테스트로 검증했습니다. Codex 환경의 Git도 모델을 호출하지 않는 실제 로컬 실험으로 확인했으며, 모델이 역할을 실행하는 것은 작업마다 따로 확인합니다.

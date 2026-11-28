@@ -451,7 +451,7 @@ def project_run(root, key, profile, answer=None):
         return value["questions"]
     if git(worktree, "status", "--porcelain").strip():
         return ["The session left uncommitted changes in %s. Commit them by stage or discard them?" % worktree]
-    problems = project_size(worktree, card["base"], document, profile.get("limits"))
+    problems = project_size(stage_sources(card), document, profile.get("limits"))
     if problems:
         cards.record(root, key, "execution_size", problems=problems)
         return problems
@@ -475,7 +475,7 @@ def project_run(root, key, profile, answer=None):
     if blocking:
         return ["Browser acceptance found blocking defects:\n" + numbered(blocking)]
     for item in document["milestones"]:
-        close_project(root, key, worktree, card["base"], item, record)
+        close_project(root, key, worktree, stage_sources(card), item, record)
         set_state(root, key, item["id"], summary=value["summary"], executor=entry["model"])
     return []
 
@@ -497,22 +497,37 @@ def stage_commits(worktree, base, stage_id):
             if (" " + stage_id + ":") in (" " + line.split(" ", 1)[1] if " " in line else "")]
 
 
-def project_size(worktree, base, document, limits=None):
+def stage_sources(card):
+    """Where a project run commits its stages: the task's worktree and, with stories, the showcase's worktree, whose
+    paths the plan writes with the stories: prefix."""
+    sources = [(card["worktree"], card["base"], "")]
+    showcase = card.get("stories") or {}
+    if showcase.get("worktree") and showcase.get("base"):
+        sources.append((showcase["worktree"], showcase["base"], stories.PREFIX))
+    return sources
+
+
+def source_commits(sources, stage_id):
+    """The stage's commits in every source, as (worktree, commit, path prefix)."""
+    return [(worktree, sha, prefix) for worktree, base, prefix in sources for sha in stage_commits(worktree, base, stage_id)]
+
+
+def project_size(sources, document, limits=None):
     """Stages without a commit and stages over the plan's limits, measured on their commits (ADR 0015)."""
     limits = dict(plan.LIMITS, **(limits or {}))
     problems = []
     for item in document["milestones"]:
         for stage in item["stages"]:
-            commits = stage_commits(worktree, base, stage["id"])
+            commits = source_commits(sources, stage["id"])
             if not commits:
                 problems.append("Stage %s has no commit with \"%s:\" in its subject." % (stage["id"], stage["id"]))
                 continue
             files, added = set(), 0
-            for sha in commits:
+            for worktree, sha, prefix in commits:
                 for line in git(worktree, "show", "--numstat", "--format=", sha).splitlines():
                     parts = line.split("\t")
                     if len(parts) == 3:
-                        files.add(parts[2])
+                        files.add(prefix + parts[2])
                         added += int(parts[0]) if parts[0].isdigit() else 0
             if len(files) > limits["stage_files"] or added > limits["stage_lines"]:
                 problems.append("Stage %s: %d files and %d added lines over the limits of %d and %d." % (
@@ -520,10 +535,11 @@ def project_size(worktree, base, document, limits=None):
     return problems
 
 
-def close_project(root, key, worktree, base, item, gate_record):
-    stages = [{"id": stage["id"], "commit": (stage_commits(worktree, base, stage["id"]) or [None])[0]} for stage in item["stages"]]
-    changed = {name for stage in item["stages"] for sha in stage_commits(worktree, base, stage["id"])
-               for name in git(worktree, "show", "--name-only", "--format=", sha).splitlines() if name}
+def close_project(root, key, worktree, sources, item, gate_record):
+    found = {stage["id"]: source_commits(sources, stage["id"]) for stage in item["stages"]}
+    stages = [{"id": stage["id"], "commit": (found[stage["id"]] or [(None, None, "")])[0][1]} for stage in item["stages"]]
+    changed = {prefix + name for stage in item["stages"] for source, sha, prefix in found[stage["id"]]
+               for name in git(source, "show", "--name-only", "--format=", sha).splitlines() if name}
     reasons = unverified(item, next(m for m in cards.read(root, key)["milestones"] if m["id"] == item["id"]), gate_record)
     set_state(root, key, item["id"], state="done", stages=stages, head=git(worktree, "rev-parse", "HEAD").strip(),
               outside_files=sorted(changed - set(item["files"])), minor_findings=[], verified=not reasons, unverified=reasons)

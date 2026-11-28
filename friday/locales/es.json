@@ -412,6 +412,7 @@
   "The recorded worktree is unavailable or conflicts with the profile.": "La worktree registrada no está disponible o entra en conflicto con el perfil.",
   "Worktree path already exists: {target}": "La ruta de la worktree ya existe: {target}",
   "computed_style takes a snapshot uid and CSS property names.": "computed_style recibe un uid de snapshot y nombres de propiedades CSS.",
+  "element_attributes takes a snapshot uid and aria-*, data-* or markup attribute names.": "element_attributes recibe un uid de la instantánea y nombres de atributos aria-*, data-* o de marcado.",
   "the pipeline is running in the background (friday serve is not running). Follow it: friday status {key}, log: {log}": "el pipeline se ejecuta en segundo plano (friday serve no está en ejecución). Síguelo: friday status {key}, log: {log}",
   "the task is queued in friday serve (position {position}). Follow it: friday status {key}": "la tarea está en la cola de friday serve (posición {position}). Síguela: friday status {key}",
   "No milestone will get the decision: all are done. To redo them, name them in --reopen.": "Ningún hito recibirá la decisión: todos están completados. Para rehacerlos, nómbralos en --reopen.",

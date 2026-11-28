@@ -153,6 +153,11 @@ class StoriesTests(unittest.TestCase):
         self.assertIn("unsafe path stories:../escape.ts", errors)
         self.assertIn("has no showcase repository", " ".join(plan.validate(PLAN, kit)))
 
+    def test_the_project_planner_plan_is_checked_with_the_showcase(self):
+        workspace.create(self.root, "T-1", self.profile)
+        answer = runner.Result(status="ok", structured=PLAN)
+        self.assertEqual(plan.project_checked(self.root, "T-1", self.profile, answer, retries=0), PLAN)
+
     def test_a_milestone_commits_in_both_repositories_and_the_review_sees_both(self):
         workspace.create(self.root, "T-1", self.profile)
         showcase = card.read(self.root, "T-1")["stories"]["worktree"]

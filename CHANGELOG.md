@@ -14,6 +14,7 @@ All notable changes to Friday are listed here. The format follows [Keep a Change
 
 ### Changed
 
+- The planner records every design option it weighed with its files and added lines and takes the smaller one unless a cited rule or a shown failure rules it out; a constraint it sets itself is an assumption with its cost. The plan review flags an option rejected for taste and a simpler design the plan missed, blocking when the plan is larger by more than about a third (ADR 0018).
 - A milestone nothing checked is shown as "done, not verified" with its reasons (ADR 0009).
 - Branches are named `<repository>/{key}` by default.
 - The gate excerpt keeps the failure lines of a long section, failed TAP tests first.

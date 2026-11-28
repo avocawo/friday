@@ -91,7 +91,15 @@ PLAN_RULES = (
     "must be observable in the browser and is allowed only in ui milestones, and every ui milestone has at least one. "
     "No criterion may depend on work planned for a later stage.\n"
     "Resolve uncertainties from the repository and the ticket, record each choice with its reason in assumptions, and "
-    "put in questions only what blocks a correct result; the owner reads them at approval. Do not edit any file.\n"
+    "put in questions only what blocks a correct result; the owner reads them at approval.\n"
+    "When a design choice has more than one workable option (for example one operation that picks its call by target "
+    "or one operation per target, one generic module or a wrapper per case), record in assumptions every option you "
+    "considered with its estimated files and added lines. Choose the option with fewer new modules and lines unless a "
+    "project rule you cite or a failure you can show rules it out; \"it would branch on a kind\", \"each instance would "
+    "hold both dependencies\" or \"it is cleaner\" is not such a reason. This compares ways to build the same behavior; "
+    "it is not a reason to merge unrelated work into one function. A constraint you set yourself rather than take "
+    "from the ticket or a project rule, such as keeping a public API unchanged, is an assumption too: record it with "
+    "the lines it costs, not as a given. Do not edit any file.\n"
     "{reading}When you need several files, read them all in one turn with parallel Read calls rather than one per turn.")
 USE_MAP = "Use the repository map below instead of listing directories. "
 
@@ -105,17 +113,26 @@ PROJECT_PLAN_RULES = (
     "Each stage lists the existing files it changes in files, the files it creates in new_files, its added lines in "
     "estimate_lines and its criteria: a code criterion is verifiable from the stage's own diff, a behavior criterion is "
     "observable in the browser and belongs only to ui milestones, and every ui milestone has one. rules are the project "
-    "rules the plan relies on, each with its source. Put in questions what the owner must answer before approval.")
+    "rules the plan relies on, each with its source. For each design choice with more than one workable option, "
+    "assumptions list every option considered with its estimated files and added lines; choose the one with fewer new "
+    "modules and lines unless a cited project rule or a shown failure rules it out, since taste (\"it would branch\", "
+    "\"it is cleaner\") is no reason. A constraint you set yourself, such as keeping a public API unchanged, is an "
+    "assumption with the lines it costs. Put in questions what the owner must answer before approval.")
 
 REVIEW_RULES = (
     "Review the plan against the ticket, the owner's decisions and the repository. Report every problem in one pass. "
     "Look for: requirements of the ticket the plan misses or exceeds; criteria that depend on a later stage (for "
     "example a stage that must prove a route filter works while the route itself is wired in the next stage); criteria "
     "that cannot be verified from the stage diff or in the browser; unrealistic sizes; wrong or missing files; breaches "
-    "of the project's rules; milestones marked parallel that can collide. The current text of the "
+    "of the project's rules; milestones marked parallel that can collide; an option rejected in assumptions without a "
+    "cited project rule or a shown failure, a constraint the planner set itself without counting its cost, and a "
+    "simpler design with fewer new modules or lines that the plan did not consider. The current text of the "
     "files the plan changes is below; read other files only to check a point, several in one turn with parallel Read "
     "calls. Use blocking for problems that would make "
-    "the result wrong or the pipeline fail, minor otherwise. Do not report wording or style. Write problem and "
+    "the result wrong or the pipeline fail, minor otherwise. The three design findings above are minor, and blocking "
+    "when the plan's design is larger than the alternative by more than about a third in files or added lines; "
+    "name both sizes in the finding. "
+    "Do not report wording or style. Write problem and "
     "suggestion in English. Do not edit any file. verdict is ok only when there are no blocking findings.")
 REVIEW_CHANGED = (
     "\nThis plan was reviewed before. The owner's latest decision changed milestones %s: review only them and what "
@@ -655,9 +672,9 @@ def project_session(root, key, profile, prompt, resume=None, role="plan", entry=
 
 def project_checked(root, key, profile, result, retries=1):
     """The feasibility checks of Friday's own plans; the session gets its errors and continues once."""
-    worktree = cards.read(root, key)["worktree"]
+    task = cards.read(root, key)
     for attempt in range(retries + 1):
-        errors = validate(result.structured, worktree, profile.get("limits"))
+        errors = validate(result.structured, task["worktree"], profile.get("limits"), stories.worktree(task))
         if not errors:
             return result.structured
         cards.record(root, key, "plan_invalid", errors=errors)

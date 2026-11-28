@@ -410,6 +410,7 @@
   "The recorded worktree is unavailable or conflicts with the profile.": "記録されているワークツリーが利用できないか、プロファイルと競合しています。",
   "Worktree path already exists: {target}": "ワークツリーのパスはすでに存在します: {target}",
   "computed_style takes a snapshot uid and CSS property names.": "computed_style にはスナップショットの uid と CSS プロパティ名を渡します。",
+  "element_attributes takes a snapshot uid and aria-*, data-* or markup attribute names.": "element_attributes にはスナップショットの uid と aria-*、data-*、またはマークアップ属性の名前を渡します。",
   "the pipeline is running in the background (friday serve is not running). Follow it: friday status {key}, log: {log}": "パイプラインはバックグラウンドで実行中です（friday serve は動いていません）。確認: friday status {key}、ログ: {log}",
   "the task is queued in friday serve (position {position}). Follow it: friday status {key}": "タスクは friday serve のキューに入りました（順番 {position}）。確認: friday status {key}",
   "No milestone will get the decision: all are done. To redo them, name them in --reopen.": "決定を受け取るマイルストーンはありません。すべて完了しています。やり直すには --reopen で指定してください。",

@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/guide.md sha256=c8ffd811b55e -->
+<!-- i18n: source=docs/guide.md sha256=21bda6e09dc0 -->
 # Panduan Friday
 
 [English](../guide.md) · [Русский](../ru/guide.md) · [简体中文](../zh-cn/guide.md) · [日本語](../ja/guide.md) · [한국어](../ko/guide.md) · [Português (Brasil)](../pt-br/guide.md) · [Español](../es/guide.md) · [Deutsch](../de/guide.md) · [Français](../fr/guide.md) · **Bahasa Indonesia**
@@ -144,7 +144,7 @@ Bagi server, satu tugas adalah satu pekerjaan: milestone tidak dipecah menjadi p
 - **Git di Codex.** Friday menaruh Git yang terpasang dan salinan terpisah metadata Git ke dalam runtime tugas. Konfigurasi Git global dan profil shell pengguna tidak dimuat; data layanan repositori sumber tidak diperlihatkan kepada agen. Eksekutor menyimpan tahap dengan perintah Git biasa. Setelah prosesnya berakhir, Friday mengambil commit melalui bundle yang terverifikasi dan mengembalikannya ke branch sumber jika HEAD dan indeksnya tidak berubah. Jika terjadi konflik status, bundle tetap ada di log proses sebagai `git-recovery.bundle`; tidak ada yang ditimpa secara otomatis. Reviewer mendapat metadata Git hanya-baca. `doctor` memeriksa skenario nyata tiga commit di worktree tertaut tanpa memanggil model, serta bahwa larangan membaca rahasia dan larangan menulis bagi reviewer berlaku.
 - **Reviewer** hanya membaca. Pemeriksaan buta berjalan di folder kosong.
 - **Gate** berjalan di kontainer tanpa akses jaringan, pada snapshot commit yang di-mount hanya-baca.
-- **Browser** hanya menerima tool Friday untuk satu preview (termasuk `hover` dan `computed_style`, yang membaca gaya dengan skrip tetap, tanpa `evaluate_script`); melewati otorisasi dan membaca header permintaan yang terotorisasi dilarang.
+- **Browser** hanya menerima tool Friday untuk satu preview (termasuk `hover` dan `computed_style`, yang membaca gaya dengan skrip tetap, dan `element_attributes`, yang dengan cara yang sama membaca atribut `aria-*`, `data-*`, dan beberapa atribut markup, semuanya tanpa `evaluate_script`; untuk preview lokal juga konsol tab preview, `list_console_messages`); melewati otorisasi dan membaca header permintaan yang terotorisasi dilarang.
 - **Figma** hanya dibaca oleh perencana dan reviewer rencana, dan hanya dengan tool baca dari server Figma desktop lokal. Skill /impeccable tidak berjalan di dalam peran: Friday memasukkan teksnya ke prompt.
 - **Publikasi.** Friday hanya mem-push branch tugasnya sendiri dan hanya membuka draft MR/PR. Ia tidak menimpa branch orang lain, tidak melakukan merge, dan tidak men-deploy.
 - **Belum diverifikasi langsung:** akseptasi di browser dan publikasi ke GitLab telah diverifikasi lewat tes dengan agen palsu. Git di lingkungan Codex juga diperiksa oleh lab lokal nyata tanpa memanggil model; proses sebuah peran oleh model diperiksa terpisah pada setiap tugas.

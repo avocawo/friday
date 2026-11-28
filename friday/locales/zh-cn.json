@@ -410,6 +410,7 @@
   "The recorded worktree is unavailable or conflicts with the profile.": "记录的工作树不可用或与配置档案冲突。",
   "Worktree path already exists: {target}": "工作树路径已存在：{target}",
   "computed_style takes a snapshot uid and CSS property names.": "computed_style 接受快照 uid 和 CSS 属性名。",
+  "element_attributes takes a snapshot uid and aria-*, data-* or markup attribute names.": "element_attributes 接受快照 uid 以及 aria-*、data-* 或标记属性名称。",
   "the pipeline is running in the background (friday serve is not running). Follow it: friday status {key}, log: {log}": "流水线正在后台运行（friday serve 未运行）。跟进：friday status {key}，日志：{log}",
   "the task is queued in friday serve (position {position}). Follow it: friday status {key}": "任务已在 friday serve 中排队（位置 {position}）。跟进：friday status {key}",
   "No milestone will get the decision: all are done. To redo them, name them in --reopen.": "没有里程碑会收到该决定：全部已完成。若要重做，请在 --reopen 中指定它们。",

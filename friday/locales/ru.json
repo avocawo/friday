@@ -414,6 +414,7 @@
   "The recorded worktree is unavailable or conflicts with the profile.": "Записанная рабочая копия недоступна или конфликтует с профилем.",
   "Worktree path already exists: {target}": "Путь рабочей копии уже существует: {target}",
   "computed_style takes a snapshot uid and CSS property names.": "computed_style принимает uid снимка и имена CSS-свойств.",
+  "element_attributes takes a snapshot uid and aria-*, data-* or markup attribute names.": "element_attributes принимает uid снимка и имена атрибутов aria-*, data-* или разметки.",
   "the pipeline is running in the background (friday serve is not running). Follow it: friday status {key}, log: {log}": "конвейер запущен в фоне (friday serve не запущен). Ход: friday status {key}, лог: {log}",
   "the task is queued in friday serve (position {position}). Follow it: friday status {key}": "задача в очереди friday serve ({position}-я). Ход: friday status {key}",
   "No milestone will get the decision: all are done. To redo them, name them in --reopen.": "Ни одна веха решение не получит: все выполнены. Чтобы переделать, назовите их в --reopen.",
