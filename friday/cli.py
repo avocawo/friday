@@ -161,6 +161,13 @@ def dispatch(root, args):
         selected = task_profile(root, args.key)
         if args.command == "resume" and args.brief:
             plan.restore_statement(root, args.key, selected, Path(args.brief).read_text(encoding="utf-8"))
+        current = card.read(root, args.key)
+        if args.command == "resume" and current["state"] == "failed" and not current.get("plan", {}).get("approved"):
+            # Preparation failed: continue the planning session in the foreground; the queue runs only approved plans.
+            plan.resume_planning(root, args.key, selected)
+            print(plan.render(root, args.key, selected))
+            print("\n" + _("To approve and run: friday approve {key}", key=args.key))
+            return 0
         if args.command == "resume" and serve.running_server(root) and not os.environ.get(serve.CHILD):
             print(_("Task {key}: {launched}", key=args.key, launched=launch(root, args.key, "resume")))
             return 0

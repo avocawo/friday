@@ -3,6 +3,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -570,6 +571,58 @@ def ready_for_approval(root, key, profile, document, open_notes, plan_file=None)
     return document
 
 
+INTERRUPTION = re.compile(r"went to sleep|connection (?:error|reset|closed|refused)|ECONNRESET|ETIMEDOUT|socket hang up|"
+                          r"network|overloaded|stream (?:ended|closed)|fetch failed", re.IGNORECASE)
+
+
+def interrupted(result):
+    """A session cut off by the environment (sleep, network) or one that ended without its structured answer:
+    continuing the same session is cheaper than starting over."""
+    if result.status == "failed":
+        return bool(INTERRUPTION.search(result.error or ""))
+    return result.status == "ok" and not isinstance(result.structured, dict)
+
+
+def continuation(result):
+    reason = result.error or "the session ended without the structured answer"
+    return ("Your previous turn was interrupted before it finished (%s). Continue from where you stopped: do not start "
+            "over and do not redo finished work. Finish what is left and return the structured answer." % reason)
+
+
+def last_session(root, key, role):
+    """The session of the latest run of a role, from the card or, for cards written before sessions were kept on
+    failure, from the run history."""
+    value = cards.read(root, key)
+    if role == "plan" and value.get("plan_session"):
+        return value["plan_session"]
+    for event in reversed(cards.events(root, key)):
+        if event.get("type") == "run_finished" and event.get("role") == role and event.get("session"):
+            return event["session"]
+    return None
+
+
+def resume_planning(root, key, profile):
+    """Continue the project planning session of a task whose preparation failed, instead of planning again."""
+    value = cards.read(root, key)
+    if value["state"] != "failed" or value.get("plan", {}).get("approved") or profiles.toolset(profile, "plan") != "project":
+        raise FridayError("invalid_state", "Task %s has no failed project planning to continue." % key)
+    session = last_session(root, key, "plan")
+    if not session:
+        raise FridayError("invalid_state", "Task %s has no planning session to continue; run friday start again." % key)
+    cards.update(root, key, lambda card: card.update(state="planning"))
+    cards.record(root, key, "resumed", phase="plan", session=session)
+    try:
+        result = project_session(root, key, profile, continuation(SimpleNamespace(error="resumed by the owner")),
+                                 resume=session)
+        document = project_checked(root, key, profile, result)
+    except (FridayError, OSError) as exc:
+        cards.update(root, key, lambda card: card.update(state="failed"))
+        cards.record(root, key, "start_failed", error=str(exc))
+        raise
+    plan_file = str(Path(cards.read(root, key)["worktree"]) / profile["project"]["plan_file"])
+    return ready_for_approval(root, key, profile, document, [], plan_file)
+
+
 def project_session(root, key, profile, prompt, resume=None, role="plan", entry=None, schema=PROJECT_PLAN_SCHEMA,
                     session_field="plan_session"):
     """One session of the project's own process in the task's worktree (ADR 0015): its plan or its execution."""
@@ -581,13 +634,22 @@ def project_session(root, key, profile, prompt, resume=None, role="plan", entry=
     env = dict(models.environment(entry, profile))
     env.update({name: os.environ[name] for name in settings.get("session_env", []) if name in os.environ})
     timeouts = {profiles.TIMEOUTS[name]: value for name, value in settings.get("timeouts", {}).items()}
-    spec = runner.Spec(driver="claude", model=entry["model"], effort=entry.get("effort"), prompt=prompt, cwd=card["worktree"],
-                       log_dir="", schema=schema, env=env, resume=resume, toolset="project",
-                       disallowed_tools=settings.get("disallowed_tools", []), **timeouts)
-    result = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
+    def run(text, session):
+        spec = runner.Spec(driver="claude", model=entry["model"], effort=entry.get("effort"), prompt=text, cwd=card["worktree"],
+                           log_dir="", schema=schema, env=env, resume=session, toolset="project",
+                           disallowed_tools=settings.get("disallowed_tools", []), **timeouts)
+        outcome = cards.run_agent(root, key, spec, role=role, phase=role, entry=entry, profile=profile)
+        if outcome.session:
+            # Kept even when the session fails, so an interrupted session can be continued instead of started over.
+            cards.update(root, key, lambda value: value.update({session_field: outcome.session}))
+        return outcome
+
+    result = run(prompt, resume)
+    if result.session and interrupted(result):
+        cards.record(root, key, "session_interrupted", role=role, session=result.session, error=result.error or "")
+        result = run(continuation(result), result.session)
     if result.status != "ok" or not isinstance(result.structured, dict):
         raise FridayError("agent_failed", "%s did not return a result (%s): %s" % (role, result.status, result.error or "no structured answer"))
-    cards.update(root, key, lambda value: value.update({session_field: result.session}))
     return result
 
 
