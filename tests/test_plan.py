@@ -27,7 +27,9 @@ with open(os.path.join(directory, "call-%d.json" % index), "w") as handle:
     json.dump({"argv": sys.argv[1:], "prompt": prompt, "agent": os.environ.get("FRIDAY_TEST_AGENT")}, handle)
 call = json.load(open(os.path.join(directory, "calls.json")))[index]
 print(json.dumps({"type": "system", "subtype": "init", "session_id": call["session"]}), flush=True)
-print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "session_id": call["session"], "result": "",
+error = call.get("error")
+print(json.dumps({"type": "result", "subtype": "error_during_execution" if error else "success", "is_error": bool(error),
+                  "session_id": call["session"], "result": error or "",
                   "structured_output": call["answer"], "total_cost_usd": 0.01, "num_turns": 1,
                   "usage": {"input_tokens": 10, "output_tokens": 10}}), flush=True)
 '''
@@ -103,7 +105,8 @@ class PlanTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def calls(self, *answers):
-        (self.fake / "calls.json").write_text(json.dumps([{"session": session, "answer": answer} for session, answer in answers]))
+        (self.fake / "calls.json").write_text(json.dumps([
+            {"session": item[0], "answer": item[1], "error": item[2] if len(item) > 2 else None} for item in answers]))
         (self.fake / "counter").unlink(missing_ok=True)
 
     def test_task_limits_bound_the_whole_plan(self):
@@ -376,6 +379,45 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(retry["argv"][retry["argv"].index("--resume") + 1], "ps-1")
         self.assertIn("not marked ui", retry["prompt"])
         self.assertEqual(card.read(self.root, "T-1")["state"], "awaiting_approval")
+
+    def test_project_plan_session_cut_off_by_sleep_continues_once_by_itself(self):
+        self.project_profile()
+        self.calls(("ps-1", None, "API Error: Your computer went to sleep mid-response."), ("ps-1", self.summary()))
+        self.start()
+        retry = self.call(1)
+        self.assertEqual(retry["argv"][retry["argv"].index("--resume") + 1], "ps-1")
+        self.assertIn("do not start over", retry["prompt"])
+        self.assertIn("went to sleep", retry["prompt"])
+        self.assertEqual(card.read(self.root, "T-1")["state"], "awaiting_approval")
+        self.assertIn("session_interrupted", [event["type"] for event in card.events(self.root, "T-1")])
+
+    def test_project_plan_session_without_a_structured_answer_is_asked_for_it_once(self):
+        self.project_profile()
+        self.calls(("ps-1", None), ("ps-1", self.summary()))
+        self.start()
+        self.assertIn("without the structured answer", self.call(1)["prompt"])
+        self.assertEqual(card.read(self.root, "T-1")["state"], "awaiting_approval")
+
+    def test_failed_project_planning_keeps_its_session_and_resume_continues_it(self):
+        self.project_profile()
+        sleep = "API Error: Your computer went to sleep mid-response."
+        self.calls(("ps-1", None, sleep), ("ps-1", None, sleep), ("ps-1", self.summary()))
+        with self.assertRaises(FridayError):
+            self.start()
+        card.update(self.root, "T-1", lambda value: value.update(state="failed"))
+        self.assertEqual(card.read(self.root, "T-1")["plan_session"], "ps-1")
+        plan.resume_planning(self.root, "T-1", self.profile)
+        resumed = self.call(2)
+        self.assertEqual(resumed["argv"][resumed["argv"].index("--resume") + 1], "ps-1")
+        self.assertEqual(card.read(self.root, "T-1")["state"], "awaiting_approval")
+
+    def test_resume_of_failed_planning_without_a_session_asks_to_start_again(self):
+        self.project_profile()
+        card.create(self.root, "T-1", str(self.profile_path))
+        card.update(self.root, "T-1", lambda value: value.update(state="failed"))
+        with self.assertRaises(FridayError) as caught:
+            plan.resume_planning(self.root, "T-1", self.profile)
+        self.assertIn("friday start", str(caught.exception))
 
     def test_owner_answer_to_a_project_plan_continues_its_session_through_decide(self):
         self.project_profile()
